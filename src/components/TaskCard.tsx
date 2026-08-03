@@ -13,6 +13,7 @@ interface Props {
   task: TaskRecord
   onReuse: () => void
   onEditOutputs: () => void
+  onAdvancedEdit?: (imageId: string, taskId: string) => void
   onDelete: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
   isSelected?: boolean
@@ -24,6 +25,7 @@ export default function TaskCard({
   task,
   onReuse,
   onEditOutputs,
+  onAdvancedEdit,
   onDelete,
   onClick,
   isSelected,
@@ -475,10 +477,10 @@ export default function TaskCard({
             </div>
             {/* 操作按钮 */}
             <div
-              className="flex w-full items-center justify-between flex-shrink-0 mt-0.5 sm:w-auto sm:justify-end sm:gap-1"
+              className="mt-0.5 flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
-              {task.origin !== 'restricted-agent' && ((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
+              {task.origin !== 'restricted-agent' && task.origin !== 'openshop' && ((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
                 <button
                   onClick={() => retryTask(task)}
                   className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
@@ -552,6 +554,19 @@ export default function TaskCard({
                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                   />
                 </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const imageId = task.outputImages?.[0]
+                  if (!imageId) return
+                  onAdvancedEdit?.(imageId, task.id)
+                }}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-violet-500/10 dark:hover:text-violet-300"
+                title="在 OpenShop 中高级编辑"
+                disabled={!task.outputImages?.length}
+              >
+                <span>高级编辑</span>
               </button>
               <button
                 onClick={onDelete}

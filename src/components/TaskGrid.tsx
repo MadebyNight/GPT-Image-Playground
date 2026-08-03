@@ -1,9 +1,18 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
 import { filterAndSortTasks } from '../lib/taskFilters'
+import { getOpenShopHash } from '../lib/openshopRoute'
 import TaskCard from './TaskCard'
 
-export default function TaskGrid() {
+interface TaskGridProps {
+  onAdvancedEdit?: (imageId: string, taskId: string) => void
+}
+
+const navigateToOpenShop = (imageId: string, taskId: string) => {
+  window.location.hash = getOpenShopHash(imageId, taskId)
+}
+
+export default function TaskGrid({ onAdvancedEdit }: TaskGridProps) {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
@@ -298,6 +307,7 @@ export default function TaskGrid() {
               }}
               onReuse={() => reuseConfig(task)}
               onEditOutputs={() => editOutputs(task)}
+              onAdvancedEdit={onAdvancedEdit ?? navigateToOpenShop}
               onDelete={() => handleDelete(task)}
               isSelected={selectedTaskIds.includes(task.id)}
             />

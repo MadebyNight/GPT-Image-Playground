@@ -1,0 +1,57 @@
+{
+  "id": "./",
+  "name": "OpenShop Image Editor",
+  "version": "0.29.0",
+  "short_name": "OpenShop",
+  "description": "Private, client-side image editing with layers, selections, PSD interchange, and optional browser-local AI.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0c10",
+  "theme_color": "#0a0c10",
+  "categories": [
+    "graphics",
+    "photo"
+  ],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "image/png": [
+          ".png"
+        ],
+        "image/jpeg": [
+          ".jpg",
+          ".jpeg"
+        ],
+        "image/webp": [
+          ".webp"
+        ],
+        "image/gif": [
+          ".gif"
+        ],
+        "image/vnd.adobe.photoshop": [
+          ".psd"
+        ],
+        "application/vnd.openshop+json": [
+          ".openshop"
+        ]
+      },
+      "launch_type": "multiple-clients"
+    }
+  ]
+}

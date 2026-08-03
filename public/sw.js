@@ -1,4 +1,5 @@
 const CACHE_NAME = 'gpt-image-playground-v0.1.5'
+const CACHE_PREFIX = 'gpt-image-playground-'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -11,7 +12,11 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+          .map((key) => caches.delete(key)),
+      ),
     ),
   )
   self.clients.claim()
@@ -25,6 +30,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
   if (url.pathname.endsWith('/runtime-config.json')) return
+  // OpenShop 在独立子目录注册自己的 Service Worker。主应用不得缓存其
+  // 导航，也不得把离线失败的编辑器页面降级成主应用 index.html。
+  if (url.pathname.includes('/openshop/')) return
 
   if (request.mode === 'navigate') {
     event.respondWith(

@@ -7,6 +7,8 @@ vi.mock('./store', () => {
   const state = { setSettings: vi.fn() }
   return {
     initStore: vi.fn(),
+    ensureImageCached: vi.fn(),
+    saveOpenShopEdit: vi.fn(),
     useStore: (selector: (value: typeof state) => unknown) => selector(state),
   }
 })
@@ -40,6 +42,11 @@ vi.mock('./components/ConfirmDialog', () => ({ default: () => <div data-componen
 vi.mock('./components/Toast', () => ({ default: () => <div data-component="toast" /> }))
 vi.mock('./components/MaskEditorModal', () => ({ default: () => <div data-component="mask-editor" /> }))
 vi.mock('./components/ImageContextMenu', () => ({ default: () => <div data-component="image-context-menu" /> }))
+vi.mock('./components/OpenShopWorkspace', () => ({
+  default: ({ imageId, taskId }: { imageId: string; taskId: string | null }) => (
+    <div data-component="openshop-workspace" data-image-id={imageId} data-task-id={taskId ?? ''} />
+  ),
+}))
 
 import App from './App'
 
@@ -84,5 +91,19 @@ describe('App workspace entry', () => {
     expect(markup).toContain('data-component="agent-workspace"')
     expect(markup).not.toContain('data-component="task-grid"')
     expect(markup).not.toContain('role="tablist"')
+  })
+
+  it('renders the full-page OpenShop workspace for an advanced-edit hash route', () => {
+    vi.stubGlobal('window', {
+      location: { hash: '#/openshop/image%2F1?task=task-1' },
+    })
+
+    const markup = renderToStaticMarkup(<App />)
+
+    expect(markup).toContain('data-component="openshop-workspace"')
+    expect(markup).toContain('data-image-id="image/1"')
+    expect(markup).toContain('data-task-id="task-1"')
+    expect(markup).not.toContain('data-component="task-grid"')
+    vi.unstubAllGlobals()
   })
 })

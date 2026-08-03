@@ -13,12 +13,14 @@ import {
 import { DetailParamValue } from '../lib/paramDisplay'
 import { formatImageRatio } from '../lib/size'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { getOpenShopHash } from '../lib/openshopRoute'
 
 interface TaskDetailContentProps {
   task: TaskRecord
   presentation?: 'modal' | 'workspace'
   onRequestClose?: () => void
   onDeleteCommitted?: () => void
+  onAdvancedEdit?: (imageId: string, taskId: string) => void
 }
 
 export default function TaskDetailContent({
@@ -26,6 +28,7 @@ export default function TaskDetailContent({
   presentation = 'workspace',
   onRequestClose,
   onDeleteCommitted,
+  onAdvancedEdit,
 }: TaskDetailContentProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
@@ -142,6 +145,18 @@ export default function TaskDetailContent({
   const handleMaskEditCurrentOutput = () => {
     if (!outputImageId) return
     setMaskEditorImageId(outputImageId)
+    closeIfModal()
+  }
+
+  const handleAdvancedEdit = () => {
+    if (!outputImageId) return
+
+    if (onAdvancedEdit) {
+      onAdvancedEdit(outputImageId, task.id)
+    } else {
+      window.location.hash = getOpenShopHash(outputImageId, task.id)
+    }
+
     closeIfModal()
   }
 
@@ -308,6 +323,13 @@ export default function TaskDetailContent({
               <br />
               <span className="font-medium text-gray-700 dark:text-gray-200">{taskProviderName}</span>
               <span className="text-gray-400 dark:text-gray-500"> · {task.apiProfileName || '未知配置'} · {task.apiModel || '未知模型'}</span>
+              {task.sourceTaskId && (
+                <>
+                  <br />
+                  <span className="text-gray-400 dark:text-gray-500">溯源任务</span>
+                  <span className="ml-1 font-mono text-gray-600 dark:text-gray-300">{task.sourceTaskId}</span>
+                </>
+              )}
             </div>
           )}
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -358,13 +380,16 @@ export default function TaskDetailContent({
           <button type="button" disabled={!task.outputImages.length} className="rounded-xl bg-green-50 px-3 py-2 text-sm font-medium text-green-600 hover:bg-green-100 disabled:opacity-40 dark:bg-green-500/10 dark:text-green-400" onClick={handleEditOutputs}>
             编辑输出
           </button>
+          <button type="button" disabled={!outputImageId} className="inline-flex items-center gap-1 rounded-xl bg-violet-50 px-3 py-2 text-sm font-medium text-violet-600 hover:bg-violet-100 disabled:opacity-40 dark:bg-violet-500/10 dark:text-violet-300" onClick={handleAdvancedEdit}>
+            高级编辑
+          </button>
           <button type="button" disabled={!outputImageId} className="rounded-xl bg-purple-50 px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-100 disabled:opacity-40 dark:bg-purple-500/10 dark:text-purple-400" onClick={handleMaskEditCurrentOutput}>
             遮罩编辑
           </button>
           <button type="button" className="rounded-xl bg-gray-50 px-3 py-2 text-sm font-medium text-gray-500 hover:bg-yellow-50 hover:text-yellow-500 dark:bg-white/[0.04]" onClick={() => updateTaskInStore(task.id, { isFavorite: !task.isFavorite })}>
             {task.isFavorite ? '取消收藏' : '收藏'}
           </button>
-          {task.origin !== 'restricted-agent' && (
+          {task.origin !== 'restricted-agent' && task.origin !== 'openshop' && (
             <button type="button" className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400" onClick={() => { retryTask(task); closeIfModal() }}>
               重试
             </button>

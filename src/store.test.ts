@@ -52,8 +52,8 @@ vi.mock('./lib/db', () => {
     },
   }
 })
-import { clearImages, clearTasks, getAllTasks, putImage, putTask } from './lib/db'
-import { editOutputs, getCodexCliPromptKey, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, reuseConfig, submitTask, useStore } from './store'
+import { clearImages, clearTasks, getAllTasks, getImage, putImage, putTask } from './lib/db'
+import { editOutputs, getCodexCliPromptKey, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, reuseConfig, saveOpenShopEdit, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -154,6 +154,69 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(state.inputImages.map((img) => img.id)).toEqual([replacement.id, imageB.id])
     expect(state.prompt).toBe(prompt)
+  })
+})
+
+describe('OpenShop 编辑历史', () => {
+  beforeEach(() => {
+    useStore.setState({
+      tasks: [],
+      inputImages: [],
+      toast: null,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('从 data URL 保存编辑结果，并保留源任务与完整溯源关系', async () => {
+    const sourceTask = task({
+      id: 'source-task',
+      prompt: '原始提示词',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024' },
+      outputImages: ['source-image-a', 'source-image-b'],
+    })
+    useStore.setState({ tasks: [sourceTask] })
+
+    const created = await saveOpenShopEdit({
+      sourceTaskId: sourceTask.id,
+      outputImage: 'data:image/webp;base64,b3BlbnNob3A=',
+    })
+
+    expect(created).toMatchObject({
+      prompt: sourceTask.prompt,
+      params: sourceTask.params,
+      apiProvider: 'openshop',
+      origin: 'openshop',
+      sourceTaskId: sourceTask.id,
+      inputImageIds: sourceTask.outputImages,
+      status: 'done',
+      error: null,
+      finishedAt: created.createdAt,
+      elapsed: 0,
+    })
+    expect(created.params).not.toBe(sourceTask.params)
+    expect(useStore.getState().tasks).toEqual([created, sourceTask])
+    expect((await getAllTasks()).find((stored) => stored.id === created.id)).toEqual(created)
+    expect(await getImage(created.outputImages[0])).toMatchObject({
+      dataUrl: 'data:image/webp;base64,b3BlbnNob3A=',
+      source: 'openshop',
+    })
+  })
+
+  it('从 Blob 保存指定原图的编辑结果', async () => {
+    const sourceTask = task({ id: 'blob-source-task', outputImages: ['source-image-a', 'source-image-b'] })
+    useStore.setState({ tasks: [sourceTask] })
+
+    const created = await saveOpenShopEdit({
+      sourceTaskId: sourceTask.id,
+      inputImageIds: ['source-image-b'],
+      outputImage: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
+    })
+
+    expect(created.inputImageIds).toEqual(['source-image-b'])
+    expect(await getImage(created.outputImages[0])).toMatchObject({
+      dataUrl: 'data:image/png;base64,AQID',
+      source: 'openshop',
+    })
   })
 })
 
@@ -494,6 +557,26 @@ describe('reused task API profile', () => {
     const resolved = getTaskApiProfile(useStore.getState().settings, task({ apiProvider: 'fal', apiProfileId: falProfile.id }))
 
     expect(resolved?.id).toBe(falProfile.id)
+  })
+
+  it('reuses an OpenShop edit with the current API profile instead of reporting a missing OpenShop profile', async () => {
+    await putImage({ id: imageA.id, dataUrl: imageA.dataUrl, source: 'openshop' })
+    const confirmDialog = vi.fn()
+    useStore.setState({ setConfirmDialog: confirmDialog })
+
+    await reuseConfig(task({
+      origin: 'openshop',
+      apiProvider: 'openshop',
+      apiProfileName: 'OpenShop',
+      sourceTaskId: 'source-task',
+      inputImageIds: [imageA.id],
+      prompt: '编辑后的图片继续生成',
+    }))
+
+    expect(useStore.getState().inputImages).toEqual([imageA])
+    expect(useStore.getState().prompt).toBe('编辑后的图片继续生成')
+    expect(useStore.getState().reusedTaskApiProfileMissing).toBe(false)
+    expect(confirmDialog).not.toHaveBeenCalled()
   })
 
   it('reuses the task API profile temporarily without switching the active profile', async () => {

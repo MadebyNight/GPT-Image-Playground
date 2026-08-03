@@ -616,7 +616,7 @@ export function getCodexCliPromptKey(settings: AppSettings): string {
 }
 
 function isOpenAITask(task: TaskRecord) {
-  if (task.origin === 'restricted-agent') return false
+  if (task.origin === 'restricted-agent' || task.origin === 'openshop') return false
   return (task.apiProvider ?? 'openai') !== 'fal'
 }
 
@@ -1453,6 +1453,10 @@ export async function retryTask(task: TaskRecord) {
     useStore.getState().showToast('受限 Agent 任务不能直接重试，请重新生成计划并确认', 'info')
     return
   }
+  if (task.origin === 'openshop') {
+    useStore.getState().showToast('OpenShop 编辑记录不能重试，可继续使用高级编辑', 'info')
+    return
+  }
   const { settings } = useStore.getState()
   if (getRuntimeConfigState().status !== 'ready') {
     useStore.getState().showToast('服务端 API 配置不可用，请联系部署管理员', 'error')
@@ -1499,9 +1503,12 @@ export async function reuseConfig(task: TaskRecord) {
   const currentProfile = runtimeState.status === 'ready'
     ? getEffectiveApiProfile(normalizedSettings)
     : getActiveApiProfile(settings)
-  const matchedProfile = !serverRestricted && normalizedSettings.reuseTaskApiProfileTemporarily ? getTaskApiProfile(normalizedSettings, task) : null
+  const canReuseTaskProfile = task.origin !== 'openshop'
+  const matchedProfile = !serverRestricted && canReuseTaskProfile && normalizedSettings.reuseTaskApiProfileTemporarily
+    ? getTaskApiProfile(normalizedSettings, task)
+    : null
   const shouldTemporarilyReuseProfile = Boolean(matchedProfile && matchedProfile.id !== currentProfile.id)
-  const missingReusedProfile = !serverRestricted && normalizedSettings.reuseTaskApiProfileTemporarily && !matchedProfile
+  const missingReusedProfile = !serverRestricted && canReuseTaskProfile && normalizedSettings.reuseTaskApiProfileTemporarily && !matchedProfile
   const taskProfileName = matchedProfile?.name ?? getTaskApiProfileName(task)
   const paramsSettings = shouldTemporarilyReuseProfile && matchedProfile ? createSettingsForApiProfile(normalizedSettings, matchedProfile) : normalizedSettings
 
@@ -1576,6 +1583,74 @@ export async function editOutputs(task: TaskRecord) {
     }
   }
   showToast(`已添加 ${added} 张输出图到输入`, 'success')
+}
+
+export interface SaveOpenShopEditOptions {
+  /** 被高级编辑的原任务。 */
+  sourceTaskId: string
+  /** 被编辑的原图 image store id；默认使用源任务的全部输出图。 */
+  inputImageIds?: string[]
+  /** OpenShop 导出的图片。 */
+  outputImage: Blob | string
+}
+
+/**
+ * 保存 OpenShop 编辑结果，并创建一条关联源任务的完成态历史记录。
+ * 源任务及其输出图片不会被修改或覆盖。
+ */
+export async function saveOpenShopEdit({ sourceTaskId, inputImageIds, outputImage }: SaveOpenShopEditOptions): Promise<TaskRecord> {
+  const sourceTask = useStore.getState().tasks.find((task) => task.id === sourceTaskId)
+  if (!sourceTask) throw new Error('原始任务不存在，无法保存高级编辑结果')
+
+  const sourceImageIds = inputImageIds ?? sourceTask.outputImages
+  const uniqueSourceImageIds = [...new Set(sourceImageIds)]
+  if (!uniqueSourceImageIds.length) throw new Error('原始任务没有可编辑的输出图片')
+  if (uniqueSourceImageIds.some((imageId) => !sourceTask.outputImages.includes(imageId))) {
+    throw new Error('编辑原图不属于原始任务')
+  }
+
+  const outputDataUrl = await openShopImageToDataUrl(outputImage)
+  const outputImageId = await storeImage(outputDataUrl, 'openshop')
+  cacheImage(outputImageId, outputDataUrl)
+
+  const now = Date.now()
+  const task: TaskRecord = {
+    id: genId(),
+    prompt: sourceTask.prompt,
+    params: { ...sourceTask.params },
+    apiProvider: 'openshop',
+    apiProfileName: 'OpenShop',
+    apiModel: 'OpenShop',
+    origin: 'openshop',
+    sourceTaskId,
+    inputImageIds: uniqueSourceImageIds,
+    maskTargetImageId: null,
+    maskImageId: null,
+    outputImages: [outputImageId],
+    status: 'done',
+    error: null,
+    createdAt: now,
+    finishedAt: now,
+    elapsed: 0,
+  }
+
+  await putTask(task)
+  useStore.getState().setTasks([task, ...useStore.getState().tasks])
+  return task
+}
+
+async function openShopImageToDataUrl(image: Blob | string): Promise<string> {
+  if (typeof image === 'string') {
+    if (!/^data:image\/[^;,]+(?:;[^,]*)?,/i.test(image)) {
+      throw new Error('OpenShop 返回的不是图片 data URL')
+    }
+    return image
+  }
+
+  if (!image.type.startsWith('image/')) {
+    throw new Error('OpenShop 返回的不是图片 Blob')
+  }
+  return blobToDataUrl(image)
 }
 
 /** 删除多条任务 */
@@ -2006,11 +2081,12 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+  }
+  return `data:${blob.type};base64,${btoa(binary)}`
 }

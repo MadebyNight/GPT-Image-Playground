@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { initStore } from './store'
-import { useStore } from './store'
+import { useCallback, useEffect, useState } from 'react'
+import { ensureImageCached, initStore, saveOpenShopEdit, useStore } from './store'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
+import { getOpenShopRoute, type OpenShopRoute } from './lib/openshopRoute'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import { useRestrictedAgentStore } from './restrictedAgentStore'
 import { isRestrictedAgentEnabled, isRestrictedAgentOnly } from './lib/serverApiConfig'
@@ -17,6 +17,12 @@ import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
+import OpenShopWorkspace from './components/OpenShopWorkspace'
+
+function getCurrentOpenShopRoute(): OpenShopRoute | null {
+  if (typeof window === 'undefined') return null
+  return getOpenShopRoute(window.location.hash)
+}
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
@@ -25,6 +31,9 @@ export default function App() {
   const restrictedAgentOnly = restrictedAgentEnabled && isRestrictedAgentOnly()
   const [workspaceMode, setWorkspaceMode] = useState<'gallery' | 'agent'>(() => restrictedAgentOnly ? 'agent' : 'gallery')
   const [activeAgentTaskId, setActiveAgentTaskId] = useState<string | null>(null)
+  const [openShopRoute, setOpenShopRoute] = useState<OpenShopRoute | null>(getCurrentOpenShopRoute)
+  const [openShopSource, setOpenShopSource] = useState<string | undefined>()
+  const [openShopSourceError, setOpenShopSourceError] = useState<string | undefined>()
   useDockerApiUrlMigrationNotice()
 
   useEffect(() => {
@@ -59,6 +68,69 @@ export default function App() {
     document.addEventListener('dragstart', preventPageImageDrag)
     return () => document.removeEventListener('dragstart', preventPageImageDrag)
   }, [])
+
+  useEffect(() => {
+    const syncOpenShopRoute = () => setOpenShopRoute(getCurrentOpenShopRoute())
+    window.addEventListener('hashchange', syncOpenShopRoute)
+    return () => window.removeEventListener('hashchange', syncOpenShopRoute)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setOpenShopSource(undefined)
+    setOpenShopSourceError(undefined)
+    if (!openShopRoute) return
+
+    void ensureImageCached(openShopRoute.imageId)
+      .then((source) => {
+        if (cancelled) return
+        if (!source) {
+          setOpenShopSourceError('未找到原图，它可能已被清理或不在当前浏览器中。')
+          return
+        }
+        setOpenShopSource(source)
+      })
+      .catch((cause) => {
+        if (!cancelled) setOpenShopSourceError(cause instanceof Error ? cause.message : String(cause))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [openShopRoute])
+
+  const closeOpenShop = useCallback(() => {
+    const nextUrl = `${window.location.pathname}${window.location.search}`
+    window.history.replaceState(null, '', nextUrl)
+    setOpenShopRoute(null)
+  }, [])
+
+  const saveOpenShopHistory = useCallback(async (blob: Blob) => {
+    if (!openShopRoute?.taskId) throw new Error('缺少原始任务，无法建立编辑溯源记录')
+    await saveOpenShopEdit({
+      sourceTaskId: openShopRoute.taskId,
+      inputImageIds: [openShopRoute.imageId],
+      outputImage: blob,
+    })
+    useStore.getState().showToast('已保存 OpenShop 编辑历史', 'success')
+  }, [openShopRoute])
+
+  if (openShopRoute) {
+    return (
+      <>
+        <OpenShopWorkspace
+          key={`${openShopRoute.taskId ?? 'unknown'}:${openShopRoute.imageId}`}
+          imageId={openShopRoute.imageId}
+          taskId={openShopRoute.taskId}
+          sourceDataUrl={openShopSource}
+          sourceError={openShopSourceError}
+          onClose={closeOpenShop}
+          onSave={saveOpenShopHistory}
+        />
+        <Toast />
+      </>
+    )
+  }
 
   return (
     <>

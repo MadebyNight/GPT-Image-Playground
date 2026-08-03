@@ -175,7 +175,9 @@ export interface TaskRecord {
   /** 是否收藏 */
   isFavorite?: boolean
   /** 任务入口。旧任务未设置时按 gallery 处理。 */
-  origin?: 'gallery' | 'restricted-agent'
+  origin?: 'gallery' | 'restricted-agent' | 'openshop'
+  /** OpenShop 编辑结果对应的源任务 ID。 */
+  sourceTaskId?: string
   /** 受限 Agent 服务端计划 ID。 */
   agentPlanId?: string
   /** 受限 Agent 服务端执行 ID，用于刷新后恢复状态。 */
@@ -300,8 +302,8 @@ export interface StoredImage {
   dataUrl: string
   /** 图片首次存储时间（ms） */
   createdAt?: number
-  /** 图片来源：用户上传 / API 生成 / 遮罩 */
-  source?: 'upload' | 'generated' | 'mask'
+  /** 图片来源：用户上传 / API 生成 / 遮罩 / OpenShop 编辑 */
+  source?: 'upload' | 'generated' | 'mask' | 'openshop'
   /** 原图宽度 */
   width?: number
   /** 原图高度 */
@@ -414,7 +416,7 @@ export interface ExportData {
   imageFiles?: Record<string, {
     path: string
     createdAt?: number
-    source?: 'upload' | 'generated' | 'mask'
+    source?: 'upload' | 'generated' | 'mask' | 'openshop'
     width?: number
     height?: number
   }>
