@@ -7,3 +7,5 @@ dev-proxy.config.json
 .wrangler/
 .env
 .env.local
+.gstack/
+.superpowers/
