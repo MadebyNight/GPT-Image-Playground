@@ -16,6 +16,31 @@ export interface OpenShopWorkspaceProps {
   editor?: ReactNode
 }
 
+export interface OpenShopConfigurationGate {
+  hasFrameWindow: boolean
+  hasSourceDataUrl: boolean
+  hasTargetOrigin: boolean
+  editorReady: boolean
+  isConfigured: boolean
+  isConfiguring: boolean
+}
+
+export function shouldSendOpenShopConfiguration({
+  hasFrameWindow,
+  hasSourceDataUrl,
+  hasTargetOrigin,
+  editorReady,
+  isConfigured,
+  isConfiguring,
+}: OpenShopConfigurationGate): boolean {
+  return hasFrameWindow
+    && hasSourceDataUrl
+    && hasTargetOrigin
+    && editorReady
+    && !isConfigured
+    && !isConfiguring
+}
+
 /**
  * OpenShop 的宿主界面。
  *
@@ -32,6 +57,8 @@ export default function OpenShopWorkspace({
   editor,
 }: OpenShopWorkspaceProps) {
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const editorReadyRef = useRef(false)
+  const configurationInFlightRef = useRef(false)
   const configuredRef = useRef(false)
   const helloSentRef = useRef(false)
   const saveRequestIdRef = useRef<string | null>(null)
@@ -54,12 +81,24 @@ export default function OpenShopWorkspace({
 
   const sendConfiguration = useCallback(async () => {
     const frameWindow = frameRef.current?.contentWindow
-    if (!frameWindow || !sourceDataUrl || !targetOrigin || configuredRef.current) return
+    if (!frameWindow || !sourceDataUrl || !targetOrigin) return
+    if (!shouldSendOpenShopConfiguration({
+      hasFrameWindow: true,
+      hasSourceDataUrl: true,
+      hasTargetOrigin: true,
+      editorReady: editorReadyRef.current,
+      isConfigured: configuredRef.current,
+      isConfiguring: configurationInFlightRef.current,
+    })) return
 
-    configuredRef.current = true
+    configurationInFlightRef.current = true
     setStatus('正在导入原图…')
     try {
       const document = await dataUrlToOpenShopDocument(sourceDataUrl, `source-${imageId.slice(0, 12)}.png`)
+      if (frameRef.current?.contentWindow !== frameWindow || !editorReadyRef.current) {
+        configurationInFlightRef.current = false
+        return
+      }
       postOpenShopMessage(frameWindow, targetOrigin, {
         type: 'openshop:configure',
         id: 'configure',
@@ -67,7 +106,7 @@ export default function OpenShopWorkspace({
         overrides: { open: false, save: false },
       })
     } catch (cause) {
-      configuredRef.current = false
+      configurationInFlightRef.current = false
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [imageId, sourceDataUrl, targetOrigin])
@@ -82,6 +121,7 @@ export default function OpenShopWorkspace({
       const message = event.data
       if (message.type === 'openshop:ready') {
         if (message.id === 'hello') {
+          editorReadyRef.current = true
           void sendConfiguration()
           return
         }
@@ -90,6 +130,8 @@ export default function OpenShopWorkspace({
       }
 
       if (message.type === 'openshop:configured') {
+        configurationInFlightRef.current = false
+        configuredRef.current = true
         setIsConfigured(true)
         setStatus('编辑器已就绪')
         return
@@ -116,6 +158,10 @@ export default function OpenShopWorkspace({
       }
 
       if (message.type === 'openshop:error') {
+        if (message.id === 'configure') {
+          configurationInFlightRef.current = false
+          configuredRef.current = false
+        }
         if (message.id === saveRequestIdRef.current) {
           saveRequestIdRef.current = null
           setIsSaving(false)
@@ -132,7 +178,7 @@ export default function OpenShopWorkspace({
   }, [onSave, sendConfiguration, sendHello, targetOrigin])
 
   useEffect(() => {
-    if (!sourceDataUrl || !helloSentRef.current) return
+    if (!sourceDataUrl || !editorReadyRef.current) return
     void sendConfiguration()
   }, [sendConfiguration, sourceDataUrl])
 
@@ -208,6 +254,11 @@ export default function OpenShopWorkspace({
             data-openshop-frame
             allow="clipboard-read; clipboard-write"
             onLoad={() => {
+              editorReadyRef.current = false
+              configurationInFlightRef.current = false
+              configuredRef.current = false
+              saveRequestIdRef.current = null
+              setIsConfigured(false)
               if (sourceDataUrl) setStatus('正在连接编辑器…')
               sendHello(true)
             }}

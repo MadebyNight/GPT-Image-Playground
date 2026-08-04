@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import OpenShopWorkspace from './OpenShopWorkspace'
+import OpenShopWorkspace, { shouldSendOpenShopConfiguration } from './OpenShopWorkspace'
 
 describe('OpenShopWorkspace', () => {
   it('renders a full-page editor workspace with explicit history saving', () => {
@@ -19,5 +19,20 @@ describe('OpenShopWorkspace', () => {
     expect(markup).toContain('data-task-id="task-1"')
     expect(markup).toContain('保存到历史')
     expect(markup).toContain('返回画廊')
+  })
+
+  it('waits for the embedded editor readiness before sending the source image', () => {
+    const readyGate = {
+      hasFrameWindow: true,
+      hasSourceDataUrl: true,
+      hasTargetOrigin: true,
+      editorReady: true,
+      isConfigured: false,
+      isConfiguring: false,
+    }
+
+    expect(shouldSendOpenShopConfiguration({ ...readyGate, editorReady: false })).toBe(false)
+    expect(shouldSendOpenShopConfiguration({ ...readyGate, isConfiguring: true })).toBe(false)
+    expect(shouldSendOpenShopConfiguration(readyGate)).toBe(true)
   })
 })
