@@ -27,7 +27,7 @@ describe('OpenShop 简体中文外壳', () => {
     const localeSection = editorHtml.match(/_locales: \{ en: \{\}, zh: \{([\s\S]*?)\n    \} \},\n    _lang:/)?.[1] ?? ''
     const registered = [...editorHtml.matchAll(/\['(?:tool|mode)\.[^']+',\s*'([^']+)',\s*'([^']+)'/g)]
       .flatMap(([, family, label]) => [family, label])
-    const extensions = ['Brush', 'Pencil', 'Spray / Airbrush', 'AI Segment Select']
+    const extensions = ['Brush', 'Pencil', 'Spray / Airbrush', 'Pattern Fill', 'Triangle', 'Arrow', 'Star', 'AI Segment Select']
 
     for (const key of [...registered, ...extensions]) {
       expect(localeSection).toContain(`"${key}":`)
@@ -35,6 +35,26 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain('data-i18n-tool-family')
     expect(editorHtml).toContain('data-i18n-tool-label')
     expect(editorHtml).toContain("this._t(c.cat)")
+    expect(editorHtml).toContain('staticToolbarIcons')
+    expect(editorHtml).toContain('toolbarIconAliases')
+    expect(editorHtml).toContain('--toolbar-w:64px')
+    expect(editorHtml).not.toContain('grid-template-columns:repeat(2,48px)')
+  })
+
+  it('reuses a source SVG for every registry and OpenShop-native toolbar tool', () => {
+    const toolbarMarkup = editorHtml.split('<div id="toolbar"')[1]?.split('<!-- ===== TOOL OPTIONS BAR ===== -->')[0] ?? ''
+    const sourceStates = new Set([...toolbarMarkup.matchAll(/data-tool="([^"]+)"/g)].map(([, state]) => state))
+    const registryStates = [...editorHtml.matchAll(/\['tool\.[^']+',\s*'[^']+',\s*'[^']+',\s*'[^']*',\s*'[^']+',\s*'[^']+',\s*'([^']+)'\]/g)]
+      .map(([, state]) => state)
+    const nativeStates = ['brush', 'pencil', 'spray', 'pattern', 'triangle', 'arrow', 'star', 'ai-segment']
+    const aliasSource = editorHtml.match(/const toolbarIconAliases = Object\.freeze\(\{([\s\S]*?)\n        \}\);/)?.[1] ?? ''
+    const aliases = new Map([...aliasSource.matchAll(/'([^']+)':'([^']+)'/g)].map(([, state, source]) => [state, source]))
+
+    for (const state of [...registryStates, ...nativeStates]) {
+      expect(sourceStates.has(state) || sourceStates.has(aliases.get(state) ?? '')).toBe(true)
+    }
+    expect(editorHtml).toContain('iconForTool')
+    expect(editorHtml).toContain("icon.setAttribute('aria-hidden', 'true')")
   })
 
   it('keeps CSP hashes synchronized with both inline editor scripts', () => {
@@ -54,7 +74,8 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain("type:'openshop:exported'")
 
     const revision = serviceWorker.match(/const SHELL_REVISION = '([^']+)'/)?.[1]
-    expect(revision).toBe('0.29.0-r2')
+    expect(revision).toBe('0.29.0-r3')
+    expect(serviceWorker).toContain("'0.29.0-r2'")
     expect(serviceWorker).toContain("'0.29.0-r1'")
     expect(serviceWorker).toContain('OpenShop 尚未完成离线准备')
   })

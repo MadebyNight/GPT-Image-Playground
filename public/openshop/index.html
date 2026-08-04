@@ -9,7 +9,7 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-q6PKGGGQULabuzVupL2QZBfT8zhi4tTIJxRz+dKNyG4=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-AJaui0/XSAs6/BBCkxiuCZIe84kqhxqDZP7E5cZc7IY=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
 <title>OpenShop v0.29.0 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
@@ -307,7 +307,7 @@ window.__openshopBoot = (async () => {
 --text-primary:#f3f6fb;--text-secondary:#aebbd0;--text-muted:#7d8ca4;
 --accent:#3978ff;--accent-hover:#6296ff;--accent-dim:rgba(57,120,255,.16);
 --success:#41d7a0;--warning:#f6c65b;--danger:#ff7587;
---canvas-bg:#0a111b;--tool-size:38px;--panel-width:312px;--topbar-h:52px;--toolbar-w:112px;--statusbar-h:52px;--bottom-tabs-h:32px;
+--canvas-bg:#0a111b;--tool-size:38px;--panel-width:312px;--topbar-h:52px;--toolbar-w:64px;--statusbar-h:52px;--bottom-tabs-h:32px;
 --glass:rgba(11,17,27,.92);--glass-border:rgba(112,157,255,.18);
 --checker-a:#39435a;--checker-b:#59647d;--guide:#6cdcff;--smart-guide:#ff5078;
 --accent-solid:color-mix(in srgb, var(--accent) 78%, #05070d);
@@ -1186,25 +1186,6 @@ body{
   background:color-mix(in srgb, var(--bg-depth-1) 98%, transparent);
   border-color:var(--border-active);
 }
-#toolbar{
-  width:104px;
-  display:grid;
-  grid-template-columns:repeat(2,48px);
-  grid-auto-rows:min-content;
-  justify-content:center;
-  align-content:start;
-}
-#toolbar .audit-tool-group{width:48px;min-width:0}
-#toolbar .audit-tool-face{width:46px;height:36px;flex-direction:column;gap:2px;padding:3px;border:1px solid transparent}
-#toolbar .audit-tool-face .tool-glyph{font:700 9px 'JetBrains Mono',monospace;letter-spacing:-.04em;line-height:1;color:currentColor}
-#toolbar .audit-tool-face .tool-family-label{max-width:43px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:7px;line-height:1;color:var(--text-muted)}
-#toolbar .audit-tool-flyout{min-width:232px;padding:5px;gap:2px}
-#toolbar .audit-tool-flyout .tool-btn{width:220px;height:29px;justify-content:flex-start;gap:8px;padding:4px 8px;border-radius:5px}
-#toolbar .audit-tool-flyout .tool-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--text-secondary)}
-#toolbar .audit-tool-flyout .tool-shortcut{margin-inline-start:auto;color:var(--text-muted);font:10px 'JetBrains Mono',monospace}
-#toolbar .audit-tool-flyout .tool-btn:hover .tool-name,#toolbar .audit-tool-flyout .tool-btn.active .tool-name{color:var(--text-primary)}
-#toolbar .audit-tool-face::before{bottom:1px;right:1px}
-
 #tool-options{
   left:calc(var(--toolbar-w) + 8px);
   right:calc(var(--panel-width) + 8px);
@@ -2078,9 +2059,9 @@ html[data-os-workspace="mobile"] #panels .panel-tab-group.ptg-flex{flex:0 0 250p
 html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 
 @media(min-width:768px) and (max-width:1023px){
-  :root{--panel-width:248px;--toolbar-w:112px}
-  #toolbar{left:6px;width:104px}
-  #tool-options{left:112px}
+  :root{--panel-width:248px;--toolbar-w:58px}
+  #toolbar{left:6px;width:44px}
+  #tool-options{left:58px}
   .local-badge span{display:none}
   .local-badge{padding:0 8px}
   .menu-item{padding-inline:6px;font-size:9.5px}
@@ -10415,72 +10396,95 @@ self.onmessage = function(event) {
     _buildToolboxFromRegistry() {
         const toolbar = document.getElementById('toolbar');
         if (!toolbar || toolbar.dataset.registryBuilt === 'true') return;
+        // The v0.24 toolbar already carries the intended visual language:
+        // preserve its SVGs before the registry adds the wider tool catalog.
+        const staticToolbarIcons = new Map();
+        toolbar.querySelectorAll('.tool-btn[data-tool]').forEach(button => {
+            const icon = button.querySelector('svg');
+            if (icon && !staticToolbarIcons.has(button.dataset.tool)) {
+                staticToolbarIcons.set(button.dataset.tool, icon.cloneNode(true));
+            }
+        });
+        const toolbarIconAliases = Object.freeze({
+            'marquee-row':'marquee-rect', 'marquee-column':'marquee-rect',
+            'lasso-polygonal':'lasso', 'lasso-magnetic':'lasso',
+            'quick-selection':'magic-wand', 'perspective-crop':'crop', 'slice':'crop', 'slice-select':'select',
+            'color-sampler':'eyedropper', 'spot-healing':'healing', 'patch':'healing', 'content-aware-move':'select', 'red-eye':'healing',
+            'pattern-stamp':'pattern', 'history-brush':'brush', 'art-history-brush':'brush',
+            'background-eraser':'eraser', 'magic-eraser':'eraser', 'blur':'smudge', 'sharpen':'smudge',
+            'freeform-pen':'pen', 'add-anchor':'pen', 'delete-anchor':'pen', 'convert-point':'pen',
+            'vertical-text':'text', 'horizontal-text-mask':'text', 'vertical-text-mask':'text',
+            'path-selection':'select', 'direct-selection':'select', 'rounded-rect':'rect', 'custom-shape':'polygon', 'rotate-view':'pan'
+        });
+        const iconForTool = toolState => {
+            const source = staticToolbarIcons.get(toolState)
+                || staticToolbarIcons.get(toolbarIconAliases[toolState])
+                || staticToolbarIcons.get('select');
+            const icon = source.cloneNode(true);
+            icon.setAttribute('aria-hidden', 'true');
+            icon.setAttribute('focusable', 'false');
+            return icon;
+        };
         const catalog = this._toolCatalog().filter(tool => tool.kind === 'tool' && tool.family !== 'Mode');
-        // These OpenShop-native brushes remain visible alongside the audited
-        // Photoshop family inventory so existing drawing behavior is not lost.
+        // Keep OpenShop-native controls that are not represented in the
+        // Photoshop-inspired registry, so the icon restoration never hides a
+        // working tool from the original toolbar.
         const extensions = [
             { family:'Brush', toolState:'brush', label:'Brush', shortcut:'B' },
             { family:'Brush', toolState:'pencil', label:'Pencil', shortcut:'N' },
             { family:'Brush', toolState:'spray', label:'Spray / Airbrush', shortcut:'' },
+            { family:'Fill', toolState:'pattern', label:'Pattern Fill', shortcut:'' },
+            { family:'Shape', toolState:'triangle', label:'Triangle', shortcut:'' },
+            { family:'Shape', toolState:'arrow', label:'Arrow', shortcut:'' },
+            { family:'Shape', toolState:'star', label:'Star', shortcut:'' },
             { family:'AI Select', toolState:'ai-segment', label:'AI Segment Select', shortcut:'' }
         ];
         const entries = [...catalog, ...extensions];
         const familyOrder = ['Marquee','Move','Lasso','Selection','Crop','Sampling','Brush','Healing','Clone','History','Eraser','Fill','Blur','Tone','Pen','Type','Path Selection','Shape','Navigation','AI Select'];
-        const abbreviations = {
-            Marquee:'M', Move:'V', Lasso:'L', Selection:'W', Crop:'C', Sampling:'I', Healing:'J', Clone:'S',
-            History:'Y', Eraser:'E', Fill:'G', Blur:'R', Tone:'O', Pen:'P', Type:'T', 'Path Selection':'A',
-            Shape:'U', Navigation:'H/Z', Brush:'B', 'AI Select':'AI'
+        const createIconButton = tool => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'tool-btn';
+            if (tool.id) button.classList.add('audit-tool-member');
+            button.dataset.tool = tool.toolState;
+            button.dataset.i18nTip = tool.label;
+            button.dataset.tip = this._t(tool.label);
+            button.setAttribute('aria-label', button.dataset.tip);
+            button.title = button.dataset.tip;
+            button.appendChild(iconForTool(tool.toolState));
+            return button;
         };
         toolbar.replaceChildren();
         toolbar.dataset.registryBuilt = 'true';
         familyOrder.forEach(family => {
             const members = entries.filter(tool => tool.family === family);
             if (!members.length) return;
+            if (members.length === 1) {
+                const button = createIconButton(members[0]);
+                button.classList.add('audit-tool-single');
+                button.setAttribute('data-os-click', 'click-229');
+                toolbar.appendChild(button);
+                return;
+            }
             const group = document.createElement('div');
             group.className = 'tool-group audit-tool-group';
             group.dataset.group = `registry-${family.toLowerCase().replace(/\s+/g, '-')}`;
-            const face = document.createElement('button');
-            face.type = 'button';
-            face.className = 'tool-btn audit-tool-face';
-            face.dataset.tool = members[0].toolState;
+            const face = createIconButton(members[0]);
+            face.classList.add('audit-tool-face');
             face.dataset.i18nToolFamily = family;
             face.dataset.i18nToolLabel = members[0].label;
             face.dataset.tip = `${this._t(family)}：${this._t(members[0].label)}`;
             face.setAttribute('aria-label', face.dataset.tip);
             face.title = face.dataset.tip;
-            const glyph = document.createElement('span');
-            glyph.className = 'tool-glyph';
-            glyph.textContent = abbreviations[family] || family.slice(0, 2).toUpperCase();
-            const familyLabel = document.createElement('span');
-            familyLabel.className = 'tool-family-label';
-            familyLabel.dataset.i18n = family;
-            familyLabel.textContent = this._t(family);
-            face.append(glyph, familyLabel);
             const flyout = document.createElement('div');
             flyout.className = 'tool-flyout audit-tool-flyout';
             flyout.setAttribute('role', 'menu');
             flyout.dataset.i18nToolGroup = family;
             flyout.setAttribute('aria-label', this._format('Tools: {family}', { family:this._t(family) }));
             members.forEach(tool => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'tool-btn';
-                if (tool.id) button.classList.add('audit-tool-member');
-                button.dataset.tool = tool.toolState;
-                button.dataset.i18nTip = tool.label;
-                button.dataset.tip = this._t(tool.label);
-                button.setAttribute('aria-label', button.dataset.tip);
+                const button = createIconButton(tool);
                 button.setAttribute('role', 'menuitem');
                 button.setAttribute('data-os-click', 'click-229');
-                button.title = button.dataset.tip;
-                const name = document.createElement('span');
-                name.className = 'tool-name';
-                name.dataset.i18n = tool.label;
-                name.textContent = this._t(tool.label);
-                const shortcut = document.createElement('span');
-                shortcut.className = 'tool-shortcut';
-                shortcut.textContent = tool.shortcut || '';
-                button.append(name, shortcut);
                 flyout.appendChild(button);
             });
             group.append(face, flyout);
