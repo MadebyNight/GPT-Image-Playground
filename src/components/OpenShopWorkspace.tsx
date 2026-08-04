@@ -56,6 +56,7 @@ export default function OpenShopWorkspace({
   onSave,
   editor,
 }: OpenShopWorkspaceProps) {
+  const workspaceRef = useRef<HTMLElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const editorReadyRef = useRef(false)
   const configurationInFlightRef = useRef(false)
@@ -64,6 +65,8 @@ export default function OpenShopWorkspace({
   const saveRequestIdRef = useRef<string | null>(null)
   const [isConfigured, setIsConfigured] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenNotice, setFullscreenNotice] = useState<string | null>(null)
   const [status, setStatus] = useState(sourceDataUrl ? '正在加载 OpenShop…' : '正在读取原图…')
   const [error, setError] = useState<string | null>(null)
   const frameSrc = `${import.meta.env.BASE_URL}openshop/`
@@ -186,6 +189,68 @@ export default function OpenShopWorkspace({
     if (sourceError) setError(sourceError)
   }, [sourceError])
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+
+    const syncFullscreenState = () => {
+      const workspaceIsFullscreen = document.fullscreenElement === workspaceRef.current
+      setIsFullscreen(workspaceIsFullscreen)
+      setFullscreenNotice(workspaceIsFullscreen ? '已进入全屏模式，按 Esc 可退出。' : null)
+    }
+
+    const handleFullscreenError = () => {
+      const workspaceIsFullscreen = document.fullscreenElement === workspaceRef.current
+      setIsFullscreen(workspaceIsFullscreen)
+      setFullscreenNotice(workspaceIsFullscreen
+        ? '无法退出全屏模式，请按 Esc 重试。'
+        : '无法进入全屏模式，请检查浏览器权限后重试。')
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    document.addEventListener('fullscreenerror', handleFullscreenError)
+    syncFullscreenState()
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState)
+      document.removeEventListener('fullscreenerror', handleFullscreenError)
+    }
+  }, [])
+
+  const handleFullscreenToggle = useCallback(async () => {
+    const workspace = workspaceRef.current
+    if (typeof document === 'undefined' || !workspace) {
+      setFullscreenNotice('全屏区域尚未准备好，请稍后重试。')
+      return
+    }
+
+    if (document.fullscreenElement === workspace) {
+      if (typeof document.exitFullscreen !== 'function') {
+        setFullscreenNotice('当前浏览器不支持退出全屏模式，请按 Esc 重试。')
+        return
+      }
+
+      setFullscreenNotice(null)
+      try {
+        await document.exitFullscreen()
+      } catch {
+        setFullscreenNotice('无法退出全屏模式，请按 Esc 重试。')
+      }
+      return
+    }
+
+    if (document.fullscreenEnabled === false || typeof workspace.requestFullscreen !== 'function') {
+      setFullscreenNotice('当前浏览器不支持全屏模式。')
+      return
+    }
+
+    setFullscreenNotice(null)
+    try {
+      await workspace.requestFullscreen()
+    } catch {
+      setIsFullscreen(document.fullscreenElement === workspace)
+      setFullscreenNotice('无法进入全屏模式，请检查浏览器权限后重试。')
+    }
+  }, [])
+
   const handleSave = () => {
     const frameWindow = frameRef.current?.contentWindow
     if (!frameWindow || !targetOrigin || !isConfigured || isSaving) return
@@ -217,6 +282,16 @@ export default function OpenShopWorkspace({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => void handleFullscreenToggle()}
+            aria-pressed={isFullscreen}
+            aria-label={isFullscreen ? '退出 OpenShop 全屏显示' : '全屏显示 OpenShop'}
+            data-openshop-fullscreen-toggle
+            className="inline-flex min-h-10 items-center rounded-xl px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+          >
+            {isFullscreen ? '退出全屏' : '全屏显示'}
+          </button>
+          <button
+            type="button"
             onClick={handleSave}
             disabled={!isConfigured || isSaving}
             className="min-h-10 rounded-xl bg-violet-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
@@ -235,10 +310,18 @@ export default function OpenShopWorkspace({
 
       <div className="mb-3 flex min-h-5 items-center justify-between gap-3 px-1 text-xs" aria-live="polite">
         <span className="text-gray-500 dark:text-gray-400">{status}</span>
-        {error && <span className="text-red-600 dark:text-red-400">{error}</span>}
+        <div className="flex items-center gap-3 text-right">
+          {fullscreenNotice && (
+            <span className={isFullscreen ? 'text-gray-500 dark:text-gray-400' : 'text-red-600 dark:text-red-400'}>
+              {fullscreenNotice}
+            </span>
+          )}
+          {error && <span className="text-red-600 dark:text-red-400">{error}</span>}
+        </div>
       </div>
 
       <section
+        ref={workspaceRef}
         className="relative min-h-[calc(100vh-9.5rem)] flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 shadow-sm dark:border-white/[0.08] dark:bg-black/20"
         data-openshop-workspace
         data-image-id={imageId}
@@ -252,7 +335,8 @@ export default function OpenShopWorkspace({
             ref={frameRef}
             className="absolute inset-0 h-full w-full border-0 bg-white"
             data-openshop-frame
-            allow="clipboard-read; clipboard-write"
+            allow="clipboard-read; clipboard-write; fullscreen"
+            allowFullScreen
             onLoad={() => {
               editorReadyRef.current = false
               configurationInFlightRef.current = false
