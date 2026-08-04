@@ -1,9 +1,9 @@
 {
   "id": "./",
-  "name": "OpenShop Image Editor",
+  "name": "OpenShop 图像编辑器",
   "version": "0.29.0",
   "short_name": "OpenShop",
-  "description": "Private, client-side image editing with layers, selections, PSD interchange, and optional browser-local AI.",
+  "description": "私密的浏览器端图像编辑器，支持图层、选区、PSD 交换与可选的本地浏览器 AI。",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

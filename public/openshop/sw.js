@@ -1,12 +1,13 @@
 'use strict';
 
-const SHELL_REVISION = '0.29.0-r1';
+const SHELL_REVISION = '0.29.0-r2';
 // State is origin-readable, so a cache name from it is never trusted merely
 // because it looks like a revision. Keep the bounded set of revisions this
 // worker knows were actually shipped; releases carry the newest predecessors
 // forward for rollback across skipped updates.
 const TRUSTED_SHELL_REVISIONS = new Set([
     SHELL_REVISION,
+    '0.29.0-r1',
     '0.28.0-r1',
     '0.27.0-r2',
     '0.27.0-r1',
@@ -392,7 +393,7 @@ async function handleNavigation(request) {
         return await fetch(request);
     } catch {
         return new Response(
-            '<!doctype html><meta charset="utf-8"><title>OpenShop unavailable</title><h1>OpenShop is not ready offline</h1><p>Reconnect once so the hosted shell can finish caching.</p>',
+            '<!doctype html><meta charset="utf-8"><title>OpenShop 暂不可用</title><h1>OpenShop 尚未完成离线准备</h1><p>请先重新联网一次，让编辑器外壳完成缓存。</p>',
             { status: 503, headers: { 'content-type': 'text/html; charset=utf-8' } }
         );
     }

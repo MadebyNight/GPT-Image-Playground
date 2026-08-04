@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
     <meta property="og:image" content="https://raw.githubusercontent.com/SysAdminDoc/Openshop/main/banner.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="OpenShop — Free browser-based image editor with layers, AI tools, selections, filters, PSD import, and a Photoshop-inspired workflow. No server, no signup, no install.">
-<meta property="og:title" content="OpenShop — Free Online Image Editor">
-<meta property="og:description" content="Professional image editing in your browser. Layers, AI tools, selections, filters, PSD import. Zero install.">
+    <meta name="description" content="OpenShop — 免费的浏览器端图像编辑器，提供图层、AI 工具、选区、滤镜和 PSD 导入。无需服务器、注册或安装。">
+<meta property="og:title" content="OpenShop — 在线图像编辑器">
+<meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-N5yjCeRL4SK8fQP451rnzwVAf6VTB2FWck3QqHSaklc=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
-<title>OpenShop v0.29.0 — Online Image Editor</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-q6PKGGGQULabuzVupL2QZBfT8zhi4tTIJxRz+dKNyG4=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
+<title>OpenShop v0.29.0 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
 // Promise-based v7 API while each call site is migrated independently.
@@ -2691,15 +2691,15 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 <div id="canvas-a11y-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ===== WELCOME SCREEN ===== -->
-<div id="welcome-overlay" role="dialog" aria-modal="true" aria-label="Welcome to OpenShop">
+<div id="welcome-overlay" role="dialog" aria-modal="true" aria-label="Welcome to OpenShop" data-i18n-aria-label="Welcome to OpenShop">
     <div class="welcome-inner">
         <section class="welcome-hero">
             <div class="welcome-brand"><span class="welcome-mark">OS</span><span>OpenShop</span><small>v0.29</small></div>
-            <div class="welcome-kicker"><span></span> Local creative studio</div>
-            <h1>Edit boldly.<br><em>Stay local.</em></h1>
-            <p>A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.</p>
-            <div class="welcome-trust" aria-label="Product benefits">
-                <span>Zero install</span><span>Private by default</span><span>PSD ready</span>
+            <div class="welcome-kicker"><span></span><span data-i18n="Local creative studio">Local creative studio</span></div>
+            <h1><span data-i18n="Edit boldly.">Edit boldly.</span><br><em data-i18n="Stay local.">Stay local.</em></h1>
+            <p data-i18n="A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.">A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.</p>
+            <div class="welcome-trust" aria-label="Product benefits" data-i18n-aria-label="Product benefits">
+                <span data-i18n="Zero install">Zero install</span><span data-i18n="Private by default">Private by default</span><span data-i18n="PSD ready">PSD ready</span>
             </div>
             <div class="welcome-art" aria-hidden="true">
                 <div class="art-grid"></div>
@@ -2710,18 +2710,18 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
         </section>
         <section class="welcome-launch">
             <div class="welcome-launch-head">
-                <div><span class="eyebrow">Workspace</span><h2>What will you make?</h2></div>
+                <div><span class="eyebrow" data-i18n="Workspace">Workspace</span><h2 data-i18n="What will you make?">What will you make?</h2></div>
                 <span class="launch-shortcut">Ctrl + K</span>
             </div>
             <div class="welcome-actions">
-                <button class="btn btn-primary" data-os-click="click-150"><span class="action-icon">+</span><span>New Canvas<small>Start from a blank document</small></span></button>
+                <button class="btn btn-primary" data-os-click="click-150"><span class="action-icon">+</span><span data-i18n="New Canvas">New Canvas<small data-i18n="Start from a blank document">Start from a blank document</small></span></button>
                 <button class="btn" data-os-click="click-151"><span class="action-icon">&#8593;</span><span>Open Image<small>PNG, JPEG, WebP, SVG</small></span></button>
-                <button class="btn" data-os-click="click-152"><span class="action-icon">Ps</span><span>Open PSD<small>Preserve editable layers</small></span></button>
-                <button class="btn welcome-skip" aria-label="Enter Studio" data-os-click="click-153"><span class="action-icon">&#8594;</span><span>Enter Studio<small>Use the current canvas</small></span></button>
+                <button class="btn" data-os-click="click-152"><span class="action-icon">Ps</span><span>Open PSD<small data-i18n="Preserve editable layers">Preserve editable layers</small></span></button>
+                <button class="btn welcome-skip" aria-label="Enter Studio" data-i18n-aria-label="Enter Studio" data-os-click="click-153"><span class="action-icon">&#8594;</span><span>Enter Studio<small data-i18n="Use the current canvas">Use the current canvas</small></span></button>
             </div>
-            <p class="boot-status" id="welcome-boot-status" role="status">Preparing the editing engine...</p>
+            <p class="boot-status" id="welcome-boot-status" role="status" data-i18n="Preparing the editing engine...">Preparing the editing engine...</p>
             <div class="template-section">
-                <div class="section-heading"><h3>Start from Template</h3><span>Choose a preset canvas</span></div>
+                <div class="section-heading"><h3 data-i18n="Start from Template">Start from Template</h3><span data-i18n="Choose a preset canvas">Choose a preset canvas</span></div>
                 <div class="template-grid" id="template-grid"></div>
             </div>
             <div class="recent-files" id="recent-files-area"></div>
@@ -4111,15 +4111,368 @@ const OS = {
         "Select an object first": "请先选择对象",
         "Selective color applied": "已应用可选颜色",
         "Shadows/Highlights applied": "已应用阴影/高光",
-        "Vibrance applied": "已应用自然饱和度"
+        "Vibrance applied": "已应用自然饱和度",
+
+        "New Canvas": "新建画布",
+        "Start from a blank document": "从空白文档开始",
+        "Enter Studio": "进入工作区",
+        "Use the current canvas": "使用当前画布",
+        "Preparing the editing engine...": "正在准备编辑引擎...",
+        "Start from Template": "从模板开始",
+        "Choose a preset canvas": "选择预设画布",
+        "Edit boldly.": "尽情编辑。",
+        "Stay local.": "数据留在本地。",
+        "A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.": "完整图像工作区，单个文件即可打开。画布、图层和导出文件始终保留在此设备上。",
+        "Local creative studio": "本地创作工作室",
+        "Zero install": "无需安装",
+        "Private by default": "默认私密",
+        "PSD ready": "支持 PSD",
+        "What will you make?": "你想创作什么？",
+        "Workspace": "工作区",
+        "Tool": "工具",
+        "Layer": "图层",
+        "Help": "帮助",
+        "AI": "AI",
+        "Local only": "仅在本地处理",
+        "Choose the workspace layout": "选择工作区布局",
+        "Workspace layout": "工作区布局",
+        "Standard": "标准",
+        "Essentials": "精简",
+        "Motion": "动效",
+        "Mobile": "移动端",
+        "Welcome to OpenShop": "欢迎使用 OpenShop",
+        "Product benefits": "产品优势",
+        "Editor panels": "编辑器面板",
+        "Drawing tools": "绘图工具",
+        "Tool options": "工具选项",
+        "Toggle panels": "切换面板",
+        "Local-only editing": "仅在本地编辑",
+        "New Layer": "新建图层",
+        "Merge Down": "向下合并",
+        "Mask": "蒙版",
+        "No layers. Click + to add one.": "暂无图层。点击“+”新建图层。",
+        "No document open": "未打开文档",
+        "The workspace is ready. Create a canvas or open an image to begin.": "工作区已就绪。请新建画布或打开图像开始编辑。",
+        "Canvas": "画布",
+        "Canvas state": "画布状态",
+        "All changes saved": "所有更改已保存",
+        "Objects": "对象",
+        "Active layer: none": "当前图层：无",
+        "Selection: none": "选区：无",
+        "Objects: 0": "对象：0",
+        "Tool: Select": "工具：选择",
+        "OpenShop canvas ready.": "OpenShop 画布已就绪。",
+        "OpenShop version 0.29.0": "OpenShop 版本 0.29.0",
+        "Click to dismiss": "点击关闭",
+        "Undo": "撤销",
+        "Cancel": "取消",
+        "Close": "关闭",
+        "Apply": "应用",
+        "Reset": "重置",
+        "Save": "保存",
+        "Export": "导出",
+        "Import": "导入",
+        "Load": "加载",
+        "Clear": "清除",
+        "Add": "添加",
+        "Convert": "转换",
+        "Normal": "正常",
+        "Multiply": "正片叠底",
+        "Screen": "滤色",
+        "Overlay": "叠加",
+        "Darken": "变暗",
+        "Lighten": "变亮",
+        "Color Dodge": "颜色减淡",
+        "Color Burn": "颜色加深",
+        "Hard Light": "强光",
+        "Soft Light": "柔光",
+        "Difference": "差值",
+        "Exclusion": "排除",
+        "Hue": "色相",
+        "Saturation": "饱和度",
+        "Luminosity": "明度",
+        "Checkerboard": "棋盘格",
+        "Stripes": "条纹",
+        "Dots": "圆点",
+        "Grid": "网格",
+        "Diagonal": "对角线",
+        "Crosshatch": "交叉线",
+        "Solid": "实线",
+        "Dashed": "虚线",
+        "Dotted": "点线",
+        "Dash-Dot": "点划线",
+        "Long Dash": "长虚线",
+        "Round": "圆形",
+        "Soft Round": "柔边圆形",
+        "Flat/Calligraphy": "扁平 / 书法",
+        "Scatter": "散点",
+        "Pixel": "像素",
+        "Linear": "线性",
+        "Radial": "径向",
+        "Original Ratio": "原始比例",
+        "Custom": "自定义",
+        "Default": "默认",
+        "Forward Warp": "向前变形",
+        "Twirl CW": "顺时针旋转",
+        "Twirl CCW": "逆时针旋转",
+        "Bloat": "膨胀",
+        "Pucker": "收缩",
+        "Drop files here": "将文件拖放到这里",
+        "PNG, JPEG, WebP, SVG, GIF, PDF, RAW, PSD, .openshop": "PNG、JPEG、WebP、SVG、GIF、PDF、RAW、PSD、.openshop",
+        "Preserve editable layers": "保留可编辑图层",
+        "Models download on first use — no API keys needed": "模型首次使用时下载，无需 API Key",
+        "Panoptic model loads on demand": "全景分割模型按需加载",
+        "Downloading model weights (cached after first use)": "正在下载模型权重（首次使用后会缓存）",
+        "Loading AI Model...": "正在加载 AI 模型...",
+        "Checking offline support": "正在检查离线支持",
+        "Nothing sent": "未发送任何数据",
+        "English": "英文",
+        "Language": "语言",
+        "Interface": "界面",
+        "Performance": "性能",
+        "History States": "历史状态数量",
+        "Accent Color": "强调色",
+        "Default Width": "默认宽度",
+        "Default Height": "默认高度",
+        "Grid & Snap": "网格与吸附",
+        "Grid Size (px)": "网格大小（px）",
+        "Snap Tolerance": "吸附容差",
+        "Stack new objects in the active layer": "将新对象添加到当前图层",
+        "Keep brush strokes as editable paths": "将画笔笔触保留为可编辑路径",
+        "Layers": "图层",
+        "Non-destructive layers": "非破坏性图层",
+        "Apply Stack": "应用图层堆栈",
+        "Add Layer": "添加图层",
+        "Adjustments": "调整",
+        "Brightness": "亮度",
+        "Contrast": "对比度",
+        "Text & Type": "文字与排版",
+        "Text Effects": "文字效果",
+        "Text on Path": "路径文字",
+        "Layer Styles": "图层样式",
+        "Histogram": "直方图",
+        "Animation": "动画",
+        "Timeline": "时间轴",
+        "Actions": "动作",
+        "Mini Bridge": "迷你资源库",
+        "Record": "录制",
+        "Play": "播放",
+        "FPS": "帧率",
+        "Before": "之前",
+        "After": "之后",
+        "Fit": "适应",
+        "Cursor": "光标",
+        "Pressure": "压感",
+        "Stylus: ready": "手写笔：就绪",
+        "Alt+Click source": "Alt + 单击设置源点",
+        "Or hold Shift to add, Alt to subtract.": "按住 Shift 添加，按住 Alt 减去。",
+        "Click to select. Drag to move. Handles to resize/rotate.": "单击选择，拖动移动，使用控制点缩放或旋转。",
+        "Click to add points. Double-click to close selection.": "单击添加点，双击闭合选区。",
+        "Click to add anchor points. Double-click to finish path.": "单击添加锚点，双击完成路径。",
+        "Click to zoom in. Alt-click to zoom out.": "单击放大，Alt + 单击缩小。",
+        "Click two points to measure distance.": "单击两个点测量距离。",
+        "Click to heal blemish": "单击修复瑕疵",
+        "New Document": "新建文档",
+        "Export PNG": "导出 PNG",
+        "Export JPEG": "导出 JPEG",
+        "Export WebP": "导出 WebP",
+        "Export AVIF": "导出 AVIF",
+        "Export SVG": "导出 SVG",
+        "Export PDF": "导出 PDF",
+        "Export PSD": "导出 PSD",
+        "Export Settings": "导出设置",
+        "Save Project": "保存项目",
+        "Recovery Storage": "恢复存储",
+        "Templates": "模板",
+        "Duplicate Layer": "创建图层副本",
+        "Delete Layer": "删除图层",
+        "Merge Down": "向下合并",
+        "Select All": "全选",
+        "Inverse Selection": "反选",
+        "Grow Selection": "扩展选区",
+        "Expand Selection...": "扩大选区...",
+        "Contract Selection...": "收缩选区...",
+        "Feather Selection...": "羽化选区...",
+        "Smooth Selection": "平滑选区",
+        "Free Transform": "自由变换",
+        "Canvas Rotate CW": "顺时针旋转画布",
+        "Canvas Rotate CCW": "逆时针旋转画布",
+        "Add Watermark": "添加水印",
+        "Image Info": "图像信息",
+        "Before / After": "前后对比",
+        "B&W": "黑白",
+        "Posterize": "色调分离",
+        "Threshold": "阈值",
+        "Vignette": "晕影",
+        "Unsharp Mask": "USM 锐化",
+        "Oil Paint": "油画",
+        "Halftone": "半调",
+        "Duotone": "双色调",
+        "Tilt Shift": "移轴",
+        "Chromatic Aberration": "色差",
+        "Generate Noise": "生成杂色",
+        "Gradient Map": "渐变映射",
+        "Curves": "曲线",
+        "Levels": "色阶",
+        "Color Balance": "色彩平衡",
+        "Channel Mixer": "通道混合器",
+        "Photo Presets": "照片预设",
+        "Shadows/Highlights": "阴影/高光",
+        "Photo Filter": "照片滤镜",
+        "Selective Color": "可选颜色",
+        "Replace Color": "替换颜色",
+        "Lens Correction": "镜头校正",
+        "AI Background Remove": "AI 背景移除",
+        "AI Depth Map": "AI 深度图",
+        "AI Object Detection": "AI 对象检测",
+        "Name This State...": "命名当前状态...",
+        "Curved Text": "弧形文字",
+        "Pixel Grid": "像素网格",
+        "Toggle Snap": "切换吸附",
+        "Symmetry: Off": "对称：关闭",
+        "Symmetry: Horizontal": "对称：水平",
+        "Symmetry: Vertical": "对称：垂直",
+        "Symmetry: Both Axes": "对称：双轴",
+        "Symmetry: Radial": "对称：径向",
+        "Fullscreen": "全屏",
+        "Zoom Fit": "适应屏幕",
+        "Keyboard Shortcuts": "键盘快捷键",
+        "Theme: Dark": "主题：深色",
+        "Theme: Midnight": "主题：午夜",
+        "Theme: OLED": "主题：OLED 纯黑",
+        "Toggle Panels": "切换面板",
+        "Edit Gradient Stops": "编辑渐变色标",
+        "Network Activity": "网络活动",
+        "Toggle Strict Offline Mode": "切换严格离线模式",
+        "Export Diagnostics": "导出诊断信息",
+        "Clear Diagnostics": "清除诊断信息",
+        "No commands available": "没有可用命令",
+        "No commands match “{query}”": "没有与“{query}”匹配的命令",
+        "Showing {shown} of {total} commands — keep typing to narrow": "显示 {shown}/{total} 条命令，继续输入以缩小范围",
+
+        "Marquee": "选框",
+        "Move": "移动",
+        "Lasso": "套索",
+        "Selection": "选择",
+        "Sampling": "取样",
+        "Healing": "修复",
+        "Clone": "仿制",
+        "History": "历史记录",
+        "Eraser": "橡皮擦",
+        "Fill": "填充",
+        "Blur": "模糊",
+        "Tone": "明暗",
+        "Pen": "钢笔",
+        "Type": "文字",
+        "Path Selection": "路径选择",
+        "Shape": "形状",
+        "Navigation": "导航",
+        "AI Select": "AI 选择",
+        "Mode": "模式",
+        "Rectangular Marquee Tool": "矩形选框工具",
+        "Elliptical Marquee Tool": "椭圆选框工具",
+        "Single Row Marquee Tool": "单行选框工具",
+        "Single Column Marquee Tool": "单列选框工具",
+        "Move Tool": "移动工具",
+        "Lasso Tool": "套索工具",
+        "Polygonal Lasso Tool": "多边形套索工具",
+        "Magnetic Lasso Tool": "磁性套索工具",
+        "Quick Selection Tool": "快速选择工具",
+        "Magic Wand Tool": "魔棒工具",
+        "Crop Tool": "裁剪工具",
+        "Perspective Crop Tool": "透视裁剪工具",
+        "Slice Tool": "切片工具",
+        "Slice Select Tool": "切片选择工具",
+        "Eyedropper Tool": "吸管工具",
+        "Color Sampler Tool": "颜色取样工具",
+        "Ruler Tool": "标尺工具",
+        "Note Tool": "便签工具",
+        "Spot Healing Brush Tool": "污点修复画笔工具",
+        "Healing Brush Tool": "修复画笔工具",
+        "Patch Tool": "修补工具",
+        "Content-Aware Move Tool": "内容感知移动工具",
+        "Red Eye Tool": "红眼工具",
+        "Clone Stamp Tool": "仿制图章工具",
+        "Pattern Stamp Tool": "图案图章工具",
+        "History Brush Tool": "历史记录画笔工具",
+        "Art History Brush Tool": "艺术历史记录画笔工具",
+        "Eraser Tool": "橡皮擦工具",
+        "Background Eraser Tool": "背景橡皮擦工具",
+        "Magic Eraser Tool": "魔术橡皮擦工具",
+        "Gradient Tool": "渐变工具",
+        "Paint Bucket Tool": "油漆桶工具",
+        "Blur Tool": "模糊工具",
+        "Sharpen Tool": "锐化工具",
+        "Smudge Tool": "涂抹工具",
+        "Dodge Tool": "减淡工具",
+        "Burn Tool": "加深工具",
+        "Sponge Tool": "海绵工具",
+        "Pen Tool": "钢笔工具",
+        "Freeform Pen Tool": "自由钢笔工具",
+        "Add Anchor Point Tool": "添加锚点工具",
+        "Delete Anchor Point Tool": "删除锚点工具",
+        "Convert Point Tool": "转换锚点工具",
+        "Horizontal Type Tool": "横排文字工具",
+        "Vertical Type Tool": "竖排文字工具",
+        "Horizontal Type Mask Tool": "横排文字蒙版工具",
+        "Vertical Type Mask Tool": "竖排文字蒙版工具",
+        "Path Selection Tool": "路径选择工具",
+        "Direct Selection Tool": "直接选择工具",
+        "Rectangle Tool": "矩形工具",
+        "Rounded Rectangle Tool": "圆角矩形工具",
+        "Ellipse Tool": "椭圆工具",
+        "Polygon Tool": "多边形工具",
+        "Line Tool": "直线工具",
+        "Custom Shape Tool": "自定义形状工具",
+        "Hand Tool": "抓手工具",
+        "Rotate View Tool": "旋转视图工具",
+        "Zoom Tool": "缩放工具",
+        "Quick Mask Mode": "快速蒙版模式",
+        "Screen Mode": "屏幕模式",
+        "Tools: {family}": "{family}工具"
     } },
-    _lang: 'en',
+    _lang: 'zh',
     _t(key) {
         const dict = this._locales[this._lang] || {};
         if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
         // The pseudo-locale exists so untranslated strings are obvious: anything
         // still plain ASCII on screen never went through _t or data-i18n.
-        return this._lang === 'pseudo' ? this._pseudoTranslate(key) : key;
+        return this._lang === 'pseudo' ? this._pseudoTranslate(key) : this._translateRuntimeMessage(String(key));
+    },
+    _translateRuntimeMessage(message) {
+        if (this._lang !== 'zh') return message;
+        // Dynamic messages keep filenames, pixel counts and decoder errors
+        // untouched; only the system-owned sentence shell is translated.
+        const templates = [
+            [/^Opened: (.+)$/, '已打开：$1'],
+            [/^Picked: (.+)$/, '已取样：$1'],
+            [/^Exported as (.+)$/, '已导出为 $1'],
+            [/^Export failed: (.+)$/, '导出失败：$1'],
+            [/^AVIF export failed: (.+)$/, 'AVIF 导出失败：$1'],
+            [/^SVG export failed: (.+)$/, 'SVG 导出失败：$1'],
+            [/^PSD imported: (.+)$/, '已导入 PSD：$1'],
+            [/^PSD import failed: (.+)$/, 'PSD 导入失败：$1'],
+            [/^Project save failed: (.+)$/, '项目保存失败：$1'],
+            [/^History restore failed: (.+)$/, '历史记录恢复失败：$1'],
+            [/^Filter failed: (.+)$/, '滤镜执行失败：$1'],
+            [/^Batch processing failed: (.+)$/, '批处理失败：$1'],
+            [/^Applying (.+)\.\.\.$/, '正在应用 $1...'],
+            [/^Applied (.+)$/, '已应用 $1'],
+            [/^Cropped to (.+)$/, '已裁剪为 $1'],
+            [/^Selection: (.+)$/, '选区：$1'],
+            [/^Selected (.+)$/, '已选择 $1'],
+            [/^Color Range: (.+)$/, '色彩范围：$1'],
+            [/^Diagnostics exported \((.+)\)$/, '诊断信息已导出（$1）'],
+            [/^Diagnostics cleared$/, '诊断信息已清除']
+        ];
+        for (const [pattern, replacement] of templates) {
+            if (pattern.test(message)) return message.replace(pattern, replacement);
+        }
+        return message;
+    },
+    _format(key, values = {}) {
+        return this._t(key).replace(/\{([^}]+)\}/g, (match, name) =>
+            Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match);
     },
     // Accent every letter and pad the string so both missing translations and
     // layouts that cannot survive longer text show up immediately.
@@ -4140,20 +4493,78 @@ const OS = {
         const rtl = ['ar', 'he', 'fa', 'ur', 'ps', 'sd', 'yi', 'dv', 'ckb'];
         return rtl.includes(String(lang).split('-')[0].toLowerCase()) ? 'rtl' : 'ltr';
     },
-    _initI18n() {
-        const selectors = '.dd-item, .menu-item, .panel-tab, .opt-group label, .panel-section h4, .pref-row label';
-        document.querySelectorAll(selectors).forEach(el => {
+    _i18nObserver: null,
+    _initI18n(root = document) {
+        const scope = root?.nodeType === Node.DOCUMENT_NODE ? root : root || document;
+        const findAll = selector => {
+            const nodes = [];
+            if (scope.nodeType === Node.ELEMENT_NODE && scope.matches?.(selector)) nodes.push(scope);
+            nodes.push(...scope.querySelectorAll?.(selector) || []);
+            return nodes;
+        };
+        // Only leaf-like controls are marked automatically. Complex controls
+        // retain their DOM structure and supply explicit data-i18n keys where
+        // needed, so a locale switch never replaces child controls.
+        const selectors = [
+            '.dd-item', '.menu-item', '.panel-tab', '.opt-group label', '.panel-section h4', '.pref-row label',
+            '#welcome-overlay :is(h2,h3,p,span,small,button)', '#blank-workspace :is(h2,p,button)',
+            '#tool-options :is(label,option,span)', '#panels :is(label,option,button,span,h4)',
+            '#statusbar :is(span,button,option)', '#bottom-tabs :is(span,button)',
+            '#drop-zone :is(p,span,button)', '#cmd-palette :is(p,span,button,option)',
+            '.modal-overlay :is(h2,h3,h4,p,label,button,option,span,dt,dd)',
+            '.filter-panel :is(h2,h3,h4,p,label,button,option,span)',
+            '#timeline-panel :is(h2,h3,h4,p,label,button,option,span)',
+            '#macro-panel :is(h2,h3,h4,p,label,button,option,span)'
+        ].join(',');
+        findAll(selectors).forEach(el => {
+            if (el.dataset.i18n || el.closest?.('[data-no-i18n]')) return;
             if (el.querySelector('.menu-dropdown, .dd-shortcut')) {
-                const tn = [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+                const tn = [...el.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
                 if (tn) el.dataset.i18n = tn.textContent.trim();
             } else if (el.children.length === 0 || (el.children.length === 1 && el.children[0].tagName === 'INPUT')) {
                 const text = el.childNodes[0]?.nodeType === Node.TEXT_NODE ? el.childNodes[0].textContent.trim() : el.textContent.trim();
                 if (text) el.dataset.i18n = text;
             }
         });
-        document.querySelectorAll('.tool-btn[data-tip]').forEach(btn => {
-            btn.dataset.i18nTip = btn.dataset.tip;
+        findAll('.tool-btn[data-tip]').forEach(btn => {
+            if (!btn.dataset.i18nTip) btn.dataset.i18nTip = btn.dataset.tip;
         });
+        [
+            ['title', 'data-i18n-title'],
+            ['aria-label', 'data-i18n-aria-label'],
+            ['placeholder', 'data-i18n-placeholder']
+        ].forEach(([attribute, keyAttribute]) => {
+            const selector = [
+                `#topbar[${attribute}]`, `#topbar [${attribute}]`,
+                `#toolbar[${attribute}]`, `#toolbar [${attribute}]`,
+                `#tool-options[${attribute}]`, `#tool-options [${attribute}]`,
+                `#panels[${attribute}]`, `#panels [${attribute}]`,
+                `#statusbar[${attribute}]`, `#statusbar [${attribute}]`,
+                `#bottom-tabs[${attribute}]`, `#bottom-tabs [${attribute}]`,
+                `#welcome-overlay[${attribute}]`, `#welcome-overlay [${attribute}]`,
+                `#blank-workspace[${attribute}]`, `#blank-workspace [${attribute}]`,
+                `.modal-overlay[${attribute}]`, `.modal-overlay [${attribute}]`,
+                `.filter-panel[${attribute}]`, `.filter-panel [${attribute}]`,
+                `#cmd-palette[${attribute}]`, `#cmd-palette [${attribute}]`,
+                `#timeline-panel[${attribute}]`, `#timeline-panel [${attribute}]`,
+                `#macro-panel[${attribute}]`, `#macro-panel [${attribute}]`
+            ].join(',');
+            findAll(selector).forEach(el => {
+                if (!el.hasAttribute(keyAttribute) && el.getAttribute(attribute)?.trim()) {
+                    el.setAttribute(keyAttribute, el.getAttribute(attribute).trim());
+                }
+            });
+        });
+        if (!this._i18nObserver && document.body) {
+            this._i18nObserver = new MutationObserver(records => {
+                const added = records.flatMap(record => [...record.addedNodes])
+                    .filter(node => node.nodeType === Node.ELEMENT_NODE);
+                if (!added.length) return;
+                added.forEach(node => this._initI18n(node));
+                this.setLocale(this._lang);
+            });
+            this._i18nObserver.observe(document.body, { childList:true, subtree:true });
+        }
     },
     _applyDirectionToObject(object) {
         const textTypes = ['text', 'i-text', 'textbox'];
@@ -4170,7 +4581,7 @@ const OS = {
         // Assistive technology, hyphenation, and bidi all key off these two
         // attributes; the locale switch never touched them before.
         const direction = this._localeDirection(lang);
-        document.documentElement.setAttribute('lang', lang === 'pseudo' ? 'en-x-pseudo' : lang);
+        document.documentElement.setAttribute('lang', lang === 'pseudo' ? 'en-x-pseudo' : (lang === 'zh' ? 'zh-CN' : lang));
         document.documentElement.setAttribute('dir', direction);
         this._textDirection = direction;
         this._applyTextDirection(direction);
@@ -4190,7 +4601,30 @@ const OS = {
             const val = Object.prototype.hasOwnProperty.call(dict, key)
                 ? dict[key]
                 : (lang === 'pseudo' ? this._pseudoTranslate(key) : key);
-            el.dataset.tip = val; el.setAttribute('aria-label', val);
+            el.dataset.tip = val; el.setAttribute('aria-label', val); el.title = val;
+        });
+        document.querySelectorAll('[data-i18n-tool-family][data-i18n-tool-label]').forEach(el => {
+            const family = this._t(el.dataset.i18nToolFamily);
+            const label = this._t(el.dataset.i18nToolLabel);
+            const val = `${family}：${label}`;
+            el.dataset.tip = val; el.setAttribute('aria-label', val); el.title = val;
+        });
+        document.querySelectorAll('[data-i18n-tool-group]').forEach(el => {
+            const val = this._format('Tools: {family}', { family:this._t(el.dataset.i18nToolGroup) });
+            el.setAttribute('aria-label', val);
+        });
+        [
+            ['data-i18n-title', 'title'],
+            ['data-i18n-aria-label', 'aria-label'],
+            ['data-i18n-placeholder', 'placeholder']
+        ].forEach(([keyAttribute, attribute]) => {
+            document.querySelectorAll(`[${keyAttribute}]`).forEach(el => {
+                const key = el.getAttribute(keyAttribute);
+                const val = Object.prototype.hasOwnProperty.call(dict, key)
+                    ? dict[key]
+                    : (lang === 'pseudo' ? this._pseudoTranslate(key) : key);
+                el.setAttribute(attribute, val);
+            });
         });
     },
     _textDirection: 'ltr',
@@ -4231,7 +4665,7 @@ const OS = {
         document: { activeId:null, openIds:[], name:null },
         viewport: { zoom:1, transform:[1,0,0,1,0,0] },
         panels: { visible:true, activeTabs:{ ptg1:'ptg1-layers', ptg2:'ptg2-color', ptg3:'ptg3-history' } },
-        preferences: { language:'en', theme:'default' },
+        preferences: { language:'zh', theme:'default' },
         persistence: { state:'clean', dirty:false }
     },
     renderer: {
@@ -4810,6 +5244,15 @@ const OS = {
         // Welcome screen
         this.populateTemplates();
         this.populateRecentFiles();
+        // Apply the selected locale before the welcome screen becomes usable.
+        // First-time visitors get Chinese; only an explicit saved English
+        // preference opts back into English.
+        this._initI18n();
+        try {
+            this.setLocale(localStorage.getItem('os_lang') === 'en' ? 'en' : 'zh');
+        } catch (e) {
+            this.setLocale('zh');
+        }
         // Accessibility: add aria-labels to tool buttons from their tooltips
         document.querySelectorAll('.tool-btn[data-tip]').forEach(btn => {
             btn.setAttribute('aria-label', btn.dataset.tip);
@@ -10000,7 +10443,9 @@ self.onmessage = function(event) {
             face.type = 'button';
             face.className = 'tool-btn audit-tool-face';
             face.dataset.tool = members[0].toolState;
-            face.dataset.tip = `${family}: ${members[0].label}`;
+            face.dataset.i18nToolFamily = family;
+            face.dataset.i18nToolLabel = members[0].label;
+            face.dataset.tip = `${this._t(family)}：${this._t(members[0].label)}`;
             face.setAttribute('aria-label', face.dataset.tip);
             face.title = face.dataset.tip;
             const glyph = document.createElement('span');
@@ -10008,26 +10453,30 @@ self.onmessage = function(event) {
             glyph.textContent = abbreviations[family] || family.slice(0, 2).toUpperCase();
             const familyLabel = document.createElement('span');
             familyLabel.className = 'tool-family-label';
-            familyLabel.textContent = family;
+            familyLabel.dataset.i18n = family;
+            familyLabel.textContent = this._t(family);
             face.append(glyph, familyLabel);
             const flyout = document.createElement('div');
             flyout.className = 'tool-flyout audit-tool-flyout';
             flyout.setAttribute('role', 'menu');
-            flyout.setAttribute('aria-label', `${family} tools`);
+            flyout.dataset.i18nToolGroup = family;
+            flyout.setAttribute('aria-label', this._format('Tools: {family}', { family:this._t(family) }));
             members.forEach(tool => {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'tool-btn';
                 if (tool.id) button.classList.add('audit-tool-member');
                 button.dataset.tool = tool.toolState;
-                button.dataset.tip = tool.label;
-                button.setAttribute('aria-label', tool.label);
+                button.dataset.i18nTip = tool.label;
+                button.dataset.tip = this._t(tool.label);
+                button.setAttribute('aria-label', button.dataset.tip);
                 button.setAttribute('role', 'menuitem');
                 button.setAttribute('data-os-click', 'click-229');
-                button.title = tool.label;
+                button.title = button.dataset.tip;
                 const name = document.createElement('span');
                 name.className = 'tool-name';
-                name.textContent = tool.label;
+                name.dataset.i18n = tool.label;
+                name.textContent = this._t(tool.label);
                 const shortcut = document.createElement('span');
                 shortcut.className = 'tool-shortcut';
                 shortcut.textContent = tool.shortcut || '';
@@ -14124,9 +14573,8 @@ self.onmessage = function(event) {
         this.loadImportedAssets();
         this._initKeyboardShortcuts();
         this._initI18n();
+        this.setLocale(this._lang);
         try {
-            const savedLang = localStorage.getItem('os_lang');
-            if (savedLang && savedLang !== 'en') this.setLocale(savedLang);
             this.setWorkspaceMode(localStorage.getItem('os_workspace_mode') || this.session.workspace.mode, { announce:false });
         } catch(e) { console.warn('Language restore failed:', e.message); }
         this.updateMinimap();
@@ -18100,7 +18548,7 @@ self.onmessage = async function(event) {
         this.maxHistory = history.value;
         const accent = overlay.querySelector('#pref-accent').value;
         document.documentElement.style.setProperty('--accent', accent);
-        const lang = overlay.querySelector('#pref-lang')?.value || 'en';
+        const lang = overlay.querySelector('#pref-lang')?.value || 'zh';
         if (lang !== this._lang) this.setLocale(lang);
         try { localStorage.setItem('os_lang', lang); } catch(e) { console.warn('Language save failed:', e.message); }
         // "Preferences saved" used to mean the language only; every other value
@@ -19620,7 +20068,7 @@ self.onmessage = async function(e) {
             }
             const cat = document.createElement('span');
             cat.className = 'cmd-cat';
-            cat.textContent = this._safeText(c.cat, 40);
+            cat.textContent = this._safeText(this._t(c.cat), 40);
             item.appendChild(cat);
             results.appendChild(item);
         });
@@ -19628,12 +20076,17 @@ self.onmessage = async function(e) {
         if (!this._cmdFiltered.length) {
             const empty = document.createElement('div');
             empty.className = 'cmd-item cmd-empty';
-            empty.textContent = lower ? `No commands match “${this._safeText(q, 40)}”` : 'No commands available';
+            empty.textContent = lower
+                ? this._format('No commands match “{query}”', { query:this._safeText(q, 40) })
+                : this._t('No commands available');
             results.appendChild(empty);
         } else if (!lower && cmds.length > this._cmdFiltered.length) {
             const more = document.createElement('div');
             more.className = 'cmd-item cmd-empty';
-            more.textContent = `Showing ${this._cmdFiltered.length} of ${cmds.length} commands — keep typing to narrow`;
+            more.textContent = this._format('Showing {shown} of {total} commands — keep typing to narrow', {
+                shown:this._cmdFiltered.length,
+                total:cmds.length
+            });
             results.appendChild(more);
         }
     },
@@ -24446,18 +24899,19 @@ self.onmessage = async function(e) {
         const t = document.createElement('div');
         t.className = 'toast info';
         const text = document.createElement('span');
-        text.textContent = msg;
+        const localizedMessage = this._t(msg);
+        text.textContent = localizedMessage;
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'btn toast-undo';
-        button.textContent = 'Undo';
+        button.textContent = this._t('Undo');
         const dismiss = () => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); };
         const timer = setTimeout(dismiss, duration);
         button.addEventListener('click', () => { clearTimeout(timer); dismiss(); onUndo(); });
         t.append(text, button);
         container.appendChild(t);
         requestAnimationFrame(() => t.classList.add('show'));
-        this._announceAccessibility(msg);
+        this._announceAccessibility(localizedMessage);
         return t;
     },
     // ====================== DIAGNOSTICS ======================
@@ -24564,9 +25018,10 @@ self.onmessage = async function(e) {
         // Translating here rather than at 268 call sites: a static message picks
         // up its dictionary entry for free, and an interpolated one falls back
         // to itself exactly as before.
-        const t=document.createElement('div'); t.className=`toast ${type}`; t.textContent=this._t(msg);
+        const localizedMessage = this._t(msg);
+        const t=document.createElement('div'); t.className=`toast ${type}`; t.textContent=localizedMessage;
         el.appendChild(t); requestAnimationFrame(()=>t.classList.add('show'));
-        this._announceAccessibility(msg);
+        this._announceAccessibility(localizedMessage);
         if (type === 'error' || type === 'warning') this.recordDiagnostic(type === 'error' ? 'error' : 'warning', msg);
         let dismissed = false;
         const dismiss = () => {
@@ -24584,7 +25039,7 @@ self.onmessage = async function(e) {
         // toast the pointer crossed on its way somewhere else stayed forever.
         t.addEventListener('mouseenter', () => clearTimeout(timer));
         t.addEventListener('mouseleave', () => { if (!dismissed) timer = setTimeout(dismiss, 1200); });
-        t.title = 'Click to dismiss';
+        t.title = this._t('Click to dismiss');
     },
 };
 
