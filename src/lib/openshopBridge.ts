@@ -1,6 +1,6 @@
 export const OPENSHOP_PROTOCOL_VERSION = 1
 
-export type OpenShopExportFormat = 'png' | 'jpeg' | 'webp' | 'avif' | 'svg' | 'pdf'
+export type OpenShopExportFormat = 'png'
 
 export interface OpenShopDocument {
   blob: Blob
@@ -51,6 +51,20 @@ export function isOpenShopMessageFromFrame(
   return event.source === frameWindow
     && event.origin === targetOrigin
     && isOpenShopMessage(event.data)
+}
+
+/**
+ * 回复必须关联到一个仍在等待的、非空请求 ID。
+ *
+ * 不能把 expectedId 为 null 与没有 ID 的回复视为匹配，否则迟到或无关联的
+ * postMessage 会被宿主误认为当前请求的完成信号。
+ */
+export function isOpenShopRequestIdMatch(expectedId: string | null | undefined, responseId: unknown): boolean {
+  return typeof expectedId === 'string' && expectedId.length > 0 && responseId === expectedId
+}
+
+export function createOpenShopRequestId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 export function postOpenShopMessage(

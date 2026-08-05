@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  createOpenShopRequestId,
   dataUrlToOpenShopDocument,
   getOpenShopTargetOrigin,
   isOpenShopMessageFromFrame,
+  isOpenShopRequestIdMatch,
   postOpenShopMessage,
 } from '../lib/openshopBridge'
 
@@ -41,6 +43,24 @@ export function shouldSendOpenShopConfiguration({
     && !isConfiguring
 }
 
+export function isOpenShopConfigurationRequestCurrent({
+  currentFrameWindow,
+  requestFrameWindow,
+  editorReady,
+  currentRequestId,
+  requestId,
+}: {
+  currentFrameWindow: Window | null
+  requestFrameWindow: Window
+  editorReady: boolean
+  currentRequestId: string | null
+  requestId: string
+}): boolean {
+  return currentFrameWindow === requestFrameWindow
+    && editorReady
+    && currentRequestId === requestId
+}
+
 /**
  * OpenShop 的宿主界面。
  *
@@ -60,8 +80,10 @@ export default function OpenShopWorkspace({
   const frameRef = useRef<HTMLIFrameElement>(null)
   const editorReadyRef = useRef(false)
   const configurationInFlightRef = useRef(false)
+  const configurationRequestIdRef = useRef<string | null>(null)
   const configuredRef = useRef(false)
   const helloSentRef = useRef(false)
+  const helloRequestIdRef = useRef<string | null>(null)
   const saveRequestIdRef = useRef<string | null>(null)
   const [isConfigured, setIsConfigured] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -78,8 +100,10 @@ export default function OpenShopWorkspace({
   const sendHello = useCallback((retry = false) => {
     const frameWindow = frameRef.current?.contentWindow
     if (!frameWindow || !targetOrigin || (helloSentRef.current && !retry)) return
+    const requestId = helloRequestIdRef.current ?? createOpenShopRequestId('hello')
     helloSentRef.current = true
-    postOpenShopMessage(frameWindow, targetOrigin, { type: 'openshop:hello', id: 'hello' })
+    helloRequestIdRef.current = requestId
+    postOpenShopMessage(frameWindow, targetOrigin, { type: 'openshop:hello', id: requestId })
   }, [targetOrigin])
 
   const sendConfiguration = useCallback(async () => {
@@ -94,22 +118,36 @@ export default function OpenShopWorkspace({
       isConfiguring: configurationInFlightRef.current,
     })) return
 
+    const requestId = createOpenShopRequestId('configure')
     configurationInFlightRef.current = true
+    configurationRequestIdRef.current = requestId
     setStatus('正在导入原图…')
     try {
       const document = await dataUrlToOpenShopDocument(sourceDataUrl, `source-${imageId.slice(0, 12)}.png`)
-      if (frameRef.current?.contentWindow !== frameWindow || !editorReadyRef.current) {
-        configurationInFlightRef.current = false
+      if (!isOpenShopConfigurationRequestCurrent({
+        currentFrameWindow: frameRef.current?.contentWindow ?? null,
+        requestFrameWindow: frameWindow,
+        editorReady: editorReadyRef.current,
+        currentRequestId: configurationRequestIdRef.current,
+        requestId,
+      })) {
+        if (configurationRequestIdRef.current === requestId) {
+          configurationInFlightRef.current = false
+          configurationRequestIdRef.current = null
+        }
         return
       }
       postOpenShopMessage(frameWindow, targetOrigin, {
         type: 'openshop:configure',
-        id: 'configure',
+        id: requestId,
         document,
         overrides: { open: false, save: false },
       })
     } catch (cause) {
-      configurationInFlightRef.current = false
+      if (configurationRequestIdRef.current === requestId) {
+        configurationInFlightRef.current = false
+        configurationRequestIdRef.current = null
+      }
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [imageId, sourceDataUrl, targetOrigin])
@@ -123,24 +161,31 @@ export default function OpenShopWorkspace({
 
       const message = event.data
       if (message.type === 'openshop:ready') {
-        if (message.id === 'hello') {
+        const expectedHelloId = !editorReadyRef.current && helloSentRef.current
+          ? helloRequestIdRef.current
+          : null
+        if (isOpenShopRequestIdMatch(expectedHelloId, message.id)) {
           editorReadyRef.current = true
           void sendConfiguration()
           return
         }
-        sendHello()
+        if (!editorReadyRef.current) sendHello(true)
         return
       }
 
-      if (message.type === 'openshop:configured') {
+      const expectedConfigureId = configurationInFlightRef.current
+        ? configurationRequestIdRef.current
+        : null
+      if (message.type === 'openshop:configured' && isOpenShopRequestIdMatch(expectedConfigureId, message.id)) {
         configurationInFlightRef.current = false
+        configurationRequestIdRef.current = null
         configuredRef.current = true
         setIsConfigured(true)
         setStatus('编辑器已就绪')
         return
       }
 
-      if (message.type === 'openshop:exported' && message.id === saveRequestIdRef.current) {
+      if (message.type === 'openshop:exported' && isOpenShopRequestIdMatch(saveRequestIdRef.current, message.id)) {
         const blob = message.blob
         const filename = message.filename
         saveRequestIdRef.current = null
@@ -161,11 +206,20 @@ export default function OpenShopWorkspace({
       }
 
       if (message.type === 'openshop:error') {
-        if (message.id === 'configure') {
+        const matchesHello = isOpenShopRequestIdMatch(
+          !editorReadyRef.current && helloSentRef.current ? helloRequestIdRef.current : null,
+          message.id,
+        )
+        const matchesConfigure = isOpenShopRequestIdMatch(expectedConfigureId, message.id)
+        const matchesSave = isOpenShopRequestIdMatch(saveRequestIdRef.current, message.id)
+        if (!matchesHello && !matchesConfigure && !matchesSave) return
+
+        if (matchesConfigure) {
           configurationInFlightRef.current = false
+          configurationRequestIdRef.current = null
           configuredRef.current = false
         }
-        if (message.id === saveRequestIdRef.current) {
+        if (matchesSave) {
           saveRequestIdRef.current = null
           setIsSaving(false)
         }
@@ -255,7 +309,7 @@ export default function OpenShopWorkspace({
     const frameWindow = frameRef.current?.contentWindow
     if (!frameWindow || !targetOrigin || !isConfigured || isSaving) return
 
-    const requestId = `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const requestId = createOpenShopRequestId('save')
     saveRequestIdRef.current = requestId
     setError(null)
     setIsSaving(true)
@@ -340,9 +394,13 @@ export default function OpenShopWorkspace({
             onLoad={() => {
               editorReadyRef.current = false
               configurationInFlightRef.current = false
+              configurationRequestIdRef.current = null
               configuredRef.current = false
+              helloSentRef.current = false
+              helloRequestIdRef.current = null
               saveRequestIdRef.current = null
               setIsConfigured(false)
+              setIsSaving(false)
               if (sourceDataUrl) setStatus('正在连接编辑器…')
               sendHello(true)
             }}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import OpenShopWorkspace, { shouldSendOpenShopConfiguration } from './OpenShopWorkspace'
+import OpenShopWorkspace, {
+  isOpenShopConfigurationRequestCurrent,
+  shouldSendOpenShopConfiguration,
+} from './OpenShopWorkspace'
 
 describe('OpenShopWorkspace', () => {
   it('renders a full-page editor workspace with explicit history saving', () => {
@@ -50,5 +53,26 @@ describe('OpenShopWorkspace', () => {
     expect(shouldSendOpenShopConfiguration({ ...readyGate, editorReady: false })).toBe(false)
     expect(shouldSendOpenShopConfiguration({ ...readyGate, isConfiguring: true })).toBe(false)
     expect(shouldSendOpenShopConfiguration(readyGate)).toBe(true)
+  })
+
+  it('does not let a pre-reload configuration task post into the new editor session', () => {
+    const sharedWindowProxy = {} as Window
+    const request = {
+      currentFrameWindow: sharedWindowProxy,
+      requestFrameWindow: sharedWindowProxy,
+      editorReady: true,
+      currentRequestId: 'configure-current',
+      requestId: 'configure-current',
+    }
+
+    expect(isOpenShopConfigurationRequestCurrent(request)).toBe(true)
+    expect(isOpenShopConfigurationRequestCurrent({
+      ...request,
+      currentRequestId: 'configure-after-reload',
+    })).toBe(false)
+    expect(isOpenShopConfigurationRequestCurrent({
+      ...request,
+      editorReady: false,
+    })).toBe(false)
   })
 })
