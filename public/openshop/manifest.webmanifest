@@ -1,7 +1,7 @@
 {
   "id": "./",
   "name": "OpenShop 图像编辑器",
-  "version": "0.29.0",
+  "version": "0.24.0-host.1",
   "short_name": "OpenShop",
   "description": "私密的浏览器端图像编辑器，支持图层、选区、PSD 交换与可选的本地浏览器 AI。",
   "start_url": "./",

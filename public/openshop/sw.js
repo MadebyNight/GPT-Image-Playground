@@ -1,24 +1,12 @@
 'use strict';
 
-const SHELL_REVISION = '0.29.0-r5';
+const SHELL_REVISION = '0.24.0-host.1';
 // State is origin-readable, so a cache name from it is never trusted merely
-// because it looks like a revision. Keep the bounded set of revisions this
-// worker knows were actually shipped; releases carry the newest predecessors
-// forward for rollback across skipped updates.
+// because it looks like a revision. This baseline replacement deliberately
+// trusts only v0.24: activation drops every v0.29 shell/runtime cache instead
+// of keeping an incompatible editor available as a runtime fallback.
 const TRUSTED_SHELL_REVISIONS = new Set([
-    SHELL_REVISION,
-    '0.29.0-r4',
-    '0.29.0-r3',
-    '0.29.0-r2',
-    '0.29.0-r1',
-    '0.28.0-r1',
-    '0.27.0-r2',
-    '0.27.0-r1',
-    '0.26.0-r4',
-    '0.26.0-r3',
-    '0.26.0-r2',
-    '0.26.0-r1',
-    '0.25.0-r1'
+    SHELL_REVISION
 ]);
 const STATE_SCHEMA = 1;
 const SHELL_CACHE_PREFIX = 'openshop-shell-';
@@ -41,13 +29,11 @@ const STATE_URL = new URL('./__openshop_offline_state__', self.registration.scop
 const REQUIRED_ASSETS = [
     "./",
     "./index.html",
-    "./plugin-sandbox.html",
-    "./plugin-sandbox.js",
     "./manifest.webmanifest",
     "./icon-192.png",
     "./icon-512.png",
     "https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js",
-    "https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/dist/bundle.js",
+    "https://cdn.jsdelivr.net/npm/ag-psd@22.0.2/dist/bundle.js",
     "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js"
 ];
 
@@ -55,8 +41,11 @@ const OPTIONAL_ASSETS = [
     "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@400;500;600;700&display=swap",
     "https://cdn.jsdelivr.net/npm/@silvia-odwyer/photon@0.3.3/photon_rs.js",
     "https://cdn.jsdelivr.net/npm/@silvia-odwyer/photon@0.3.3/photon_rs_bg.wasm",
-    "https://cdn.jsdelivr.net/npm/modern-gif@2.1.0/dist/index.js",
-    "https://cdn.jsdelivr.net/npm/modern-gif@2.1.0/dist/worker.js"
+    "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js",
+    "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js",
+    "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.0.0",
+    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.25.0-dev.20260327-722743c0e2/dist/ort-wasm-simd-threaded.asyncify.wasm",
+    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.25.0-dev.20260327-722743c0e2/dist/ort-wasm-simd-threaded.wasm"
 ];
 
 const RUNTIME_ORIGINS = new Set([
@@ -67,25 +56,7 @@ const RUNTIME_ORIGINS = new Set([
 
 const CACHEABLE_RUNTIME_URLS = new Set([
     ...REQUIRED_ASSETS,
-    ...OPTIONAL_ASSETS,
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.7.284/build/pdf.min.mjs",
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.7.284/build/pdf.worker.min.mjs",
-    "https://cdn.jsdelivr.net/npm/libraw-wasm@1.6.0/dist/index.js",
-    "https://cdn.jsdelivr.net/npm/libraw-wasm@1.6.0/dist/worker.js",
-    "https://cdn.jsdelivr.net/npm/libraw-wasm@1.6.0/dist/libraw.js",
-    "https://cdn.jsdelivr.net/npm/libraw-wasm@1.6.0/dist/libraw.wasm",
-    "https://cdn.jsdelivr.net/npm/@jsquash/avif@2.1.1/codec/enc/avif_enc.js",
-    "https://cdn.jsdelivr.net/npm/@jsquash/avif@2.1.1/codec/enc/avif_enc.wasm",
-    "https://cdn.jsdelivr.net/npm/@jsquash/avif@2.1.1/codec/dec/avif_dec.js",
-    "https://cdn.jsdelivr.net/npm/@jsquash/avif@2.1.1/codec/dec/avif_dec.wasm",
-    "https://cdn.jsdelivr.net/npm/svg2pdf.js@2.7.0/dist/svg2pdf.umd.min.js",
-    "https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js",
-    "https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist-extensions/fabric-extensions.min.js",
-    "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0",
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.asyncify.wasm",
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.asyncify.mjs",
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.wasm",
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.mjs"
+    ...OPTIONAL_ASSETS
 ].map(resolveAsset));
 /* OPENSHOP_RUNTIME_MANIFEST:SHELL:END */
 
