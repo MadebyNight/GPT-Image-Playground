@@ -17,7 +17,7 @@
     "@fastify/multipart": "^9.3.0",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.4.0",
-    "sharp": "^0.34.3",
+    "sharp": "^0.35.3",
     "zod": "^4.0.10"
   },
   "devDependencies": {

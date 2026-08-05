@@ -16,10 +16,14 @@ import type { RestrictedAgentPlanSnapshot } from '../src/types.js';
 const apps: FastifyInstance[] = [];
 const tempDirs: string[] = [];
 let png: Buffer;
+let jpeg: Buffer;
+let webp: Buffer;
 let compressedNoisyJpeg: Buffer;
 
 beforeAll(async () => {
   png = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ff0000ff' } }).png().toBuffer();
+  jpeg = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#00ff00' } }).jpeg().toBuffer();
+  webp = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#0000ffff' } }).webp().toBuffer();
   compressedNoisyJpeg = await sharp(randomBytes(50 * 50 * 3), { raw: { width: 50, height: 50, channels: 3 } })
     .jpeg({ quality: 1 })
     .toBuffer();
@@ -60,7 +64,7 @@ function fakePlanner(action: 'generate' | 'edit' = 'generate'): Planner {
   };
 }
 
-function fakeExecutor(delayMs = 0): ImageExecutor & { execute: ReturnType<typeof vi.fn> } {
+function fakeExecutor(delayMs = 0, outputs: Buffer[] = [png]): ImageExecutor & { execute: ReturnType<typeof vi.fn> } {
   return {
     execute: vi.fn(async ({ signal }: { signal: AbortSignal }) => {
       if (delayMs) await new Promise<void>((resolve, reject) => {
@@ -70,7 +74,7 @@ function fakeExecutor(delayMs = 0): ImageExecutor & { execute: ReturnType<typeof
           reject(new Error('aborted'));
         }, { once: true });
       });
-      return [png];
+      return outputs;
     }),
   };
 }
@@ -248,6 +252,38 @@ describe('two phase gateway', () => {
     expect(completed.status).toBe('completed');
     expect(completed.outputAssets).toHaveLength(1);
     expect(executor.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { source: () => jpeg, outputFormat: 'png', outputCompression: undefined, mimeType: 'image/png', format: 'png', extension: '.png' },
+    { source: () => webp, outputFormat: 'jpeg', outputCompression: '80', mimeType: 'image/jpeg', format: 'jpeg', extension: '.jpg' },
+    { source: () => png, outputFormat: 'webp', outputCompression: '80', mimeType: 'image/webp', format: 'webp', extension: '.webp' },
+  ] as const)('规范化上游图片并以 $outputFormat 返回', async ({ source, outputFormat, outputCompression, mimeType, format, extension }) => {
+    const context = await setup({ executor: fakeExecutor(0, [source()]) });
+    const fields = {
+      request: '生成一张测试图片',
+      outputFormat,
+      ...(outputCompression ? { outputCompression } : {}),
+    };
+    const plan = (await createPlan(context, fields)).json().data;
+    const started = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+    });
+    const completed = await waitForTerminal(context.app, started.json().data.id, context.cookie);
+    const asset = completed.outputAssets[0];
+    const response = await context.app.inject({
+      method: 'GET', url: `/v1/assets/${asset.id}`,
+      headers: { host: 'app.internal', cookie: context.cookie },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain(mimeType);
+    expect(response.rawPayload.byteLength).toBe(asset.byteSize);
+    await expect(sharp(response.rawPayload).metadata()).resolves.toMatchObject({ format, width: 2, height: 2 });
+    const files = await readdir(context.config.assetsDir);
+    expect(files).toHaveLength(1);
+    expect(path.extname(files[0]!)).toBe(extension);
   });
 
   it('确认接口拒绝 body、过期版本和跨会话读取', async () => {
