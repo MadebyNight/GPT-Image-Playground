@@ -10,7 +10,7 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-aRErPWa1IFIR9UivNZc2TxdWpV1vfFhC4h4FZG8oEkg=' 'sha256-nQShAPtWBfkzCxY7YFoeiJQlOj+POJ3SEZI05cV4OLo=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-aRErPWa1IFIR9UivNZc2TxdWpV1vfFhC4h4FZG8oEkg=' 'sha256-cutjTo4vfRwFYs4BCvyXFSpT/HY10BGt2g+gjHJpIOU=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
 <title>OpenShop v0.24.0-host.2 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
@@ -2229,7 +2229,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
         <button class="btn btn-primary" style="padding:3px 14px;font-size:11px" data-os-click="click-148">Apply</button>
         <button class="btn" style="padding:3px 10px;font-size:11px" data-os-click="click-149">Cancel</button>
     </div>
-    <div class="opt-group" id="opt-marquee" style="display:none"><span style="color:var(--text-muted);font-size:11px">Drag to create selection.</span></div>
+    <div class="opt-group" id="opt-marquee" style="display:none"><span style="color:var(--text-muted);font-size:11px" data-i18n="Drag to create selection.">拖动以创建选区。</span></div>
     <div class="opt-group" id="opt-lasso" style="display:none"><span style="color:var(--text-muted);font-size:11px">Click to add points. Double-click to close selection.</span></div>
     <div class="opt-group" id="opt-ai-segment" style="display:none"><span style="color:var(--text-muted);font-size:11px">Segment Select</span><span style="color:var(--accent);font-size:11px;margin-left:8px">Panoptic model loads on demand</span></div>
     <div class="opt-group" id="opt-pen" style="display:none">
@@ -2380,7 +2380,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
                     <span class="opt-val" id="layer-opacity-val">100</span>
                 </div>
                 <div id="layers-list" role="listbox" aria-label="Layers"></div>
-                <div id="layers-empty">No layers. Click + to add one.</div>
+                <div id="layers-empty" data-i18n="No layers. Click + to add one.">暂无图层。点击“+”新建图层。</div>
             </div>
         </div>
         <!-- Properties Tab (Adjustments + Text FX + Layer Styles) -->
@@ -2478,7 +2478,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
                         <input type="color" id="bg-picker" value="#000000" style="display:none" data-os-change="change-033">
                     </div>
                     <div style="flex:1">
-                        <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">FG / BG</div>
+                        <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px" data-i18n="FG / BG">前景 / 背景</div>
                         <div style="font-family:'JetBrains Mono',monospace;font-size:11px"><span id="fg-hex">#FFFFFF</span> / <span id="bg-hex">#000000</span></div>
                         <div id="fg-oklch" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-muted);margin-top:1px"></div>
                     </div>
@@ -2488,9 +2488,9 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
         </div>
         <div class="panel-tab-content" id="ptg2-palettes" data-group="ptg2">
             <div class="ptc-inner">
-                <div class="palette-name">Default</div>
+                <div class="palette-name" data-i18n="Default">默认</div>
                 <div class="palette-row" id="palette-default"></div>
-                <div class="palette-name">Saved</div>
+                <div class="palette-name" data-i18n="Saved">已保存</div>
                 <div class="palette-row" id="palette-saved"></div>
                 <div class="palette-actions">
                     <button class="btn" data-os-click="click-181" style="padding:2px 8px;font-size:10px">+ Add FG</button>
@@ -2521,7 +2521,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
                     <div class="minimap-viewport" id="minimap-vp"></div>
                 </div>
                 <div style="height:1px;background:var(--border);margin:10px 0"></div>
-                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Histogram</div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px" data-i18n="Histogram">直方图</div>
                 <div class="histogram-channel-btns">
                     <button class="active" data-os-click="click-189">L</button>
                     <button data-os-click="click-190">R</button>
@@ -2529,18 +2529,18 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
                     <button data-os-click="click-192">B</button>
                 </div>
                 <canvas class="histogram-canvas" id="histogram-canvas" width="240" height="80"></canvas>
-                <div class="histogram-stats"><span id="hist-min">Min: 0</span><span id="hist-mean">Mean: 128</span><span id="hist-max">Max: 255</span></div>
+                <div class="histogram-stats"><span id="hist-min">最小值：0</span><span id="hist-mean">平均值：128</span><span id="hist-max">最大值：255</span></div>
             </div>
         </div>
         <div class="panel-tab-content" id="ptg3-info" data-group="ptg3">
             <div class="ptc-inner">
                 <dl class="info-grid" id="info-grid">
-                    <dt>Canvas</dt><dd id="info-dims">1920 x 1080</dd>
-                    <dt>Layers</dt><dd id="info-layers">1</dd>
-                    <dt>Objects</dt><dd id="info-objects">0</dd>
-                    <dt>Zoom</dt><dd id="info-zoom">100%</dd>
-                    <dt>Color Mode</dt><dd>RGB 8bit</dd>
-                    <dt>Cursor</dt><dd id="info-cursor">0, 0</dd>
+                    <dt data-i18n="Canvas">画布</dt><dd id="info-dims">1920 x 1080</dd>
+                    <dt data-i18n="Layers">图层</dt><dd id="info-layers">1</dd>
+                    <dt data-i18n="Objects">对象</dt><dd id="info-objects">0</dd>
+                    <dt data-i18n="Zoom">缩放</dt><dd id="info-zoom">100%</dd>
+                    <dt data-i18n="Color Mode">颜色模式</dt><dd data-i18n="RGB 8bit">RGB 8 位</dd>
+                    <dt data-i18n="Cursor">光标</dt><dd id="info-cursor">0, 0</dd>
                 </dl>
             </div>
         </div>
@@ -2551,7 +2551,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
 <div id="statusbar" role="status" aria-label="Status bar" aria-live="off">
     <span id="canvas-dims">1920 x 1080</span><span class="sep"></span>
     <button type="button" id="zoom-display" title="适配画布到视图" data-i18n-title="Fit canvas to view" aria-label="缩放级别，激活后将画布适配到视图" data-i18n-aria-label="Zoom level, activate to fit canvas to view" data-os-click="click-103">100%</button><span class="sep"></span>
-    <span id="cursor-pos" aria-hidden="true">X: 0 Y: 0</span><span class="sep"></span>
+    <span id="cursor-pos" aria-hidden="true">坐标：0, 0</span><span class="sep"></span>
     <span id="tool-display">Select</span><span style="flex:1"></span>
     <button type="button" class="ready-state offline-state" id="offline-state" data-state="limited" aria-haspopup="dialog" aria-label="Offline and install status" data-os-click="click-193"><i></i><span id="offline-state-label">Checking offline support</span></button><span class="sep"></span>
     <span id="object-count">0 objects</span><span class="sep"></span>
@@ -2559,8 +2559,8 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
 </div>
 <div id="ai-progress" role="dialog" aria-modal="true" aria-label="Background processing" aria-live="polite">
     <div class="ai-box">
-        <div class="ai-title" id="ai-title"><span class="ai-spinner"></span>Loading AI Model...</div>
-        <div class="ai-msg" id="ai-msg">Downloading model weights (cached after first use)</div>
+        <div class="ai-title" id="ai-title" data-i18n="Loading AI Model..."><span class="ai-spinner"></span>正在加载 AI 模型...</div>
+        <div class="ai-msg" id="ai-msg" data-i18n="Downloading model weights (cached after first use)">正在下载模型权重（首次使用后会缓存）</div>
         <div class="ai-bar-wrap"><div class="ai-bar" id="ai-bar"></div></div>
         <div class="ai-pct" id="ai-pct">0%</div>
         <div class="ai-actions" id="compute-actions" hidden><button type="button" class="btn btn-danger" id="compute-cancel">Cancel</button></div>
@@ -2579,8 +2579,8 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
 <!-- ===== DROPZONE ===== -->
 <div id="dropzone-overlay">
     <div class="dropzone-ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
-    <div class="dropzone-text">Drop files here</div>
-    <div class="dropzone-sub">PNG, JPEG, WebP, SVG, GIF, PSD, .openshop</div>
+    <div class="dropzone-text" data-i18n="Drop files here">将文件拖放到这里</div>
+    <div class="dropzone-sub" data-i18n="PNG, JPEG, WebP, SVG, GIF, PSD, .openshop">PNG、JPEG、WebP、SVG、GIF、PSD、.openshop</div>
 </div>
 <!-- ===== ANNOTATION CONTAINER ===== -->
 <div id="sticky-container" style="position:absolute;inset:0;pointer-events:none;z-index:99"></div>
@@ -2643,8 +2643,8 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
         <canvas id="ba-before"></canvas>
         <canvas id="ba-after"></canvas>
         <div id="ba-divider" style="left:50%"></div>
-        <div class="ba-label before">Before</div>
-        <div class="ba-label after">After</div>
+        <div class="ba-label before" data-i18n="Before">之前</div>
+        <div class="ba-label after" data-i18n="After">之后</div>
     </div>
 </div>
 <input type="file" id="file-input" accept="image/*" style="display:none" data-os-change="change-034">
@@ -3981,6 +3981,11 @@ const OS = {
         "{count} downloads": "{count} 次下载",
         "{count} download": "{count} 次下载",
         "Drag to reorder": "拖动以重新排序",
+        "Drag to create selection.": "拖动以创建选区。",
+        "Cursor position: {x}, {y}": "坐标：{x}, {y}",
+        "PNG, JPEG, WebP, SVG, GIF, PSD, .openshop": "PNG、JPEG、WebP、SVG、GIF、PSD、.openshop",
+        "Untitled": "未命名",
+        "Saving": "正在保存",
         "Standalone file: a cold open requires network access": "独立文件：首次打开需要网络连接",
         "Hosted shell cached for offline reload": "托管版外壳已缓存，可离线重新加载",
         "Hosted shell is not yet cached": "托管版外壳尚未缓存",
@@ -4973,14 +4978,15 @@ const OS = {
         this._lastSaveError = error || null;
         const indicator = document.getElementById('persistence-state');
         const label = document.getElementById('persistence-state-label');
+        const labelText = this._t(labels[this._persistenceState]);
         if (indicator) {
             indicator.dataset.state = this._persistenceState;
-            indicator.title = error ? this._safeText(error.message || error, 180) : labels[this._persistenceState];
+            indicator.title = error ? this._safeText(error.message || error, 180) : labelText;
         }
-        if (label) label.textContent = labels[this._persistenceState];
+        if (label) label.textContent = labelText;
         const dirtyPrefix = this._isDirty ? '* ' : '';
-        const stateSuffix = this._persistenceState === 'saving' ? ' (Saving)' : this._persistenceState === 'error' ? ' (Save failed)' : '';
-        document.title = `${dirtyPrefix}${this._docName || 'Untitled'}${stateSuffix} — OpenShop v0.24.0-host.2`;
+        const stateSuffix = this._persistenceState === 'saving' ? ` (${this._t('Saving')})` : this._persistenceState === 'error' ? ` (${this._t('Save failed')})` : '';
+        document.title = `${dirtyPrefix}${this._docName || this._t('Untitled')}${stateSuffix} — OpenShop v0.24.0-host.2`;
     },
     _markDocumentDirty() {
         this._documentRevision += 1;
@@ -7561,11 +7567,19 @@ self.onmessage = function(event) {
             const hasMask = l.objects.some(o => o._hasMask);
             const isBg = l.objects.some(o => o.name === '__boundary__');
             const thumbStyle = isBg ? 'layer-thumb-checker' : '';
-            d.innerHTML = `<div class="layer-drag-handle" title="Drag to reorder">&#9776;</div>
-                <button class="layer-vis ${l.visible?'':'hidden'}" title="${l.visible?'Hide layer':'Show layer'}" aria-label="${l.visible?'Hide layer':'Show layer'}" aria-pressed="${l.visible?'false':'true'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${eyeSvg}</svg></button>
-                <button class="layer-lock ${l.locked?'locked':''}" title="${l.locked?'Unlock layer':'Lock layer'}" aria-label="${l.locked?'Unlock layer':'Lock layer'}">${lockSvg}</button>
+            const visibilityKey = l.visible ? 'Hide layer' : 'Show layer';
+            const lockKey = l.locked ? 'Unlock layer' : 'Lock layer';
+            const layerType = [
+                l.locked ? this._t('Locked') : null,
+                l.blend !== 'source-over' ? this._blendLabel(l.blend) : null,
+                this._format('{count} obj', { count:l.objects.filter(o => o.name !== '__boundary__').length }),
+                hasMask ? this._t('Mask') : null
+            ].filter(Boolean).join(' · ');
+            d.innerHTML = `<div class="layer-drag-handle" title="${this._esc(this._t('Drag to reorder'))}" data-i18n-title="Drag to reorder">&#9776;</div>
+                <button class="layer-vis ${l.visible?'':'hidden'}" title="${this._esc(this._t(visibilityKey))}" data-i18n-title="${visibilityKey}" aria-label="${this._esc(this._t(visibilityKey))}" data-i18n-aria-label="${visibilityKey}" aria-pressed="${l.visible?'false':'true'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${eyeSvg}</svg></button>
+                <button class="layer-lock ${l.locked?'locked':''}" title="${this._esc(this._t(lockKey))}" data-i18n-title="${lockKey}" aria-label="${this._esc(this._t(lockKey))}" data-i18n-aria-label="${lockKey}">${lockSvg}</button>
                 <div class="layer-thumb"><div class="${thumbStyle}" style="width:32px;height:32px;${isBg?'':'background:var(--bg-depth-4);'}border-radius:2px"></div></div>
-                <div class="layer-info"><div class="layer-name">${this._esc(l.name)}</div><div class="layer-type">${l.locked?'Locked &middot; ':''}${l.blend!=='source-over'?this._esc(l.blend)+' &middot; ':''}${l.objects.filter(o=>o.name!=='__boundary__').length} obj${hasMask?' &middot; M':''}</div></div>`;
+                <div class="layer-info"><div class="layer-name">${this._esc(l.name)}</div><div class="layer-type">${this._esc(layerType)}</div></div>`;
             d.querySelector('.layer-vis').addEventListener('click', e => { e.stopPropagation(); this.toggleLayerVisibility(i); });
             d.querySelector('.layer-lock').addEventListener('click', e => { e.stopPropagation(); this.toggleLayerLock(i); });
             d.querySelector('.layer-name').addEventListener('dblclick', function() { OS.startRenameLayer(this, i); });
@@ -7760,8 +7774,7 @@ self.onmessage = function(event) {
             case 'crop': document.getElementById('opt-crop').style.display='flex'; this._initCrop(); break;
         }
         this._applyLayerInteractionState({ render:false });
-        const toolNames = {'marquee-rect':'Rect Marquee','marquee-ellipse':'Ellipse Marquee','magic-wand':'Magic Wand','ai-segment':'AI Segment'};
-        document.getElementById('tool-display').textContent = toolNames[tool] || tool.charAt(0).toUpperCase()+tool.replace(/-/g,' ').slice(1);
+        document.getElementById('tool-display').textContent = this._toolLabel(tool);
         this._renderAccessibilityTree();
     },
     setBrushSize(v) { this.state.brushSize=+v; document.getElementById('brush-size-val').textContent=v; if(this.canvas.freeDrawingBrush) this.canvas.freeDrawingBrush.width=+v; },
@@ -7896,7 +7909,9 @@ self.onmessage = function(event) {
     },
     onMouseMove(opt) {
         const ptr=this.canvas.getPointer(opt.e);
-        document.getElementById('cursor-pos').textContent=`X: ${Math.round(ptr.x)} Y: ${Math.round(ptr.y)}`;
+        document.getElementById('cursor-pos').textContent = this._format('Cursor position: {x}, {y}', {
+            x:Math.round(ptr.x), y:Math.round(ptr.y)
+        });
         const ic=document.getElementById('info-cursor'); if(ic) ic.textContent=`${Math.round(ptr.x)}, ${Math.round(ptr.y)}`;
         if(this.state.isPanning&&this.state.panStart) {
             const dx=opt.e.clientX-this.state.panStart.x, dy=opt.e.clientY-this.state.panStart.y;
@@ -9717,13 +9732,13 @@ self.onmessage = function(event) {
         list.replaceChildren();
         const baseline = document.createElement('div');
         baseline.className = 'history-item' + (this.historyIdx < 0 ? ' current' : '');
-        baseline.textContent = this._historyBaseLabel;
+        baseline.textContent = this._t(this._historyBaseLabel);
         baseline.addEventListener('click', () => this._restoreHistory(-1, this.history[0]?.beforeSnapshot || this._historyBaseSnapshot));
         list.appendChild(baseline);
         this.history.forEach((entry, index) => {
             const item = document.createElement('div');
             item.className = 'history-item' + (index === this.historyIdx ? ' current' : '') + (index > this.historyIdx ? ' future' : '');
-            item.textContent = entry.action;
+            item.textContent = this._t(entry.action);
             item.addEventListener('click', () => this._restoreHistory(index));
             list.appendChild(item);
         });
@@ -10549,15 +10564,15 @@ self.onmessage = function(event) {
         } else if (!state.online) {
             text = 'Offline unavailable';
         }
-        label.textContent = text;
+        label.textContent = this._t(text);
         button.dataset.state = visualState;
         button.title = state.error
             ? this._safeText(state.error, 180)
             : state.lane === 'standalone'
-                ? 'Standalone file: a cold open requires network access'
+                ? this._t('Standalone file: a cold open requires network access')
                 : state.shellReady
-                    ? 'Hosted shell cached for offline reload'
-                    : 'Hosted shell is not yet cached';
+                    ? this._t('Hosted shell cached for offline reload')
+                    : this._t('Hosted shell is not yet cached');
         return state;
     },
     _watchPWARegistration(registration) {
@@ -12746,7 +12761,11 @@ self.onmessage = async function(event) {
             for (let i = 0; i < 256; i++) { if (arr[i] > 0 && !total) min = i; if (arr[i] > 0) mx = i; total += arr[i]; sum += i * arr[i]; }
             const mean = total > 0 ? Math.round(sum / total) : 0;
             const minEl = document.getElementById('hist-min'), meanEl = document.getElementById('hist-mean'), maxEl = document.getElementById('hist-max');
-            if (minEl) { minEl.textContent = `Min: ${min}`; meanEl.textContent = `Mean: ${mean}`; maxEl.textContent = `Max: ${mx}`; }
+            if (minEl) {
+                minEl.textContent = this._format('Min: {value}', { value:min });
+                meanEl.textContent = this._format('Mean: {value}', { value:mean });
+                maxEl.textContent = this._format('Max: {value}', { value:mx });
+            }
         } catch(e) { console.debug('Histogram update skipped:', e.message); }
     },
 
@@ -17452,11 +17471,20 @@ self.onmessage = async function(e) {
     _toolLabel(tool) {
         const names = {
             'marquee-rect':'Rect Marquee', 'marquee-ellipse':'Ellipse Marquee',
-            'magic-wand':'Magic Wand', 'ai-segment':'AI Segment',
+            'magic-wand':'Magic Wand', 'ai-segment':'AI Segment Select',
             'clone':'Clone Stamp', 'healing':'Healing Brush'
         };
         const value = tool || this.state.tool || 'select';
         return this._t(names[value] || value.charAt(0).toUpperCase() + value.replace(/-/g, ' ').slice(1));
+    },
+    _blendLabel(mode) {
+        const names = {
+            'source-over':'normal blend', multiply:'Multiply', screen:'Screen', overlay:'Overlay',
+            darken:'Darken', lighten:'Lighten', 'color-dodge':'Color Dodge', 'color-burn':'Color Burn',
+            'hard-light':'Hard Light', 'soft-light':'Soft Light', difference:'Difference', exclusion:'Exclusion',
+            hue:'Hue', saturation:'Saturation', color:'Color', luminosity:'Luminosity'
+        };
+        return this._t(names[mode] || mode || 'normal blend');
     },
     _activeLayerSummary() {
         const layer = this.layers[this.activeLayerIdx];
@@ -17466,7 +17494,7 @@ self.onmessage = async function(e) {
             this._t(layer.visible === false ? 'hidden' : 'visible'),
             this._t(layer.locked ? 'Locked' : 'unlocked'),
             this._format('{opacity}% opacity', { opacity:layer.opacity }),
-            this._t(layer.blend && layer.blend !== 'source-over' ? layer.blend : 'normal blend'),
+            this._blendLabel(layer.blend),
             this._format(objectCount === 1 ? '{count} object' : '{count} objects', { count:objectCount })
         ];
         return `${layer.name}${this._lang === 'zh' ? '，' : ', '}${state.join(this._lang === 'zh' ? '，' : ', ')}`;

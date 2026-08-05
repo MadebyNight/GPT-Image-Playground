@@ -176,6 +176,35 @@ describe('OpenShop v0.24-host.2 发布产物契约', () => {
     }
   })
 
+  it('keeps static panels and re-rendered editor status in Chinese', () => {
+    const locale = getChineseLocaleSource()
+    const dynamicLabels = [
+      ['Drag to create selection.', '拖动以创建选区。'],
+      ['Cursor position: {x}, {y}', '坐标：{x}, {y}'],
+      ['PNG, JPEG, WebP, SVG, GIF, PSD, .openshop', 'PNG、JPEG、WebP、SVG、GIF、PSD、.openshop'],
+      ['Untitled', '未命名'],
+      ['Saving', '正在保存'],
+    ]
+
+    for (const [key, translation] of dynamicLabels) {
+      expectChineseTranslation(locale, key, translation)
+    }
+
+    expect(editorHtml).toContain('data-i18n="Drag to create selection.">拖动以创建选区。</span>')
+    expect(editorHtml).toContain('data-i18n="PNG, JPEG, WebP, SVG, GIF, PSD, .openshop">PNG、JPEG、WebP、SVG、GIF、PSD、.openshop</div>')
+    expect(editorHtml).toContain('<span id="hist-min">最小值：0</span>')
+    expect(editorHtml).toContain('<dt data-i18n="Canvas">画布</dt>')
+
+    expect(editorHtml).toContain("const labelText = this._t(labels[this._persistenceState]);")
+    expect(editorHtml).toContain("label.textContent = this._t(text);")
+    expect(editorHtml).toContain("document.getElementById('tool-display').textContent = this._toolLabel(tool);")
+    expect(editorHtml).toContain("this._format('Cursor position: {x}, {y}'")
+    expect(editorHtml).toContain("this._format('Min: {value}'")
+    expect(editorHtml).toContain("this._format('{count} obj'")
+    expect(editorHtml).toContain('baseline.textContent = this._t(this._historyBaseLabel);')
+    expect(editorHtml).toContain('item.textContent = this._t(entry.action);')
+  })
+
   it('normalizes every Toast through the runtime locale before rendering or announcing it', () => {
     const toast = getObjectMethodSource('toast')
 
