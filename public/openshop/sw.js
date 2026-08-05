@@ -1,12 +1,14 @@
 'use strict';
 
-const SHELL_REVISION = '0.24.0-host.1';
+const SHELL_REVISION = '0.24.0-host.2';
+const PREVIOUS_SHELL_REVISION = '0.24.0-host.1';
 // State is origin-readable, so a cache name from it is never trusted merely
-// because it looks like a revision. This baseline replacement deliberately
-// trusts only v0.24: activation drops every v0.29 shell/runtime cache instead
-// of keeping an incompatible editor available as a runtime fallback.
+// because it looks like a revision. Retain exactly the directly preceding
+// v0.24 host shell for a verified rollback, while discarding the incompatible
+// v0.29 baseline and any older, unverified cache namespace.
 const TRUSTED_SHELL_REVISIONS = new Set([
-    SHELL_REVISION
+    SHELL_REVISION,
+    PREVIOUS_SHELL_REVISION
 ]);
 const STATE_SCHEMA = 1;
 const SHELL_CACHE_PREFIX = 'openshop-shell-';

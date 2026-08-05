@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
-const HOST_VERSION = '0.24.0-host.1'
+const HOST_VERSION = '0.24.0-host.2'
+const PREVIOUS_HOST_VERSION = '0.24.0-host.1'
 const V024_CORE_RUNTIME_ASSETS = [
   'https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js',
   'https://cdn.jsdelivr.net/npm/ag-psd@22.0.2/dist/bundle.js',
@@ -19,6 +20,30 @@ const manifest = JSON.parse(readFileSync('public/openshop/manifest.webmanifest',
   version?: string
 }
 const serviceWorker = readFileSync('public/openshop/sw.js', 'utf8')
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getChineseLocaleSource() {
+  const source = editorHtml.match(/_locales:\s*\{\s*en:\s*\{\},\s*zh:\s*\{([\s\S]*?)\n\s*\}\s*\},\s*\n?\s*_lang:/)?.[1] ?? ''
+
+  expect(source).not.toBe('')
+  return source
+}
+
+function expectChineseTranslation(locale: string, key: string, translation: string) {
+  const entry = new RegExp(`['"]${escapeRegExp(key)}['"]\\s*:\\s*['"]${escapeRegExp(translation)}['"]`)
+  expect(locale).toMatch(entry)
+}
+
+function expectLocalizedAttributeMarkup(dataAttribute: string, key: string, attribute: string, translation: string) {
+  const keyAttribute = `${escapeRegExp(dataAttribute)}="${escapeRegExp(key)}"`
+  const translatedAttribute = `${escapeRegExp(attribute)}="${escapeRegExp(translation)}"`
+  const tag = new RegExp(`<[^>]*(?:${keyAttribute}[^>]*${translatedAttribute}|${translatedAttribute}[^>]*${keyAttribute})[^>]*>`)
+
+  expect(editorHtml).toMatch(tag)
+}
 
 function getEmbedBridgeSource() {
   const start = editorHtml.indexOf('// ====================== HOST EMBED BRIDGE ======================')
@@ -34,16 +59,129 @@ function getWorkerStringArray(name: string) {
   return [...source.matchAll(/"([^"]+)"/g)].map(([, value]) => value)
 }
 
-describe('OpenShop v0.24-host.1 发布产物契约', () => {
+function getObjectMethodSource(name: string) {
+  const start = editorHtml.indexOf(`    ${name}(`)
+  const end = editorHtml.indexOf('\n    },', start)
+
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  return editorHtml.slice(start, end)
+}
+
+function expectLocalizedRuntimeMessage(key: string) {
+  const invocation = new RegExp(`this\\._(?:t|format)\\(\\s*['"]${escapeRegExp(key)}['"]`)
+  expect(editorHtml).toMatch(invocation)
+}
+
+function expectLocalizedMethodMessage(source: string, key: string) {
+  const invocation = new RegExp(`this\\._(?:t|format)\\(\\s*['"]${escapeRegExp(key)}['"]`)
+  expect(source).toMatch(invocation)
+}
+
+describe('OpenShop v0.24-host.2 发布产物契约', () => {
   it('uses the v0.24 host baseline and defaults to Simplified Chinese', () => {
     expect(editorHtml).toContain('<html lang="zh-CN">')
-    expect(editorHtml).toContain('<title>OpenShop v0.24.0-host.1 — 在线图像编辑器</title>')
+    expect(editorHtml).toContain(`<title>OpenShop v${HOST_VERSION} — 在线图像编辑器</title>`)
     expect(editorHtml).toContain("_lang: 'zh'")
     expect(editorHtml).toContain("this.setLocale(localStorage.getItem('os_lang') === 'en' ? 'en' : 'zh')")
     expect(editorHtml).toContain(`appVersion: '${HOST_VERSION}'`)
     expect(manifest.version).toBe(HOST_VERSION)
     expect(manifest.name).toBe('OpenShop 图像编辑器')
     expect(manifest.description).toContain('私密的浏览器端图像编辑器')
+  })
+
+  it('keeps the first screen and editor chrome visibly translated before runtime hydration', () => {
+    const locale = getChineseLocaleSource()
+    const firstScreen = [
+      ['Local creative studio', '本地创作工作室'],
+      ['Edit boldly.', '尽情编辑。'],
+      ['New Canvas', '新建画布'],
+      ['Open Image', '打开图像'],
+      ['Open PSD', '打开 PSD'],
+      ['Enter Studio', '进入工作区'],
+      ['Start from Template', '从模板开始'],
+      ['HISTORY', '历史记录'],
+      ['LAYERS', '图层'],
+    ]
+
+    for (const [key, translation] of firstScreen) {
+      expectChineseTranslation(locale, key, translation)
+      const markup = new RegExp(`data-i18n="${escapeRegExp(key)}"[^>]*>\\s*${escapeRegExp(translation)}`)
+      expect(editorHtml).toMatch(markup)
+    }
+  })
+
+  it('keeps Canvas accessibility baseline and live status summaries in Chinese', () => {
+    const locale = getChineseLocaleSource()
+    const baseline = [
+      ['Canvas state', '画布状态'],
+      ['OpenShop canvas ready.', 'OpenShop 画布已就绪。'],
+      ['Tool: Select', '工具：选择'],
+      ['Active layer: none', '当前图层：无'],
+      ['Selection: none', '选区：无'],
+      ['Objects: 0', '对象：0'],
+    ]
+
+    for (const [key, translation] of baseline) {
+      expectChineseTranslation(locale, key, translation)
+      const markup = new RegExp(`data-i18n="${escapeRegExp(key)}"[^>]*>\\s*${escapeRegExp(translation)}`)
+      expect(editorHtml).toMatch(markup)
+    }
+    expectLocalizedAttributeMarkup('data-i18n-aria-label', 'Canvas state', 'aria-label', '画布状态')
+
+    const tree = getObjectMethodSource('_renderAccessibilityTree')
+    const dynamicSummaries = [
+      ['Tool: {tool}', '工具：{tool}'],
+      ['Active layer: {layer}', '活动图层：{layer}'],
+      ['Selection: {selection}', '选区：{selection}'],
+      ['Objects: {objects}', '对象：{objects}'],
+    ]
+    for (const [key, translation] of dynamicSummaries) {
+      expectChineseTranslation(locale, key, translation)
+      expectLocalizedMethodMessage(tree, key)
+    }
+  })
+
+  it('translates title, accessibility, placeholder, and role-description attributes', () => {
+    const locale = getChineseLocaleSource()
+    const attributes = [
+      ['data-i18n-title', 'Fit canvas to view', 'title', '适配画布到视图'],
+      ['data-i18n-aria-label', 'Image canvas', 'aria-label', '图像画布'],
+      ['data-i18n-placeholder', 'Type a command... (Ctrl+K)', 'placeholder', '输入命令... (Ctrl+K)'],
+      ['data-i18n-aria-roledescription', 'image editor canvas', 'aria-roledescription', '图像编辑画布'],
+    ]
+
+    for (const [dataAttribute, key, attribute, translation] of attributes) {
+      expectChineseTranslation(locale, key, translation)
+      expectLocalizedAttributeMarkup(dataAttribute, key, attribute, translation)
+      const handler = new RegExp(`\\[\\s*['"]${escapeRegExp(dataAttribute)}['"]\\s*,\\s*['"]${escapeRegExp(attribute)}['"]\\s*\\]`)
+      expect(editorHtml).toMatch(handler)
+    }
+    expect(editorHtml).toMatch(/_initI18n\(\s*root\s*=\s*document\s*\)/)
+  })
+
+  it('routes common modal and feedback messages through the Chinese locale', () => {
+    const locale = getChineseLocaleSource()
+    const dynamicMessages = [
+      ['New Image', '新建图像'],
+      ['Exported as {format}', '已导出为 {format}'],
+      ['Created {width} × {height} canvas', '已创建 {width} × {height} 画布'],
+      ['Layer locked', '图层已锁定'],
+      ['Layer unlocked', '图层已解锁'],
+    ]
+
+    for (const [key, translation] of dynamicMessages) {
+      expectChineseTranslation(locale, key, translation)
+      expectLocalizedRuntimeMessage(key)
+    }
+  })
+
+  it('normalizes every Toast through the runtime locale before rendering or announcing it', () => {
+    const toast = getObjectMethodSource('toast')
+
+    expect(toast).toMatch(/this\._t\(\s*String\(msg\)\s*\)/)
+    expect(toast).not.toMatch(/\.textContent\s*=\s*msg\b/)
+    expect(toast).not.toMatch(/_announceAccessibility\(msg\)/)
   })
 
   it('keeps exactly two CSP hashes synchronized with the inline editor scripts', () => {
@@ -100,14 +238,18 @@ describe('OpenShop v0.24-host.1 发布产物契约', () => {
     }
   })
 
-  it('publishes only the v0.24 shell revision and its matching core dependency list', () => {
+  it('publishes host.2 with only host.1 as the verified v0.24 rollback shell', () => {
     const revision = serviceWorker.match(/const SHELL_REVISION = '([^']+)'/)?.[1]
+    const previousRevision = serviceWorker.match(/const PREVIOUS_SHELL_REVISION = '([^']+)'/)?.[1]
     const trustedRevisions = serviceWorker.match(/const TRUSTED_SHELL_REVISIONS = new Set\(\s*\[([\s\S]*?)\]\s*\);/)?.[1] ?? ''
     const requiredAssets = getWorkerStringArray('REQUIRED_ASSETS')
 
     expect(revision).toBe(HOST_VERSION)
-    expect(trustedRevisions.trim()).toBe('SHELL_REVISION')
-    expect(serviceWorker).not.toMatch(/["']0\.29(?:\.0)?(?:-r\d+)?["']/)
+    expect(previousRevision).toBe(PREVIOUS_HOST_VERSION)
+    expect(trustedRevisions.replace(/\s/g, '')).toBe('SHELL_REVISION,PREVIOUS_SHELL_REVISION')
+    expect(trustedRevisions).not.toContain('0.29')
+    expect(serviceWorker).toContain('previousRevision: state.activeRevision')
+    expect(serviceWorker).toMatch(/trimShellCaches\(\s*\[\s*state\.activeRevision\s*,\s*state\.previousRevision\s*,\s*SHELL_REVISION\s*\]\s*\)/)
     expect(requiredAssets).toEqual([
       './',
       './index.html',
