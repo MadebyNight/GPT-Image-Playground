@@ -45,7 +45,7 @@ describe('OpenShop 简体中文外壳', () => {
     const registered = [...editorHtml.matchAll(/\['(?:tool|mode)\.[^']+',\s*'([^']+)',\s*'([^']+)'/g)]
       .flatMap(([, family, label]) => [family, label])
     const extensions = ['Brush', 'Pencil', 'Spray / Airbrush', 'Pattern Fill', 'Triangle', 'Arrow', 'Star', 'AI Segment Select']
-    const dynamicDialogKeys = ['Color Range', 'Batch Processor', 'Collaborative Session', 'Snapshots & Branches', 'Strict offline mode', 'Export preview', 'Image Information', 'Preferences', 'Trace']
+    const dynamicDialogKeys = ['Color Range', 'Batch Processor', 'Snapshots & Branches', 'Strict offline mode', 'Export preview', 'Image Information', 'Preferences', 'Trace']
 
     for (const key of [...registered, ...extensions, ...dynamicDialogKeys]) {
       expect(localeSection).toContain(`"${key}":`)
@@ -57,7 +57,6 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain('toolbarIconAliases')
     expect(editorHtml).toContain('--toolbar-w:64px')
     expect(editorHtml).not.toContain('grid-template-columns:repeat(2,48px)')
-    expect(editorHtml).toContain('const localizedMessage = this._t(message);')
     expect(editorHtml).toContain("this._format('{width}x{height} — Est. ~{size}'")
   })
 
@@ -77,6 +76,12 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain("icon.setAttribute('aria-hidden', 'true')")
   })
 
+  it('does not ship collaboration or WebRTC support', () => {
+    expect(editorHtml).not.toContain('Collaborative Session')
+    expect(editorHtml).not.toContain('RTCPeerConnection')
+    expect(editorHtml).not.toContain('openshop-collab')
+  })
+
   it('keeps CSP hashes synchronized with both inline editor scripts', () => {
     const policy = editorHtml.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? ''
     const scripts = [...editorHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(([, body]) => body)
@@ -94,7 +99,8 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain("type:'openshop:exported'")
 
     const revision = serviceWorker.match(/const SHELL_REVISION = '([^']+)'/)?.[1]
-    expect(revision).toBe('0.29.0-r4')
+    expect(revision).toBe('0.29.0-r5')
+    expect(serviceWorker).toContain("'0.29.0-r4'")
     expect(serviceWorker).toContain("'0.29.0-r3'")
     expect(serviceWorker).toContain("'0.29.0-r2'")
     expect(serviceWorker).toContain("'0.29.0-r1'")

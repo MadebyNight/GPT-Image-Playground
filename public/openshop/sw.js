@@ -1,12 +1,13 @@
 'use strict';
 
-const SHELL_REVISION = '0.29.0-r4';
+const SHELL_REVISION = '0.29.0-r5';
 // State is origin-readable, so a cache name from it is never trusted merely
 // because it looks like a revision. Keep the bounded set of revisions this
 // worker knows were actually shipped; releases carry the newest predecessors
 // forward for rollback across skipped updates.
 const TRUSTED_SHELL_REVISIONS = new Set([
     SHELL_REVISION,
+    '0.29.0-r4',
     '0.29.0-r3',
     '0.29.0-r2',
     '0.29.0-r1',
