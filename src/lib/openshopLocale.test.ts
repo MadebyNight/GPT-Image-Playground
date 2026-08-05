@@ -23,13 +23,31 @@ describe('OpenShop 简体中文外壳', () => {
     expect(manifest.description).toContain('私密的浏览器端图像编辑器')
   })
 
+  it('renders the first screen and changing workspace state in Chinese', () => {
+    expect(editorHtml).toContain('data-i18n="HISTORY">历史记录')
+    expect(editorHtml).toContain('data-i18n="LAYERS">图层')
+    expect(editorHtml).toContain('data-i18n="Open Image">打开图像')
+    expect(editorHtml).toContain('data-i18n="Open PSD">打开 PSD')
+    expect(editorHtml).toContain('data-i18n="Enter Studio">进入工作区')
+    expect(editorHtml).toContain('data-i18n="Workspace">工作区')
+    expect(editorHtml).toContain('data-i18n="Local creative studio">本地创作工作室')
+    expect(editorHtml).toContain('data-i18n="Edit boldly.">尽情编辑。')
+    expect(editorHtml).toContain('data-i18n="Start from Template">从模板开始')
+    expect(editorHtml).toContain("'#dropzone-overlay :is(div,p,span,button)'")
+    expect(editorHtml).toContain('this._displayLayerName(l.name)')
+    expect(editorHtml).toContain('this._objectCountLabel(objs.length)')
+    expect(editorHtml).toContain("this._format('Created: {name}', { name:this._t(t.name) })")
+    expect(editorHtml).toContain("this._format('Min: {value}', { value:min })")
+  })
+
   it('keeps every registered tool name and family in the Chinese dictionary', () => {
     const localeSection = editorHtml.match(/_locales: \{ en: \{\}, zh: \{([\s\S]*?)\n    \} \},\n    _lang:/)?.[1] ?? ''
     const registered = [...editorHtml.matchAll(/\['(?:tool|mode)\.[^']+',\s*'([^']+)',\s*'([^']+)'/g)]
       .flatMap(([, family, label]) => [family, label])
     const extensions = ['Brush', 'Pencil', 'Spray / Airbrush', 'Pattern Fill', 'Triangle', 'Arrow', 'Star', 'AI Segment Select']
+    const dynamicDialogKeys = ['Color Range', 'Batch Processor', 'Collaborative Session', 'Snapshots & Branches', 'Strict offline mode', 'Export preview', 'Image Information', 'Preferences', 'Trace']
 
-    for (const key of [...registered, ...extensions]) {
+    for (const key of [...registered, ...extensions, ...dynamicDialogKeys]) {
       expect(localeSection).toContain(`"${key}":`)
     }
     expect(editorHtml).toContain('data-i18n-tool-family')
@@ -39,6 +57,8 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain('toolbarIconAliases')
     expect(editorHtml).toContain('--toolbar-w:64px')
     expect(editorHtml).not.toContain('grid-template-columns:repeat(2,48px)')
+    expect(editorHtml).toContain('const localizedMessage = this._t(message);')
+    expect(editorHtml).toContain("this._format('{width}x{height} — Est. ~{size}'")
   })
 
   it('reuses a source SVG for every registry and OpenShop-native toolbar tool', () => {
@@ -74,7 +94,8 @@ describe('OpenShop 简体中文外壳', () => {
     expect(editorHtml).toContain("type:'openshop:exported'")
 
     const revision = serviceWorker.match(/const SHELL_REVISION = '([^']+)'/)?.[1]
-    expect(revision).toBe('0.29.0-r3')
+    expect(revision).toBe('0.29.0-r4')
+    expect(serviceWorker).toContain("'0.29.0-r3'")
     expect(serviceWorker).toContain("'0.29.0-r2'")
     expect(serviceWorker).toContain("'0.29.0-r1'")
     expect(serviceWorker).toContain('OpenShop 尚未完成离线准备')

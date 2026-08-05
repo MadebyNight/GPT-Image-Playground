@@ -9,7 +9,7 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-AJaui0/XSAs6/BBCkxiuCZIe84kqhxqDZP7E5cZc7IY=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-TTEy0EeOrma0v69IJlQrFG5I1W91DDTkWvj1XqErTTw=' 'sha256-T0OTJ86Qpp5wWK6bT6+02U2yECdX+sjCGa7Pa3ejf2A=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'self' blob:;">
 <title>OpenShop v0.29.0 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
@@ -2116,7 +2116,7 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
         <span class="logo-word">OpenShop</span>
         <span class="logo-version">v0.29</span>
     </div>
-    <div class="menu-bar" role="menubar" aria-label="Main menu">
+    <div class="menu-bar" role="menubar" aria-label="主菜单" data-i18n-aria-label="Main menu">
     <div class="menu-item" role="menuitem" aria-haspopup="true">File
         <div class="menu-dropdown">
             <div class="dd-item" data-os-click="click-001">New</div>
@@ -2381,18 +2381,18 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
         </div>
     </div>
     </div>
-    <label id="workspace-selector-wrap" title="Choose the workspace layout">
-        <span>Workspace</span>
-        <select id="workspace-selector" aria-label="Workspace layout" data-os-change="change-043">
-            <option value="standard">Standard</option>
-            <option value="essentials">Essentials</option>
-            <option value="motion">Motion</option>
-            <option value="mobile">Mobile</option>
+    <label id="workspace-selector-wrap" title="选择工作区布局" data-i18n-title="Choose the workspace layout">
+        <span data-i18n="Workspace">工作区</span>
+        <select id="workspace-selector" aria-label="工作区布局" data-i18n-aria-label="Workspace layout" data-os-change="change-043">
+            <option value="standard" data-i18n="Standard">标准</option>
+            <option value="essentials" data-i18n="Essentials">基本功能</option>
+            <option value="motion" data-i18n="Motion">动效</option>
+            <option value="mobile" data-i18n="Mobile">移动端</option>
         </select>
     </label>
-    <div class="local-badge" title="Your files and edits stay on this device" aria-label="Local-only editing">
+    <div class="local-badge" title="文件和编辑内容只保存在此设备上" data-i18n-title="Your files and edits stay on this device" aria-label="仅在本地编辑" data-i18n-aria-label="Local-only editing">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
-        <span>Local only</span>
+        <span data-i18n="Local only">仅本地</span>
     </div>
     <button class="mobile-panel-toggle" data-os-click="click-124" aria-label="Toggle panels" style="display:none">&#9776;</button>
 </div>
@@ -2494,7 +2494,7 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
         <label>Opacity</label>
         <input type="range" id="brush-opacity" min="1" max="100" value="100" data-os-input="input-002">
         <span class="opt-val" id="brush-opacity-val">100</span>
-        <span class="opt-val" id="brush-pressure-status" title="Pressure changes are enabled after a pen stroke reports varying pressure">Stylus: ready</span>
+        <span class="opt-val" id="brush-pressure-status" title="触控笔笔划检测到压力变化后将启用压感" data-i18n-title="Pressure changes are enabled after a pen stroke reports varying pressure">触控笔：就绪</span>
     </div>
     <div class="opt-group" id="opt-spray" style="display:none">
         <label>Density</label>
@@ -2636,8 +2636,8 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 <div class="ruler-v" id="ruler-v"><canvas id="ruler-v-canvas" width="20"></canvas></div>
 
 <!-- ===== CANVAS ===== -->
-<div id="canvas-area" role="application" aria-roledescription="image editor canvas" aria-label="Image canvas" aria-describedby="canvas-a11y-summary">
-    <canvas id="editor-canvas" aria-label="Drawing surface"></canvas>
+<div id="canvas-area" role="application" aria-roledescription="图像编辑画布" data-i18n-aria-roledescription="image editor canvas" aria-label="图像画布" data-i18n-aria-label="Image canvas" aria-describedby="canvas-a11y-summary">
+    <canvas id="editor-canvas" aria-label="绘图区域" data-i18n-aria-label="Drawing surface"></canvas>
     <canvas class="canvas-grid" id="grid-overlay"></canvas>
     <div id="blank-workspace" aria-live="polite">
         <div class="blank-card">
@@ -2656,7 +2656,7 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
     <div id="selection-overlay" class="selection-rect" style="display:none"></div>
     <div id="crop-container" class="crop-overlay" style="display:none"></div>
 </div>
-<nav id="bottom-tabs" aria-label="Bottom panels">
+<nav id="bottom-tabs" aria-label="底部面板" data-i18n-aria-label="Bottom panels">
     <button type="button" class="bottom-tab" id="mini-bridge-tab" data-bottom-tab="mini-bridge" aria-selected="true" data-os-click="click-226">Mini Bridge</button>
     <button type="button" class="bottom-tab" id="timeline-tab" data-bottom-tab="timeline" aria-selected="false" data-os-click="click-117">Timeline</button>
 </nav>
@@ -2672,37 +2672,37 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 <div id="canvas-a11y-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ===== WELCOME SCREEN ===== -->
-<div id="welcome-overlay" role="dialog" aria-modal="true" aria-label="Welcome to OpenShop" data-i18n-aria-label="Welcome to OpenShop">
+<div id="welcome-overlay" role="dialog" aria-modal="true" aria-label="欢迎使用 OpenShop" data-i18n-aria-label="Welcome to OpenShop">
     <div class="welcome-inner">
         <section class="welcome-hero">
             <div class="welcome-brand"><span class="welcome-mark">OS</span><span>OpenShop</span><small>v0.29</small></div>
-            <div class="welcome-kicker"><span></span><span data-i18n="Local creative studio">Local creative studio</span></div>
-            <h1><span data-i18n="Edit boldly.">Edit boldly.</span><br><em data-i18n="Stay local.">Stay local.</em></h1>
-            <p data-i18n="A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.">A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.</p>
-            <div class="welcome-trust" aria-label="Product benefits" data-i18n-aria-label="Product benefits">
-                <span data-i18n="Zero install">Zero install</span><span data-i18n="Private by default">Private by default</span><span data-i18n="PSD ready">PSD ready</span>
+            <div class="welcome-kicker"><span></span><span data-i18n="Local creative studio">本地创作工作室</span></div>
+            <h1><span data-i18n="Edit boldly.">尽情编辑。</span><br><em data-i18n="Stay local.">数据留在本地。</em></h1>
+            <p data-i18n="A full image workspace that opens in one file. Your canvas, layers, and exports stay on this device.">完整图像工作区，单个文件即可打开。画布、图层和导出文件始终保留在此设备上。</p>
+            <div class="welcome-trust" aria-label="产品优势" data-i18n-aria-label="Product benefits">
+                <span data-i18n="Zero install">无需安装</span><span data-i18n="Private by default">默认私密</span><span data-i18n="PSD ready">支持 PSD</span>
             </div>
             <div class="welcome-art" aria-hidden="true">
                 <div class="art-grid"></div>
-                <div class="art-frame art-frame-back"><span>HISTORY</span></div>
-                <div class="art-frame art-frame-mid"><span>LAYERS</span></div>
-                <div class="art-frame art-frame-front"><div class="art-orb"></div><strong>CREATE<br>WITHOUT<br>COMPROMISE</strong></div>
+                <div class="art-frame art-frame-back"><span data-i18n="HISTORY">历史记录</span></div>
+                <div class="art-frame art-frame-mid"><span data-i18n="LAYERS">图层</span></div>
+                <div class="art-frame art-frame-front"><div class="art-orb"></div><strong><span data-i18n="CREATE">自由</span><br><span data-i18n="WITHOUT">创作</span><br><span data-i18n="COMPROMISE">不设限</span></strong></div>
             </div>
         </section>
         <section class="welcome-launch">
             <div class="welcome-launch-head">
-                <div><span class="eyebrow" data-i18n="Workspace">Workspace</span><h2 data-i18n="What will you make?">What will you make?</h2></div>
+                <div><span class="eyebrow" data-i18n="Workspace">工作区</span><h2 data-i18n="What will you make?">你想创作什么？</h2></div>
                 <span class="launch-shortcut">Ctrl + K</span>
             </div>
             <div class="welcome-actions">
-                <button class="btn btn-primary" data-os-click="click-150"><span class="action-icon">+</span><span data-i18n="New Canvas">New Canvas<small data-i18n="Start from a blank document">Start from a blank document</small></span></button>
-                <button class="btn" data-os-click="click-151"><span class="action-icon">&#8593;</span><span>Open Image<small>PNG, JPEG, WebP, SVG</small></span></button>
-                <button class="btn" data-os-click="click-152"><span class="action-icon">Ps</span><span>Open PSD<small data-i18n="Preserve editable layers">Preserve editable layers</small></span></button>
-                <button class="btn welcome-skip" aria-label="Enter Studio" data-i18n-aria-label="Enter Studio" data-os-click="click-153"><span class="action-icon">&#8594;</span><span>Enter Studio<small data-i18n="Use the current canvas">Use the current canvas</small></span></button>
+                <button class="btn btn-primary" data-os-click="click-150"><span class="action-icon">+</span><span data-i18n="New Canvas">新建画布<small data-i18n="Start from a blank document">从空白文档开始</small></span></button>
+                <button class="btn" data-os-click="click-151"><span class="action-icon">&#8593;</span><span data-i18n="Open Image">打开图像<small data-i18n="PNG, JPEG, WebP, SVG">PNG、JPEG、WebP、SVG</small></span></button>
+                <button class="btn" data-os-click="click-152"><span class="action-icon">Ps</span><span data-i18n="Open PSD">打开 PSD<small data-i18n="Preserve editable layers">保留可编辑图层</small></span></button>
+                <button class="btn welcome-skip" aria-label="进入工作区" data-i18n-aria-label="Enter Studio" data-os-click="click-153"><span class="action-icon">&#8594;</span><span data-i18n="Enter Studio">进入工作区<small data-i18n="Use the current canvas">使用当前画布</small></span></button>
             </div>
-            <p class="boot-status" id="welcome-boot-status" role="status" data-i18n="Preparing the editing engine...">Preparing the editing engine...</p>
+            <p class="boot-status" id="welcome-boot-status" role="status" data-i18n="Preparing the editing engine...">正在准备编辑引擎...</p>
             <div class="template-section">
-                <div class="section-heading"><h3 data-i18n="Start from Template">Start from Template</h3><span data-i18n="Choose a preset canvas">Choose a preset canvas</span></div>
+                <div class="section-heading"><h3 data-i18n="Start from Template">从模板开始</h3><span data-i18n="Choose a preset canvas">选择预设画布</span></div>
                 <div class="template-grid" id="template-grid"></div>
             </div>
             <div class="recent-files" id="recent-files-area"></div>
@@ -2905,7 +2905,7 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
         </div>
         <div class="panel-tab-content active" id="ptg3-history" data-group="ptg3">
             <div class="ptc-inner">
-                <div id="history-list" role="listbox" aria-label="Undo history"></div>
+                <div id="history-list" role="listbox" aria-label="撤销历史记录" data-i18n-aria-label="Undo history"></div>
             </div>
         </div>
         <div class="panel-tab-content" id="ptg3-nav" data-group="ptg3">
@@ -2944,7 +2944,7 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 <!-- ===== STATUS BAR ===== -->
 <div id="statusbar" role="status" aria-label="Status bar" aria-live="off">
     <span id="canvas-dims">1920 x 1080</span><span class="sep"></span>
-    <button type="button" id="zoom-display" title="Fit canvas to view" aria-label="Zoom level, activate to fit canvas to view" data-os-click="click-103">100%</button><span class="sep"></span>
+    <button type="button" id="zoom-display" title="适配画布到视图" data-i18n-title="Fit canvas to view" aria-label="缩放级别，激活后将画布适配到视图" data-i18n-aria-label="Zoom level, activate to fit canvas to view" data-os-click="click-103">100%</button><span class="sep"></span>
     <span id="cursor-pos" aria-hidden="true">X: 0 Y: 0</span><span class="sep"></span>
     <span id="tool-display">Select</span><span style="flex:1"></span>
     <button type="button" class="ready-state offline-state" id="network-state" data-state="ready" aria-haspopup="dialog" aria-label="Outbound network activity" data-os-click="click-220"><i></i><span id="network-state-label">Nothing sent</span></button><span class="sep"></span>
@@ -2963,14 +2963,14 @@ html[data-os-workspace="mobile"] #bottom-tabs{left:0;right:0}
 </div>
 <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 <!-- ===== COMMAND PALETTE ===== -->
-<div id="cmd-palette" role="dialog" aria-label="Command palette" data-os-click="click-194">
+<div id="cmd-palette" role="dialog" aria-label="命令面板" data-i18n-aria-label="Command palette" data-os-click="click-194">
     <div id="cmd-box">
-        <input id="cmd-input" type="text" placeholder="Type a command... (Ctrl+K)" aria-label="Search commands" data-os-input="input-023" data-os-keydown="keydown-001">
+        <input id="cmd-input" type="text" placeholder="输入命令... (Ctrl+K)" data-i18n-placeholder="Type a command... (Ctrl+K)" aria-label="搜索命令" data-i18n-aria-label="Search commands" data-os-input="input-023" data-os-keydown="keydown-001">
         <div id="cmd-results"></div>
     </div>
 </div>
 <!-- ===== CONTEXT MENU ===== -->
-<div id="context-menu" role="menu" aria-label="Context menu"></div>
+<div id="context-menu" role="menu" aria-label="上下文菜单" data-i18n-aria-label="Context menu"></div>
 <!-- ===== DROPZONE ===== -->
 <div id="dropzone-overlay">
     <div class="dropzone-ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
@@ -4410,6 +4410,715 @@ const OS = {
         "Zoom Tool": "缩放工具",
         "Quick Mask Mode": "快速蒙版模式",
         "Screen Mode": "屏幕模式",
+        "Your files and edits stay on this device": "文件和编辑内容只保存在此设备上",
+        "HISTORY": "历史记录",
+        "LAYERS": "图层",
+        "CREATE": "自由",
+        "WITHOUT": "创作",
+        "COMPROMISE": "不设限",
+        "Edit Stops": "编辑色标",
+        "Freeform": "自由",
+        "1:1 (Square)": "1:1（正方形）",
+        "9:16 (Portrait)": "9:16（竖版）",
+        "Custom...": "自定义...",
+        "Subtract": "减去",
+        "Intersect": "相交",
+        "FG / BG": "前景 / 背景",
+        "Saved": "已保存",
+        "+ Add FG": "+ 添加前景色",
+        "Min: {value}": "最小值：{value}",
+        "Mean: {value}": "平均值：{value}",
+        "Max: {value}": "最大值：{value}",
+        "RGB 8bit": "RGB 8 位",
+        "0 objects": "0 个对象",
+        "No document": "无文档",
+        "Background": "背景",
+        "Locked": "已锁定",
+        "Hide layer": "隐藏图层",
+        "Show layer": "显示图层",
+        "Lock layer": "锁定图层",
+        "Unlock layer": "解锁图层",
+        "Tool: {tool}": "工具：{tool}",
+        "Active layer: {layer}": "活动图层：{layer}",
+        "Selection: {selection}": "选区：{selection}",
+        "Objects: {objects}": "对象：{objects}",
+        "none": "无",
+        "visible": "可见",
+        "hidden": "已隐藏",
+        "unlocked": "未锁定",
+        "normal blend": "正常混合",
+        "{count} objects": "{count} 个对象",
+        "{count} object": "{count} 个对象",
+        "Image canvas": "图像画布",
+        "image editor canvas": "图像编辑画布",
+        "Drawing surface": "绘图区域",
+        "Main menu": "主菜单",
+        "Bottom panels": "底部面板",
+        "Context menu": "上下文菜单",
+        "Stylus: ready": "触控笔：就绪",
+        "Pressure changes are enabled after a pen stroke reports varying pressure": "触控笔笔划检测到压力变化后将启用压感",
+        "No document open. Create a canvas or open an image.": "当前未打开文档。请新建画布或打开图像。",
+        "Undo history": "撤销历史记录",
+        "Fit canvas to view": "适配画布到视图",
+        "Zoom level, activate to fit canvas to view": "缩放级别，激活后将画布适配到视图",
+        "Command palette": "命令面板",
+        "Type a command... (Ctrl+K)": "输入命令... (Ctrl+K)",
+        "Search commands": "搜索命令",
+        "Outbound network activity": "外发网络活动",
+        "Offline and install status": "离线与安装状态",
+        "Background processing": "后台处理中",
+        "Video": "视频",
+        "Social": "社交媒体",
+        "Print": "印刷",
+        "Web": "网页",
+        "Display": "显示设备",
+        "HD 1080p": "高清 1080p",
+        "4K UHD": "4K 超高清",
+        "Instagram Post": "Instagram 帖子",
+        "Instagram Story": "Instagram 快拍",
+        "Facebook Cover": "Facebook 封面",
+        "Twitter Header": "Twitter 头图",
+        "YouTube Thumb": "YouTube 缩略图",
+        "LinkedIn Banner": "LinkedIn 横幅",
+        "A4 Portrait": "A4 竖版",
+        "A4 Landscape": "A4 横版",
+        "Letter": "Letter 纸张",
+        "Business Card": "名片",
+        "Web Banner": "网页横幅",
+        "Favicon": "网站图标",
+        "Open Graph": "Open Graph 分享图",
+        "Wallpaper QHD": "QHD 壁纸",
+        "{name}，{width} × {height} 像素": "{name}，{width} × {height} 像素",
+        "Created: {name}": "已创建：{name}",
+        "Workspace: {workspace}": "工作区：{workspace}",
+        "Created {width} × {height} canvas{physical}": "已创建 {width} × {height} 画布{physical}",
+        " ({width}{unit} × {height}{unit} at {resolution} PPI)": "（{width}{unit} × {height}{unit}，{resolution} PPI）",
+        "Canvas rotated clockwise": "画布已顺时针旋转",
+        "Canvas rotated counterclockwise": "画布已逆时针旋转",
+        "Canvas flipped horizontally": "画布已水平翻转",
+        "Canvas flipped vertically": "画布已垂直翻转",
+        "Theme: {theme}": "主题：{theme}",
+        "Dark": "深色",
+        "OLED": "OLED 纯黑",
+        "Show and unlock the active layer before drawing": "请显示并解锁活动图层后再绘制",
+        "Document closed": "文档已关闭",
+        "RAW import discarded because the document changed": "文档已变更，已丢弃 RAW 导入结果",
+        "PDF import discarded because the document changed": "文档已变更，已丢弃 PDF 导入结果",
+        "Rotated to match the photo's EXIF orientation": "已按照片 EXIF 方向旋转",
+        "Animated PNG is unavailable in this browser; loading its first frame instead.": "此浏览器不支持动画 PNG，已改为加载第一帧。",
+        "Animated import discarded because the document changed": "文档已变更，已丢弃动画图像导入结果",
+        "GIF import discarded because the document changed": "文档已变更，已丢弃 GIF 导入结果",
+        "Encoding AVIF with the verified local codec…": "正在使用已验证的本地编解码器编码 AVIF…",
+        "Exported as AVIF": "已导出为 AVIF",
+        "Exported as SVG": "已导出为 SVG",
+        "Choose an image folder first": "请先选择图像文件夹",
+        "Choose an action recipe JSON file first": "请先选择动作配方 JSON 文件",
+        "Select at least one format to export": "请至少选择一种导出格式",
+        "Signaling text copied": "信令文本已复制",
+        "Select the signaling text and copy it manually": "请选择信令文本并手动复制",
+        "Saved snapshot; newer edits remain unsaved": "已保存快照，后续编辑尚未保存",
+        "PSD import cancelled": "已取消 PSD 导入",
+        "Adjustment stack applied to pixel layers": "已将调整堆栈应用到像素图层",
+        "Unlock layer first": "请先解锁图层",
+        "Could not duplicate this layer": "无法复制此图层",
+        "Show and unlock both layers before merging": "请显示并解锁两个图层后再合并",
+        "Image flattened": "图像已扁平化",
+        "Layer is already at the end of the stack": "图层已位于堆栈末端",
+        "Alt+click to set source first": "请先按住 Alt 单击设置源点",
+        "Click on an image to clone": "请在图像上单击以进行仿制",
+        "No previous selection to restore": "没有可恢复的上一个选区",
+        "Selection restored": "选区已恢复",
+        "No selection to invert": "没有可反选的选区",
+        "No pixel selection to grow": "没有可扩展的像素选区",
+        "Selection does not match the document": "选区与当前文档不匹配",
+        "No pixel selection": "没有像素选区",
+        "No selection to modify": "没有可修改的选区",
+        "Enter a pixel amount between 1 and 100": "请输入 1 到 100 之间的像素值",
+        "Crop region exceeds the maximum image size": "裁剪区域超过最大图像尺寸",
+        "Select an image to adjust": "请选择要调整的图像",
+        "Select an editable image to adjust": "请选择可编辑的图像",
+        "Filter cancelled": "滤镜已取消",
+        "Layer via copy": "通过拷贝新建图层",
+        "Layer via cut": "通过剪切新建图层",
+        "No filter to reapply": "没有可重新应用的滤镜",
+        "jsPDF not loaded": "jsPDF 尚未加载",
+        "PSD library not loaded or does not support writing": "PSD 库未加载或不支持写入",
+        "Generating PSD...": "正在生成 PSD...",
+        "Ready to edit": "可以开始编辑",
+        "OpenShop installed": "OpenShop 已安装",
+        "Updates are available only in the hosted app": "仅在托管版应用中提供更新",
+        "No staged update is waiting": "没有等待安装的暂存更新",
+        "Rebuilding the offline shell...": "正在重建离线外壳...",
+        "Use your browser install menu when installation is supported": "如浏览器支持安装，请使用浏览器的安装菜单",
+        "OpenShop opens one launched document per window; using the first file": "每个窗口只能打开一个启动文档，已使用第一个文件",
+        "Another tab owns that recovery stream; this tab will save a separate copy": "另一个标签页正在使用该恢复流；此标签页将保存单独副本",
+        "Only corrupt recovery generations were found. Open Recovery Storage to export or discard them.": "仅发现损坏的恢复版本。请打开恢复存储以导出或丢弃它们。",
+        "This browser cannot protect stored data from eviction": "此浏览器无法保护已存储数据不被清除",
+        "Durable storage requests are not supported by this browser": "此浏览器不支持持久存储请求",
+        "Recovery generation discarded": "恢复版本已丢弃",
+        "All recovery generations discarded": "已丢弃所有恢复版本",
+        "No recovery data to export": "没有可导出的恢复数据",
+        "Recovery data exported": "恢复数据已导出",
+        "Recovery generation is not restorable": "该恢复版本无法恢复",
+        "Lasso selection is outside the document": "套索选区位于文档外",
+        "Click on an image to heal": "请在图像上单击以修复",
+        "Click second point": "请选择第二个点",
+        "Levels applied": "色阶已应用",
+        "Color balance applied": "色彩平衡已应用",
+        "Edit the Smart Object source instead of applying a destructive pixel edit": "请编辑智能对象源文件，而非应用破坏性像素编辑",
+        "Edit cancelled because the document or target layer changed": "文档或目标图层已变更，编辑已取消",
+        "Select 2+ objects": "请至少选择 2 个对象",
+        "Select 3+ objects": "请至少选择 3 个对象",
+        "Guide removed": "参考线已移除",
+        "All guides cleared": "已清除所有参考线",
+        "Transform applied": "变换已应用",
+        "Skew applied": "倾斜已应用",
+        "Select an image layer first": "请先选择图像图层",
+        "Layer masks require a pixel or image layer": "图层蒙版需要像素图层或图像图层",
+        "Layer mask added": "图层蒙版已添加",
+        "Mask removed": "蒙版已移除",
+        "Smart Objects currently require an image layer": "智能对象当前需要图像图层",
+        "Converted to Smart Object; source is embedded locally": "已转换为智能对象；源文件已嵌入本地",
+        "Choose an image within the import limit": "请选择未超过导入限制的图像",
+        "Select a vector shape first": "请先选择矢量形状",
+        "Select a vector shape or path first": "请先选择矢量形状或路径",
+        "Vector shape converted to an editable path": "矢量形状已转换为可编辑路径",
+        "Select a vector path first": "请先选择矢量路径",
+        "Drag path anchors and Bezier controls; click Edit Path again when done": "拖动路径锚点和贝塞尔控制点；完成后再次单击“编辑路径”",
+        "Select a text object first": "请先选择文本对象",
+        "Text features applied": "文字功能已应用",
+        "Select text before attaching it to a path": "请先选择文本，再将其附加到路径",
+        "Create or convert a vector path first": "请先创建或转换一个矢量路径",
+        "Text attached to vector path": "文本已附加到矢量路径",
+        "The text path is no longer available": "文本路径已不可用",
+        "Select a Text on Path object first": "请先选择路径文字对象",
+        "Perspective applied": "透视已应用",
+        "Watermark added": "水印已添加",
+        "Some preferences were out of range and have been clamped": "部分偏好设置超出范围，已限制到允许值",
+        "Layer moved": "图层已移动",
+        "Filter result discarded because the document or target layer changed": "文档或目标图层已变更，已丢弃滤镜结果",
+        "Applying posterize...": "正在应用色调分离...",
+        "Detecting edges...": "正在检测边缘...",
+        "Applying vignette...": "正在应用暗角...",
+        "Applying unsharp mask...": "正在应用 USM 锐化...",
+        "Applying oil paint...": "正在应用油画效果...",
+        "Applying tilt shift...": "正在应用移轴效果...",
+        "Layer style applied": "图层样式已应用",
+        "Layer style cleared": "图层样式已清除",
+        "Could not capture state": "无法捕获状态",
+        "Note added": "便签已添加",
+        "Palette is already empty": "调色板已经为空",
+        "Palette restored": "调色板已恢复",
+        "Palette exported": "调色板已导出",
+        "Palette contained no usable colours": "调色板中没有可用颜色",
+        "ABR file contained no readable brushes": "ABR 文件不包含可读取的画笔",
+        "GRD file contained no readable gradients": "GRD 文件不包含可读取的渐变",
+        "Colors reset": "颜色已重置",
+        "Nothing selected": "尚未选择任何内容",
+        "Copied": "已复制",
+        "Cut": "已剪切",
+        "Nothing to paste": "没有可粘贴的内容",
+        "Unlock and show every selected layer before deleting": "删除前请解锁并显示每个选中的图层",
+        "Deleted selected pixels": "已删除选中的像素",
+        "Free Transform - drag handles to resize/rotate": "自由变换：拖动控制柄以缩放或旋转",
+        "Need 2+ visible layers": "需要至少 2 个可见图层",
+        "Select an image to retouch": "请选择要修饰的图像",
+        "Animation frames are flattened snapshots — switching frames replaces the layer stack with a single layer": "动画帧是扁平化快照；切换帧会用单个图层替换图层堆栈",
+        "Add a frame before playback": "播放前请先添加帧",
+        "Add at least 2 frames": "请至少添加 2 帧",
+        "Loading GIF encoder...": "正在加载 GIF 编码器...",
+        "Recording actions...": "正在录制动作...",
+        "An action is already running": "已有动作正在运行",
+        "Action complete": "动作已完成",
+        "No actions to clear": "没有可清除的动作",
+        "Actions restored": "动作已恢复",
+        "No actions recorded to save": "没有可保存的已录制动作",
+        "Action saved": "动作已保存",
+        "Segment Select model ready (cached)": "分割选择模型已就绪（已缓存）",
+        "Segment Select model ready": "分割选择模型已就绪",
+        "No image found on canvas": "画布上未找到图像",
+        "Segment Select active": "分割选择已启用",
+        "Click inside an image layer": "请在图像图层内单击",
+        "No segment found at click point": "单击位置未找到分割区域",
+        "Segment mask was empty": "分割蒙版为空",
+        "Selected segment": "已选择分割区域",
+        "Segment Select result discarded because the document changed": "文档已变更，已丢弃分割选择结果",
+        "Background removed (AI)": "背景已移除（AI）",
+        "Background removal result discarded because the document changed": "文档已变更，已丢弃背景移除结果",
+        "Depth map generated — added as overlay": "深度图已生成并作为叠加层添加",
+        "Depth map result discarded because the document changed": "文档已变更，已丢弃深度图结果",
+        "No objects detected": "未检测到对象",
+        "Object detection result discarded because the document changed": "文档已变更，已丢弃对象检测结果",
+        "Tracing produced no paths — try more colors": "描摹未生成路径，请尝试使用更多颜色",
+        "Super-resolution model unavailable — using the resample enlarger": "超分辨率模型不可用，已改用重采样放大器",
+        "Super-resolution result discarded because the document changed": "文档已变更，已丢弃超分辨率结果",
+        "Upscale result discarded because the document changed": "文档已变更，已丢弃放大结果",
+        "Enter a preset name": "请输入预设名称",
+        "Invalid preset file": "预设文件无效",
+        "Presets exported": "预设已导出",
+        "Diagnostics cleared": "诊断信息已清除",
+        "Object Modified": "对象已修改",
+        "Draw": "绘制",
+        "Open PDF": "打开 PDF",
+        "Import SVG": "导入 SVG",
+        "Batch Image": "批量图像",
+        "Import PSD": "导入 PSD",
+        "Reorder Layers": "重新排序图层",
+        "Apply Adjustment Stack": "应用调整堆栈",
+        "Duplicate Adjustment Layer": "复制调整图层",
+        "Layer Opacity": "图层不透明度",
+        "Rename Layer": "重命名图层",
+        "ABR Brush Stroke": "ABR 画笔笔划",
+        "Add Text": "添加文本",
+        "Fill Canvas": "填充画布",
+        "Adjustments Applied": "调整已应用",
+        "Clear Filters": "清除滤镜",
+        "Resize": "调整大小",
+        "Layer Via Copy": "通过拷贝新建图层",
+        "Layer Via Cut": "通过剪切新建图层",
+        "Flip H": "水平翻转",
+        "Flip V": "垂直翻转",
+        "Move Guide": "移动参考线",
+        "Remove Guide": "移除参考线",
+        "Add Guide": "添加参考线",
+        "Clear Guides": "清除参考线",
+        "Text Decoration": "文本装饰",
+        "Clear Text FX": "清除文本效果",
+        "Skew": "倾斜",
+        "Add Mask": "添加蒙版",
+        "Update Mask": "更新蒙版",
+        "Remove Mask": "移除蒙版",
+        "Edit Smart Object Source": "编辑智能对象源文件",
+        "Convert to Smart Object": "转换为智能对象",
+        "Convert Vector to Path": "将矢量转换为路径",
+        "Edit Vector Path": "编辑矢量路径",
+        "Apply Type Features": "应用文字功能",
+        "Edit Text on Path": "编辑路径文字",
+        "Pen Path": "钢笔路径",
+        "Perspective": "透视",
+        "Watermark": "水印",
+        "Resize Object": "调整对象大小",
+        "Move Object": "移动对象",
+        "Layer Style": "图层样式",
+        "Clear Layer Style": "清除图层样式",
+        "Trace to Vector": "描摹为矢量",
+        "Layer {index}": "图层 {index}",
+        "Layer {index} ({kind})": "图层 {index}（{kind}）",
+        "copy": "副本",
+        "cut": "剪切",
+        "{opacity}% opacity": "不透明度 {opacity}%",
+        "{width} × {height} pixels at {x}, {y}": "{width} × {height} 像素，位于 {x}, {y}",
+        "{count} pixels selected, {size}": "已选择 {count} 个像素，{size}",
+        "selection bounds {size}": "选区范围：{size}",
+        "Tool: {tool}. Active layer: {layer}. Selection: {selection}. {objects}.{action}": "工具：{tool}。活动图层：{layer}。选区：{selection}。{objects}。{action}",
+        "Last action: {action}.": "上一步操作：{action}。",
+        "Active layer": "活动图层",
+        "{role} {index}: {layer}, {visibility}, {lock}, {objects}": "{role} {index}：{layer}，{visibility}，{lock}，{objects}",
+        "{count} obj": "{count} 个对象",
+        "{type} adjustment": "{type} 调整图层",
+        "Unsaved changes": "有未保存的更改",
+        "Saving…": "正在保存…",
+        "Save failed": "保存失败",
+        "Network-first": "网络优先",
+        "Update ready": "更新已就绪",
+        "Offline ready": "离线已就绪",
+        "Preparing offline": "正在准备离线功能",
+        "Offline unavailable": "离线功能不可用",
+        "Strict offline": "严格离线",
+        "Strict · {count} blocked": "严格模式 · 已阻止 {count} 项",
+        "{count} downloads": "{count} 次下载",
+        "{count} download": "{count} 次下载",
+        "Drag to reorder": "拖动以重新排序",
+        "Standalone file: a cold open requires network access": "独立文件：首次打开需要网络连接",
+        "Hosted shell cached for offline reload": "托管版外壳已缓存，可离线重新加载",
+        "Hosted shell is not yet cached": "托管版外壳尚未缓存",
+        "Strict offline mode is on: requests to anywhere but this page are refused unless they are already cached.": "严格离线模式已开启：除非资源已缓存，否则会拒绝访问本页以外的任何请求。",
+        "No request has left this page. Your images are never uploaded.": "没有请求离开此页面。你的图像绝不会被上传。",
+        "{count} outbound request to {hosts} — code and model weights only, never document pixels.": "向 {hosts} 发出 {count} 个外发请求——仅用于代码和模型权重，绝不包含文档像素。",
+        "{count} outbound requests to {hosts} — code and model weights only, never document pixels.": "向 {hosts} 发出 {count} 个外发请求——仅用于代码和模型权重，绝不包含文档像素。",
+        "Reset options": "重置选项",
+        "Reset the current tool options": "重置当前工具选项",
+        "Swap W/H": "交换宽高",
+        "Selection mode": "选区模式",
+        "Align Left": "左对齐",
+        "Align Center": "水平居中",
+        "Align Right": "右对齐",
+        "Align Top": "顶部对齐",
+        "Align Middle": "垂直居中",
+        "Align Bottom": "底部对齐",
+        "Status bar": "状态栏",
+        "Errors this session — run Export Diagnostics from the command palette": "本次会话中的错误——请从命令面板运行“导出诊断信息”",
+        "Previous": "上一个",
+        "Play/Pause": "播放 / 暂停",
+        "Next": "下一个",
+        "PSD (Photoshop)": "PSD（Photoshop）",
+        "PNG, JPEG, WebP, SVG": "PNG、JPEG、WebP、SVG",
+        "No document open.": "当前未打开文档。",
+        "Document Baseline": "文档初始状态",
+        "Midtones": "中间调",
+        "Shadows": "阴影",
+        "Highlights": "高光",
+        "Saturate": "增加饱和度",
+        "Desaturate": "降低饱和度",
+        "Smart Object": "智能对象",
+        "Edit Source": "编辑源文件",
+        "Vector Path": "矢量路径",
+        "Convert to Path": "转换为路径",
+        "Edit Path": "编辑路径",
+        "Ligatures": "连字",
+        "Small caps": "小型大写字母",
+        "Tabular numbers": "等宽数字",
+        "Shadow X": "阴影 X",
+        "Shadow Y": "阴影 Y",
+        "Outline W": "描边宽度",
+        "Outline C": "描边颜色",
+        "Drop Shadow": "投影",
+        "Offset X": "X 偏移",
+        "Offset Y": "Y 偏移",
+        "Outer Glow": "外发光",
+        "Distribute H": "水平分布",
+        "Distribute V": "垂直分布",
+        "X: {x} Y: {y}": "X：{x} Y：{y}",
+        "+ Frame": "+ 添加帧",
+        "Dup": "复制",
+        "Export GIF": "导出 GIF",
+        "Raises or lowers the curve midpoint while preserving the endpoints.": "在保持两端不变的情况下抬高或降低曲线中点。",
+        "Update Layer": "更新图层",
+        "Discard unsaved changes?": "丢弃未保存的更改？",
+        "Save first": "先保存",
+        "Discard": "丢弃",
+        "Cancelling…": "正在取消…",
+        "Finishing the current file and restoring the open document…": "正在完成当前文件并恢复打开的文档…",
+        "Batch cancelled; restoring the open document…": "批处理已取消，正在恢复打开的文档…",
+        "Batch cancelled; no partial files were ready": "批处理已取消；没有准备好的部分文件",
+        "Batch processing produced no files": "批处理未生成任何文件",
+        "Importing PSD": "正在导入 PSD",
+        "Reading file…": "正在读取文件…",
+        "Cancel Import": "取消导入",
+        "Continue": "继续",
+        "Outbound hosts": "外发主机",
+        "None": "无",
+        "Offline & Install": "离线与安装",
+        "AI assets": "AI 资源",
+        "Transformers.js WASM runtime": "Transformers.js WASM 运行时",
+        "This browser does not report whether recovery data is protected from eviction.": "此浏览器不会报告恢复数据是否受到防清除保护。",
+        "Safari deletes this data after seven days without a visit. Keep recovery data, or install OpenShop to your Home Screen or Dock, to stop that.": "Safari 会在连续七天未访问后删除这些数据。请保留恢复数据，或将 OpenShop 安装到主屏幕或 Dock，以避免这种情况。",
+        "The browser may delete recovery data when it needs space. Keep recovery data to ask it not to.": "浏览器在需要空间时可能删除恢复数据。保留恢复数据可请求浏览器避免这样做。",
+        "Keep recovery data": "保留恢复数据",
+        "The newest generation is corrupt. The newest verified older generation is offered instead.": "最新恢复版本已损坏，现提供最新的已验证旧版本。",
+        "No recovery generations are stored.": "没有存储恢复版本。",
+        "This browser does not expose Origin Private File System storage.": "此浏览器未提供 Origin Private File System 存储。",
+        "Corrupt recovery": "损坏的恢复版本",
+        "Corrupt": "已损坏",
+        "Legacy": "旧版",
+        "Verified": "已验证",
+        "Recovery name": "恢复名称",
+        "Save Name": "保存名称",
+        "Corrupt generations cannot be renamed": "无法重命名损坏的恢复版本",
+        "Preview": "预览",
+        "Nothing readable was recovered from this generation": "此恢复版本中没有可读取的内容",
+        "This generation failed its integrity check": "该恢复版本未通过完整性检查",
+        "Open as Copy": "作为副本打开",
+        "Restore": "恢复",
+        "Request Durable Storage": "请求持久存储",
+        "Discard All": "全部丢弃",
+        "Recover Unsaved Work?": "恢复未保存的工作？",
+        "Layer Mask": "图层蒙版",
+        "Layer mask settings": "图层蒙版设置",
+        "Feather": "羽化",
+        "Feather softens the mask edge; density controls its maximum coverage.": "羽化可柔化蒙版边缘；浓度控制其最大覆盖范围。",
+        "Smart Object Source": "智能对象源文件",
+        "Smart Object source": "智能对象源文件",
+        "Replace Source": "替换源文件",
+        "Edit text on path": "编辑路径文字",
+        "Text": "文本",
+        "Update Text": "更新文本",
+        "JPEG always uses a matte": "JPEG 始终使用底色",
+        "PNG, WebP, and AVIF can preserve alpha": "PNG、WebP 和 AVIF 可以保留透明度",
+        "Export impact": "导出影响",
+        "Delete note": "删除便签",
+        "Note text": "便签文本",
+        "Drag, or focus and use the arrow keys, to resize": "拖动，或聚焦后使用方向键调整大小",
+        "Type a note...": "输入便签内容...",
+        "My Preset": "我的预设",
+        "Stop": "停止",
+        "Save Preset": "保存预设",
+        "Name": "名称",
+        "Deny": "拒绝",
+        "Allow and load": "允许并加载",
+        "Black": "黑场",
+        "White": "白场",
+        "White background": "白色",
+        "Gamma": "伽马",
+        "HSL": "色相 / 饱和度 / 明度",
+        "Lightness": "明度",
+        "Midpoint": "中点",
+        "{type} Adjustment Layer": "{type}调整图层",
+        "{count} guides": "{count} 条参考线",
+        "{count} animation frames": "{count} 个动画帧",
+        "PSD group metadata used by PSD export": "PSD 导出使用的图层组元数据",
+        "{action} discards part of this document": "“{action}”会丢弃此文档的一部分内容",
+        "{action} rebuilds the document as a single image. This is undoable, but it removes:": "“{action}”会将文档重建为单张图像。此操作可撤销，但会移除：",
+        "{action} will discard edits you have not saved. This cannot be undone.": "“{action}”会丢弃尚未保存的编辑内容，且无法撤销。",
+        "PSD compatibility report": "PSD 兼容性报告",
+        "PSD import compatibility": "PSD 导入兼容性",
+        "PSD export compatibility": "PSD 导出兼容性",
+        "The file was not opened; the current document was left unchanged.": "文件未打开，当前文档保持不变。",
+        "Appearance was prioritized through a flattened fallback.": "已通过扁平化回退方案优先保留外观。",
+        "Supported layers remain editable; the exceptions below use explicit pixel fallbacks.": "支持的图层仍可编辑；以下例外会使用明确的像素回退方案。",
+        "{count} structured compatibility losses recorded.": "已记录 {count} 项结构化兼容性损失。",
+        "Color Range": "色彩范围",
+        "Select:": "选择：",
+        "Sampled Colors": "取样颜色",
+        "Reds": "红色",
+        "Yellows": "黄色",
+        "Greens": "绿色",
+        "Cyans": "青色",
+        "Blues": "蓝色",
+        "Magentas": "洋红色",
+        "Fuzziness:": "模糊度：",
+        "OK": "确定",
+        "Add to sample": "添加到取样",
+        "Subtract from sample": "从取样中减去",
+        "Flatten": "拼合图像",
+        "Rotate canvas": "旋转画布",
+        "Flip canvas": "翻转画布",
+        "Closing this document": "关闭此文档",
+        "Creating a new document": "新建文档",
+        "Opening an image": "打开图像",
+        "Opening a PDF": "打开 PDF",
+        "Opening an SVG": "打开 SVG",
+        "Opening a PSD": "打开 PSD",
+        "Opening a project": "打开项目",
+        "Opening a launched file": "打开启动文件",
+        "Replacing this document": "替换此文档",
+        "Section {index}": "第 {index} 区",
+        "Resize {label} panel": "调整“{label}”面板大小",
+        "New Image": "新建图像",
+        "A4 300dpi": "A4 300 dpi",
+        "Letter 300dpi": "Letter 300 dpi",
+        "6x4in photo": "6×4 英寸照片",
+        "Units": "单位",
+        "Pixels": "像素",
+        "Millimetres": "毫米",
+        "Inches": "英寸",
+        "Resolution": "分辨率",
+        "Resolution in pixels per inch": "每英寸像素分辨率",
+        "PPI": "PPI",
+        "Height": "高度",
+        "Pixel size": "像素尺寸",
+        "Transparent": "透明",
+        "Custom colour": "自定义颜色",
+        "Custom background colour": "自定义背景色",
+        "Create": "创建",
+        "Batch Processor": "批处理器",
+        "Drop a folder of images, apply a saved action recipe, and download one ZIP.": "选择图像文件夹，应用已保存的动作配方，然后下载一个 ZIP 文件。",
+        "Images": "图像",
+        "Action recipe": "动作配方",
+        "Output": "输出",
+        "Raster inputs only: SVG, AVIF, RAW, and project files are rejected. PNG keeps transparency; relative folder paths are preserved in the ZIP.": "仅支持位图输入：SVG、AVIF、RAW 和项目文件会被拒绝。PNG 会保留透明度；ZIP 中会保留文件夹相对路径。",
+        "Export current canvas formats...": "导出当前画布的多种格式...",
+        "Process folder": "处理文件夹",
+        "Export Current Canvas": "导出当前画布",
+        "Export the current canvas to multiple formats at once.": "一次将当前画布导出为多种格式。",
+        "Export": "导出",
+        "Export All": "全部导出",
+        "Processing batch": "正在批处理",
+        "Preparing files…": "正在准备文件…",
+        "Cancel batch": "取消批处理",
+        "Building ZIP ({index}/{total})…": "正在构建 ZIP（{index}/{total}）…",
+        "{index}/{total}: {file} — {failed} failed": "{index}/{total}：{file} — {failed} 项失败",
+        "file": "文件",
+        "Collaborative Session": "协作会话",
+        "Peer-to-peer WebRTC session with manual offer/answer exchange. No server or document relay is used; only the selected peer receives document state.": "通过手动交换邀请与应答建立点对点 WebRTC 会话。不使用服务器或文档中转；只有选定的对等方会接收文档状态。",
+        "I consent to share this document with the peer identified by the exchanged signaling text.": "我同意与交换信令文本所标识的对等方共享此文档。",
+        "Create offer": "创建邀请",
+        "Join with offer": "使用邀请加入",
+        "Copy local": "复制本地信令",
+        "Local signaling text": "本地信令文本",
+        "Remote signaling text": "远程信令文本",
+        "Apply remote / create answer": "应用远程信令 / 创建应答",
+        "Not connected": "未连接",
+        "Peer fingerprint: not established": "对等方指纹：未建立",
+        "Peer fingerprint: {peer}": "对等方指纹：{peer}",
+        "Disconnect": "断开连接",
+        "Close": "关闭",
+        "Paste the offer into Remote signaling text": "请将邀请粘贴到远程信令文本中",
+        "Collaboration disconnected": "协作已断开",
+        "Peer channel closed — local changes are queued for reconnect": "对等方通道已关闭，本地更改已排队等待重新连接",
+        "Peer channel reported an error": "对等方通道报告错误",
+        "Check the consent box before sharing this document": "共享此文档前请勾选同意框",
+        "Offer ready — send it to the other peer, then paste the answer below": "邀请已准备好，请发送给另一方，然后在下方粘贴应答",
+        "Answer ready — send it back to the offer creator": "应答已准备好，请发送回邀请创建方",
+        "Answer applied — waiting for the peer channel": "已应用应答，正在等待对等方通道",
+        "Rejected collaboration message from an unknown session or peer": "已拒绝来自未知会话或对等方的协作消息",
+        "Rejected collaboration message from a second peer": "已拒绝来自第二个对等方的协作消息",
+        "Rejected collaboration message without a valid revision": "已拒绝没有有效版本号的协作消息",
+        "Rejected collaboration state with mismatched document identity": "已拒绝文档标识不匹配的协作状态",
+        "Received collaboration message was not valid JSON": "收到的协作消息不是有效 JSON",
+        "Received collaboration state was invalid": "收到的协作状态无效",
+        "Peer document was rejected; local document restored": "对等方文档已被拒绝，已恢复本地文档",
+        "Concurrent edit resolved deterministically": "已确定性地解决并发编辑冲突",
+        "Synchronized with peer": "已与对等方同步",
+        "Batch recipe is empty": "批处理方案为空",
+        "Batch recipes need an editable image target": "批处理方案需要可编辑的图像目标",
+        "Batch document has no editable layer": "批处理文档没有可编辑图层",
+        "Batch input is not an image": "批处理输入不是图像",
+        "Batch processor currently accepts raster images only": "批处理器目前仅接受位图图像",
+        "Could not read the batch image": "无法读取批处理图像",
+        "Give the snapshot a name": "请为快照命名",
+        "That snapshot is no longer available": "该快照已不可用",
+        "Snapshots & Branches": "快照与分支",
+        "Named states you kept, and every line of work an edit-after-undo moved aside. Both are held for this session only.": "这里保留你命名的状态，以及撤销后继续编辑时分出的每条历史线；它们仅在当前会话中保存。",
+        "No named states yet.": "暂无已命名状态。",
+        "No branches — nothing has been undone and then edited over.": "暂无分支——尚未在撤销后继续编辑。",
+        "Named states": "已命名状态",
+        "Branches": "分支",
+        "Branch": "创建分支",
+        "Name This State": "命名当前状态",
+        "Snapshots are kept for this session and are not limited by the undo step count.": "快照仅保留在当前会话中，不受撤销步骤数量限制。",
+        "Snapshot": "快照",
+        "{count} steps after “{action}”": "在“{action}”之后的 {count} 个步骤",
+        "Saved snapshot “{name}”": "已保存快照“{name}”",
+        "Saved snapshot “{name}”; {count} older entries were released to stay within the memory budget": "已保存快照“{name}”；为满足内存预算，已释放 {count} 个较早条目",
+        "Branch from “{name}”": "从“{name}”创建分支",
+        "Restore “{name}”": "恢复“{name}”",
+        "Branched from “{name}”": "已从“{name}”创建分支",
+        "Restored “{name}”": "已恢复“{name}”",
+        "{count} seconds ago": "{count} 秒前",
+        "{count} minutes ago": "{count} 分钟前",
+        "{count} hours ago": "{count} 小时前",
+        "start": "起始状态",
+        "Select a gradient-filled object first": "请先选择填充了渐变的对象",
+        "On-canvas stops are available for linear gradients only": "画布内色标仅适用于线性渐变",
+        "That object has no linear gradient fill": "该对象没有线性渐变填充",
+        "Drag the handles to move the gradient stops": "拖动控制柄以移动渐变色标",
+        "Another edit is still finishing — try again in a moment": "另一项编辑仍在完成，请稍后重试",
+        "Strict offline mode": "严格离线模式",
+        "Refuse every request that is not already cached": "拒绝所有尚未缓存的请求",
+        "Strict offline mode on — uncached downloads are refused": "严格离线模式已开启——未缓存下载将被拒绝",
+        "Strict offline mode off": "严格离线模式已关闭",
+        "Off.": "已关闭。",
+        "Off. Program code and AI model weights may be downloaded on demand from the pinned hosts above.": "已关闭。程序代码和 AI 模型权重可按需从上方固定主机下载。",
+        "On. Anything not already downloaded stays unavailable until you turn this off. A cold start on the standalone file lane cannot honour it, because the three pinned libraries are the app itself; OpenShop stands the mode down and says so rather than failing to open.": "已开启。任何尚未下载的资源都会不可用，直到你关闭此模式。独立 HTML 模式的冷启动无法遵守该限制，因为三个固定库本身就是应用；OpenShop 会自动停用该模式并提示，而不是无法打开。",
+        "Available": "可用",
+        "Disabled while strict": "严格离线模式下不可用",
+        "Downloads on first use": "首次使用时下载",
+        "Every editing, filter, export and AI operation runs on this machine. Nothing on this list is a document, a layer or a pixel — OpenShop has no upload path at all. What it does fetch is program code and, on first use, AI model weights.": "所有编辑、滤镜、导出和 AI 操作都在本机执行。此列表不会包含文档、图层或像素——OpenShop 完全没有上传路径；它只会获取程序代码，以及首次使用时的 AI 模型权重。",
+        "No request has left this page this session.": "本次会话没有任何请求离开此页面。",
+        "{purpose} · {sent} sent": "{purpose} · 已发送 {sent} 次",
+        "{purpose} · {sent} sent · {blocked} blocked": "{purpose} · 已发送 {sent} 次 · 已拦截 {blocked} 次",
+        "{purpose} · {sent} sent · {failed} failed": "{purpose} · 已发送 {sent} 次 · 失败 {failed} 次",
+        "{purpose} · {sent} sent · {blocked} blocked · {failed} failed": "{purpose} · 已发送 {sent} 次 · 已拦截 {blocked} 次 · 失败 {failed} 次",
+        "Scale X": "水平缩放",
+        "Scale Y": "垂直缩放",
+        "Rotation": "旋转",
+        "Skew X": "水平斜切",
+        "Skew Y": "垂直斜切",
+        "Image Information": "图像信息",
+        "Canvas Size": "画布尺寸",
+        "Total Objects": "对象总数",
+        "Text Objects": "文字对象",
+        "Shapes": "形状",
+        "History Memory": "历史记录内存",
+        "RGB 8-bit": "RGB 8 位",
+        "Est. Memory": "估算内存",
+        "Preferences": "首选项",
+        "Quality": "质量",
+        "1x (Original)": "1×（原始尺寸）",
+        "0.5x (Half)": "0.5×（半尺寸）",
+        "2x (Double)": "2×（双倍尺寸）",
+        "0.25x (Quarter)": "0.25×（四分之一尺寸）",
+        "Preserve transparent pixels": "保留透明像素",
+        "Matte": "底色",
+        "Fills transparent pixels": "填充透明像素",
+        "Est. size: calculating...": "预计大小：正在计算...",
+        "Rendering preview…": "正在渲染预览…",
+        "Export preview": "导出预览",
+        "Unsaved editable project changes remain after export.": "导出后仍会保留未保存的可编辑项目更改。",
+        "Radius": "半径",
+        "Start Angle": "起始角度",
+        "Converts the selected raster layer into editable paths. SVG and PDF export then carry real vectors instead of an embedded bitmap.": "将所选栅格图层转换为可编辑路径。导出 SVG 和 PDF 时将保留真实矢量，而非嵌入位图。",
+        "Colors": "颜色数",
+        "Smoothing": "平滑",
+        "Detail": "细节",
+        "Trace": "描摹",
+        "{width}x{height} — Est. ~{size}": "{width} × {height} — 预计约 {size}",
+        "{width} × {height} 像素": "{width} × {height} 像素",
+        "{format} · alpha preview": "{format} · Alpha 预览",
+        "{format} · matte {matte}": "{format} · 底色 {matte}",
+        "Preview unavailable: {error}": "无法生成预览：{error}",
+        "{count} editable layers will be flattened into one image.": "{count} 个可编辑图层将合并为一张图像。",
+        "{count} text objects will no longer be editable.": "{count} 个文字对象将不再可编辑。",
+        "{count} vector objects will be rasterized.": "{count} 个矢量对象将栅格化。",
+        "{count} masks will be baked into pixels.": "{count} 个蒙版将烘焙为像素。",
+        "OpenShop layer names, order metadata, locks, and blend settings are not stored as editable project layers in SVG.": "OpenShop 的图层名称、顺序元数据、锁定状态和混合设置不会以可编辑项目图层形式存入 SVG。",
+        "{count} filtered image objects may be embedded as raster content.": "{count} 个带滤镜的图像对象可能会作为栅格内容嵌入。",
+        "{count} single-style text layers will remain editable in PSD.": "{count} 个单样式文字图层将在 PSD 中保持可编辑。",
+        "{count} text objects will be rasterized because its layer contains mixed content.": "{count} 个文字对象将因所在图层包含混合内容而栅格化。",
+        "{count} vector objects will be rasterized by the current PSD exporter.": "{count} 个矢量对象将由当前 PSD 导出器栅格化。",
+        "{count} OpenShop masks will be baked into layer pixels.": "{count} 个 OpenShop 蒙版将烘焙到图层像素中。",
+        "{count} imported PSD groups will be reconstructed.": "{count} 个导入的 PSD 组将被重建。",
+        "Only the current canvas is exported; {count} animation frames remain in the project.": "仅导出当前画布；项目中仍保留 {count} 个动画帧。",
+        "JPEG has no alpha channel; transparent pixels will use the selected matte color.": "JPEG 不支持 Alpha 通道；透明像素将使用所选底色。",
+        "Transparency is disabled; transparent pixels will use the selected matte color.": "透明度已禁用；透明像素将使用所选底色。",
+        "History, selections, guides, and other project-only editing state are not included in this export.": "本次导出不包含历史记录、选区、参考线及其他仅项目内可用的编辑状态。",
+        "This export does not save the editable project; unsaved project changes will remain.": "本次导出不会保存可编辑项目；未保存的项目更改仍会保留。",
+        "Tiled / Repeat": "平铺 / 重复",
+        "This hosted copy stages a verified application shell. Core editing, PSD import, and standard export can reload without a connection once the shell is ready.": "此托管副本会准备经验证的应用外壳。外壳就绪后，核心编辑、PSD 导入和常规导出可在无网络时重新加载。",
+        "This standalone HTML loads its core libraries from pinned CDNs. A cold open requires network access; local files cannot install a service worker or guarantee an offline reload.": "此独立 HTML 从固定 CDN 加载核心库。冷启动需要网络；本地文件无法安装 Service Worker，也无法保证离线重新加载。",
+        "OpenShop returned to {activeRevision} because {rolledBackFrom} did not confirm a healthy startup.": "由于 {rolledBackFrom} 未确认健康启动，OpenShop 已回退到 {activeRevision}。",
+        "Distribution": "发布方式",
+        "Hosted PWA lane": "托管 PWA 模式",
+        "Standalone file lane": "独立文件模式",
+        "Connection": "连接",
+        "Online": "在线",
+        "Offline": "离线",
+        "Installation": "安装",
+        "Installed": "已安装",
+        "Install available": "可安装",
+        "Use browser install menu": "请使用浏览器安装菜单",
+        "Unavailable for file://": "file:// 模式不可用",
+        "Core shell": "核心外壳",
+        "{cached}/{total} required assets verified": "已验证 {cached}/{total} 项必需资源",
+        "Not ready": "未就绪",
+        "Optional shell": "可选外壳",
+        "{cached}/{total} helpers cached": "已缓存 {cached}/{total} 个辅助组件",
+        "Loaded on demand from network": "按需从网络加载",
+        "File launch": "文件启动",
+        "Installed-app launches supported": "支持已安装应用启动",
+        "Use Open, drag/drop, or file picker": "请使用打开、拖放或文件选择器",
+        "Active shell": "当前外壳",
+        "Not managed": "未受管理",
+        "AI models are not part of the core offline shell. Each pinned model must be used online once; model and verified WASM runtime caches are reported separately. Inference backend: {backend}.": "AI 模型不属于核心离线外壳。每个固定模型都需至少在线使用一次；模型缓存和已验证的 WASM 运行时缓存会分别显示。推理后端：{backend}。",
+        "selected on first use": "首次使用时选择",
+        "{cached}/{total} verified files cached": "已缓存并验证 {cached}/{total} 个文件",
+        "{count} cached response(s)": "已缓存 {count} 个响应",
+        "loaded": "已加载",
+        "{size} first download": "首次下载 {size}",
+        "Size checked on first use": "首次使用时检查大小",
+        "Clear cached files for {model}": "清除 {model} 的缓存文件",
+        "Install": "安装",
+        "Apply Update": "应用更新",
+        "Check for Updates": "检查更新",
+        "Restore Previous Shell": "恢复上一版外壳",
+        "Rebuild Offline Shell": "重建离线外壳",
+        "AVIF import and export": "AVIF 导入与导出",
+        "Animated GIF import and export": "动画 GIF 导入与导出",
+        "GPU-accelerated filters (Photon)": "GPU 加速滤镜（Photon）",
+        "PSD import and export": "PSD 导入与导出",
+        "On-canvas gradient handles": "画布内渐变控制柄",
+        "AI features (model weights are fetched separately)": "AI 功能（模型权重需单独获取）",
+        "Pinned library or codec": "固定版本的库或编解码器",
+        "AI model weights": "AI 模型权重",
+        "Web font stylesheet": "Web 字体样式表",
+        "Web font file": "Web 字体文件",
+        "Unclassified third party": "未分类的第三方",
+        "{requests} outbound requests this session across {hosts} hosts.": "本次会话已向 {hosts} 个主机发出 {requests} 个外发请求。",
+        "{count} blocked": "已阻止 {count} 次",
+        "{count} failed": "失败 {count} 次",
+        "A cold start needs the pinned libraries and none were cached ({error})": "冷启动需要固定版本的库，但它们均未缓存（{error}）",
+        "Strict offline mode blocked a request to {host}": "严格离线模式已阻止对 {host} 的请求",
         "Tools: {family}": "{family}工具"
     } },
     _lang: 'zh',
@@ -4433,16 +5142,133 @@ const OS = {
             [/^SVG export failed: (.+)$/, 'SVG 导出失败：$1'],
             [/^PSD imported: (.+)$/, '已导入 PSD：$1'],
             [/^PSD import failed: (.+)$/, 'PSD 导入失败：$1'],
+            [/^PSD export failed: (.+)$/, 'PSD 导出失败：$1'],
             [/^Project save failed: (.+)$/, '项目保存失败：$1'],
             [/^History restore failed: (.+)$/, '历史记录恢复失败：$1'],
             [/^Filter failed: (.+)$/, '滤镜执行失败：$1'],
             [/^Batch processing failed: (.+)$/, '批处理失败：$1'],
             [/^Applying (.+)\.\.\.$/, '正在应用 $1...'],
+            [/^Applying (.+)$/, '正在应用 $1'],
             [/^Applied (.+)$/, '已应用 $1'],
             [/^Cropped to (.+)$/, '已裁剪为 $1'],
             [/^Selection: (.+)$/, '选区：$1'],
+            [/^Selection inverted: (.+)$/, '已反选：$1'],
+            [/^Selection grown: (.+)$/, '选区已扩展：$1'],
+            [/^Selected similar: (.+)$/, '已选择相似内容：$1'],
+            [/^Selection (.+)$/, '选区 $1'],
             [/^Selected (.+)$/, '已选择 $1'],
             [/^Color Range: (.+)$/, '色彩范围：$1'],
+            [/^Could not paint onto this layer: (.+)$/, '无法在此图层上绘制：$1'],
+            [/^Could not open launched file: (.+)$/, '无法打开启动文件：$1'],
+            [/^Could not request storage persistence: (.+)$/, '无法请求持久存储：$1'],
+            [/^Could not apply update: (.+)$/, '无法应用更新：$1'],
+            [/^Could not rebuild the offline shell: (.+)$/, '无法重建离线外壳：$1'],
+            [/^Update check failed: (.+)$/, '更新检查失败：$1'],
+            [/^Rollback unavailable: (.+)$/, '无法回滚：$1'],
+            [/^Strict offline mode blocked a request to (.+)$/, '严格离线模式已阻止对 $1 的请求'],
+            [/^A cold start needs the pinned libraries and none were cached \((.+)\)$/, '冷启动需要固定版本的库，但它们均未缓存（$1）'],
+            [/^Connected — peer channel is ready \((.+)\)$/, (_, peer) => `已连接——对等通道已就绪（${peer === 'identity pending' ? '等待身份确认' : peer.replace(/^peer (.+)$/, '对端 $1')}）`],
+            [/^Peer connection: (.+)$/, (_, state) => `对等连接：${({ new:'新建', connecting:'正在连接', connected:'已连接', disconnected:'已断开', failed:'失败', closed:'已关闭' })[state] || state}`],
+            [/^Peer connection (.+)$/, (_, state) => `对等连接${({ new:'新建', connecting:'正在连接', connected:'已连接', disconnected:'已断开', failed:'失败', closed:'已关闭' })[state] || state}`],
+            [/^Could not create offer: (.+)$/, '无法创建提议：$1'],
+            [/^Could not create answer: (.+)$/, '无法创建应答：$1'],
+            [/^Could not apply signaling text: (.+)$/, '无法应用信令文本：$1'],
+            [/^Could not send document: (.+)$/, '无法发送文档：$1'],
+            [/^Ignored stale collaboration revision (.+)$/, '已忽略过期的协作版本 $1'],
+            [/^Conflict resolved locally; retained revision (.+)$/, '已在本地解决冲突，保留版本 $1'],
+            [/^Peer document rejected; local document restored: (.+)$/, '对等方文档已被拒绝，已恢复本地文档：$1'],
+            [/^Lasso selection: (.+)$/, '套索选区：$1'],
+            [/^Image edit failed: (.+)$/, '图像编辑失败：$1'],
+            [/^Filled (.+)$/, '已填充 $1'],
+            [/^Path created \((.+)$/, '路径已创建（$1'],
+            [/^Layer moved (up|down)$/, (_, direction) => `图层已向${direction === 'up' ? '上' : '下'}移动`],
+            [/^Failed to load AI library: (.+)$/, '无法加载 AI 库：$1'],
+            [/^Segment Select error: (.+)$/, '分割选择出错：$1'],
+            [/^Background removal error: (.+)$/, '背景移除出错：$1'],
+            [/^Depth map error: (.+)$/, '深度图出错：$1'],
+            [/^Object detection error: (.+)$/, '对象检测出错：$1'],
+            [/^Detected (.+)$/, '已检测到 $1'],
+            [/^Result would be (.+)$/, '结果将为 $1'],
+            [/^Upscaled to (.+)$/, '已放大到 $1'],
+            [/^Upscale error: (.+)$/, '图像放大出错：$1'],
+            [/^Workspace: (.+)$/, '工作区：$1'],
+            [/^(.+) cancelled$/, '$1 已取消'],
+            [/^(Cancelled after|Processed) (.+) image(?:s)? into a ZIP(?: \((.+) failed\))?$/, (_, state, count, failed) => `${state === 'Cancelled after' ? '已在处理' : '已处理'} ${count} 张图像并打包为 ZIP${failed ? `（${failed} 项失败）` : ''}`],
+            [/^Selection (added to|subtracted from|intersected with): (.+) px$/, (_, operation, count) => `选区${({ 'added to':'已添加到', 'subtracted from':'已从中减去', 'intersected with':'已与其相交' })[operation]}：${count} 像素`],
+            [/^Selection (.+) would clear the selection; original kept$/, '选区 $1 会清除当前选区，已保留原选区'],
+            [/^Canvas size must work out to between 1 and (.+) pixels$/, '画布尺寸必须在 1 到 $1 像素之间'],
+            [/^Canvas size must be between 1 and (.+) pixels$/, '画布尺寸必须在 1 到 $1 像素之间'],
+            [/^Created (.+) canvas$/, '已创建 $1 画布'],
+            [/^RAW import failed: (.+)$/, 'RAW 导入失败：$1'],
+            [/^Rendering (.+) PDF page(?:s)?\.\.\.$/, '正在渲染 $1 个 PDF 页面...'],
+            [/^Opened (.+) PDF page(?:s)? as layers$/, '已将 $1 个 PDF 页面作为图层打开'],
+            [/^PDF import failed: (.+)$/, 'PDF 导入失败：$1'],
+            [/^Imported (.+) editable shape(?:s)?$/, '已导入 $1 个可编辑形状'],
+            [/^SVG import failed: (.+)$/, 'SVG 导入失败：$1'],
+            [/^AVIF import failed: (.+)$/, 'AVIF 导入失败：$1'],
+            [/^Imported (.+) (PNG|WebP|GIF) frames with timing$/, '已导入 $1 帧 $2 动画并保留时序'],
+            [/^Importing (.+) animated (PNG|WebP) frames\.\.\.$/, '正在导入 $1 帧 $2 动画...'],
+            [/^Importing (.+) GIF frames\.\.\.$/, '正在导入 $1 帧 GIF 动画...'],
+            [/^Animated import unavailable — (.+)\. Loading the first frame instead\.$/, '动画导入不可用：$1。已改为加载第一帧。'],
+            [/^Opening (.+); (.+) other file\(s\) ignored$/, '正在打开 $1；已忽略另外 $2 个文件'],
+            [/^Exported (.+) format(?:s)?$/, '已导出 $1 种格式'],
+            [/^Exported (.+) of (.+) formats — see console for failures$/, '已导出 $1 / $2 种格式；失败详情请查看控制台'],
+            [/^(.+) adjustment layer added$/, '已添加 $1 调整图层'],
+            [/^Adjustment layer failed: (.+)$/, '调整图层操作失败：$1'],
+            [/^Adjustment update failed: (.+)$/, '调整图层更新失败：$1'],
+            [/^Duplicated the layer without (.+) object(?:s)? that could not be copied$/, '已复制图层，但有 $1 个对象无法复制'],
+            [/^ABR raster stroke failed: (.+)$/, 'ABR 光栅笔划失败：$1'],
+            [/^Selection (.+): (.+) px$/, '选区 $1：$2 像素'],
+            [/^Selection (.+) would clear the selection; original kept$/, '选区 $1 会清除当前选区，已保留原选区'],
+            [/^Gradient handles unavailable: (.+)$/, '渐变控制柄不可用：$1'],
+            [/^Could not (.+): (.+)$/, '无法$1：$2'],
+            [/^Snapshot restore failed: (.+)$/, '快照恢复失败：$1'],
+            [/^Resized to (.+)$/, '已调整大小为 $1'],
+            [/^PDF export failed: (.+)$/, 'PDF 导出失败：$1'],
+            [/^Cleared (.+) cached file(?:s)? for (.+)$/, '已清除 $2 的 $1 个缓存文件'],
+            [/^(.+) guide added \(double-click to remove\)$/, '已添加$1参考线（双击可移除）'],
+            [/^Layer mask failed: (.+)$/, '图层蒙版操作失败：$1'],
+            [/^Smart Object conversion failed: (.+)$/, '智能对象转换失败：$1'],
+            [/^Smart Object source failed: (.+)$/, '智能对象源文件操作失败：$1'],
+            [/^Canvas rotated (CW|CCW)$/, '画布已向$1旋转'],
+            [/^Canvas flipped (horizontally|vertically)$/, '画布已$1翻转'],
+            [/^Added (.+) to palette$/, '已将 $1 添加到调色板'],
+            [/^Imported (.+) colors$/, '已导入 $1 种颜色'],
+            [/^Imported (.+) gradients$/, '已导入 $1 个渐变'],
+            [/^Could not read that asset — (.+)$/, '无法读取该资源：$1'],
+            [/^Theme: (.+)$/, '主题：$1'],
+            [/^Frame (.+) added$/, '已添加第 $1 帧'],
+            [/^Encoding (.+) frames\.\.\.$/, '正在编码 $1 帧...'],
+            [/^Preparing frame (.+)\/(.+)\.\.\.$/, '正在准备第 $1 / $2 帧...'],
+            [/^GIF exported \((.+) frames @ (.+)fps\)$/, 'GIF 已导出（$1 帧，$2 fps）'],
+            [/^Spritesheet exported \((.+)x(.+), (.+) frames @ (.+)fps\)$/, '精灵图已导出（$1 × $2，$3 帧，$4 fps）'],
+            [/^Recorded (.+) steps$/, '已录制 $1 个步骤'],
+            [/^Playing (.+) actions\.\.\.$/, '正在播放 $1 个动作...'],
+            [/^Loaded (.+) actions$/, '已加载 $1 个动作'],
+            [/^Invalid action file: (.+)$/, '动作文件无效：$1'],
+            [/^Tracing produced (.+) paths — reduce the colour count or raise Detail$/, '描摹生成了 $1 条路径；请减少颜色数量或提高细节'],
+            [/^Traced (.+) path(?:s)?; the source layer is hidden$/, '已描摹 $1 条路径；源图层已隐藏'],
+            [/^Tracing failed: (.+)$/, '描摹失败：$1'],
+            [/^Result would be (.+) — too large for browser$/, '结果将为 $1，尺寸过大，浏览器无法处理'],
+            [/^(.+) needs (.+) model passes — using the resample enlarger instead$/, '$1 需要进行 $2 次模型处理；已改用重采样放大器'],
+            [/^Reconstructed at (.+)$/, '已重建为 $1'],
+            [/^Super-resolution error: (.+)$/, '超分辨率出错：$1'],
+            [/^Applied: (.+)$/, '已应用：$1'],
+            [/^Saved: (.+)$/, '已保存：$1'],
+            [/^Imported (.+) preset\(s\)$/, '已导入 $1 个预设'],
+            [/^Plugin: (.+)$/, '插件：$1'],
+            [/^Blend: (.+)$/, '混合：$1'],
+            [/^Draw (.+)$/, '绘制 $1'],
+            [/^Filter: (.+)$/, '滤镜：$1'],
+            [/^Rotate (.+)$/, '旋转 $1'],
+            [/^Align (.+)$/, '对齐：$1'],
+            [/^Distribute (.+)$/, '分布：$1'],
+            [/^Min: (.+)$/, '最小值：$1'],
+            [/^Mean: (.+)$/, '平均值：$1'],
+            [/^Max: (.+)$/, '最大值：$1'],
+            [/^X: (.+) Y: (.+)$/, 'X：$1 Y：$2'],
+            [/^(\d+) objects?$/, '$1 个对象'],
+            [/^Layer (\d+)$/, '图层 $1'],
             [/^Diagnostics exported \((.+)\)$/, '诊断信息已导出（$1）'],
             [/^Diagnostics cleared$/, '诊断信息已清除']
         ];
@@ -4487,11 +5313,17 @@ const OS = {
         // retain their DOM structure and supply explicit data-i18n keys where
         // needed, so a locale switch never replaces child controls.
         const selectors = [
-            '.dd-item', '.menu-item', '.panel-tab', '.opt-group label', '.panel-section h4', '.pref-row label',
+            '.dd-item', '.dd-note', '.menu-item', '.panel-tab', '.opt-group label', '.panel-section h4', '.pref-row label',
+            '#topbar :is(label,option,button,span)',
             '#welcome-overlay :is(h2,h3,p,span,small,button)', '#blank-workspace :is(h2,p,button)',
-            '#tool-options :is(label,option,span)', '#panels :is(label,option,button,span,h4)',
+            '#tool-options :is(label,option,button,span)',
+            '#panels :is(div,label,option,button,span,h4,summary,dt,dd,.palette-name,.layer-name,.layer-type)',
             '#statusbar :is(span,button,option)', '#bottom-tabs :is(span,button)',
-            '#drop-zone :is(p,span,button)', '#cmd-palette :is(p,span,button,option)',
+            '#dropzone-overlay :is(div,p,span,button)', '#cmd-palette :is(p,span,button,option)',
+            '#ai-progress :is(h2,h3,h4,p,label,button,option,span,div)',
+            '#liquify-overlay :is(h2,h3,h4,p,label,button,option,span)',
+            '#ba-overlay :is(h2,h3,h4,p,label,button,option,span)',
+            '#canvas-a11y-tree :is(h2,h3,h4,p,li,span)',
             '.modal-overlay :is(h2,h3,h4,p,label,button,option,span,dt,dd)',
             '.filter-panel :is(h2,h3,h4,p,label,button,option,span)',
             '#timeline-panel :is(h2,h3,h4,p,label,button,option,span)',
@@ -4513,7 +5345,8 @@ const OS = {
         [
             ['title', 'data-i18n-title'],
             ['aria-label', 'data-i18n-aria-label'],
-            ['placeholder', 'data-i18n-placeholder']
+            ['placeholder', 'data-i18n-placeholder'],
+            ['aria-roledescription', 'data-i18n-aria-roledescription']
         ].forEach(([attribute, keyAttribute]) => {
             const selector = [
                 `#topbar[${attribute}]`, `#topbar [${attribute}]`,
@@ -4524,6 +5357,11 @@ const OS = {
                 `#bottom-tabs[${attribute}]`, `#bottom-tabs [${attribute}]`,
                 `#welcome-overlay[${attribute}]`, `#welcome-overlay [${attribute}]`,
                 `#blank-workspace[${attribute}]`, `#blank-workspace [${attribute}]`,
+                `#dropzone-overlay[${attribute}]`, `#dropzone-overlay [${attribute}]`,
+                `#ai-progress[${attribute}]`, `#ai-progress [${attribute}]`,
+                `#liquify-overlay[${attribute}]`, `#liquify-overlay [${attribute}]`,
+                `#ba-overlay[${attribute}]`, `#ba-overlay [${attribute}]`,
+                `#canvas-a11y-tree[${attribute}]`, `#canvas-a11y-tree [${attribute}]`,
                 `.modal-overlay[${attribute}]`, `.modal-overlay [${attribute}]`,
                 `.filter-panel[${attribute}]`, `.filter-panel [${attribute}]`,
                 `#cmd-palette[${attribute}]`, `#cmd-palette [${attribute}]`,
@@ -4572,7 +5410,7 @@ const OS = {
             // switching back to English restores the UI.
             const val = Object.prototype.hasOwnProperty.call(dict, key)
                 ? dict[key]
-                : (lang === 'pseudo' ? this._pseudoTranslate(key) : key);
+                : (lang === 'pseudo' ? this._pseudoTranslate(key) : this._translateRuntimeMessage(String(key)));
             const tn = [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
             if (tn) tn.textContent = val;
             else el.textContent = val;
@@ -4581,7 +5419,7 @@ const OS = {
             const key = el.dataset.i18nTip;
             const val = Object.prototype.hasOwnProperty.call(dict, key)
                 ? dict[key]
-                : (lang === 'pseudo' ? this._pseudoTranslate(key) : key);
+                : (lang === 'pseudo' ? this._pseudoTranslate(key) : this._translateRuntimeMessage(String(key)));
             el.dataset.tip = val; el.setAttribute('aria-label', val); el.title = val;
         });
         document.querySelectorAll('[data-i18n-tool-family][data-i18n-tool-label]').forEach(el => {
@@ -4597,13 +5435,14 @@ const OS = {
         [
             ['data-i18n-title', 'title'],
             ['data-i18n-aria-label', 'aria-label'],
-            ['data-i18n-placeholder', 'placeholder']
+            ['data-i18n-placeholder', 'placeholder'],
+            ['data-i18n-aria-roledescription', 'aria-roledescription']
         ].forEach(([keyAttribute, attribute]) => {
             document.querySelectorAll(`[${keyAttribute}]`).forEach(el => {
                 const key = el.getAttribute(keyAttribute);
                 const val = Object.prototype.hasOwnProperty.call(dict, key)
                     ? dict[key]
-                    : (lang === 'pseudo' ? this._pseudoTranslate(key) : key);
+                    : (lang === 'pseudo' ? this._pseudoTranslate(key) : this._translateRuntimeMessage(String(key)));
                 el.setAttribute(attribute, val);
             });
         });
@@ -4908,7 +5747,10 @@ const OS = {
         if (selector && selector.value !== next) selector.value = next;
         try { localStorage.setItem('os_workspace_mode', next); } catch(e) { /* storage is optional */ }
         this._syncSessionWorkspace();
-        if (announce) this.toast(`Workspace: ${next[0].toUpperCase()}${next.slice(1)}`, 'info');
+        if (announce) {
+            const label = this._t(next[0].toUpperCase() + next.slice(1));
+            this.toast(this._format('Workspace: {workspace}', { workspace:label }), 'info');
+        }
     },
     _updateDocumentAvailability() {
         const blank = !this._hasActiveDocument();
@@ -4917,16 +5759,16 @@ const OS = {
         if (area) {
             area.dataset.documentState = blank ? 'blank' : 'open';
             area.setAttribute('aria-label', blank
-                ? 'No document open. Create a canvas or open an image.'
-                : 'Image canvas');
+                ? this._t('No document open. Create a canvas or open an image.')
+                : this._t('Image canvas'));
         }
         document.getElementById('blank-workspace')?.classList.toggle('hidden', !blank);
         const dims = document.getElementById('canvas-dims');
-        if (dims) dims.textContent = blank ? 'No document' : `${this.canvasW} x ${this.canvasH}`;
+        if (dims) dims.textContent = blank ? this._t('No document') : `${this.canvasW} x ${this.canvasH}`;
         const zoom = document.getElementById('zoom-display');
         if (zoom) zoom.textContent = blank ? '—' : `${Math.round(this.zoom * 100)}%`;
         const layersEmpty = document.getElementById('layers-empty');
-        if (layersEmpty) layersEmpty.textContent = blank ? 'No document open.' : 'No layers. Click + to add one.';
+        if (layersEmpty) layersEmpty.textContent = blank ? this._t('No document open.') : this._t('No layers. Click + to add one.');
         document.querySelectorAll('#panels .panel-action').forEach(button => {
             button.disabled = blank;
             button.setAttribute('aria-disabled', blank ? 'true' : 'false');
@@ -5410,15 +6252,16 @@ const OS = {
         };
         this._persistenceState = labels[state] ? state : 'error';
         this._lastSaveError = error || null;
+        const localizedLabel = this._t(labels[this._persistenceState]);
         const indicator = document.getElementById('persistence-state');
         const label = document.getElementById('persistence-state-label');
         if (indicator) {
             indicator.dataset.state = this._persistenceState;
-            indicator.title = error ? this._safeText(error.message || error, 180) : labels[this._persistenceState];
+            indicator.title = error ? this._safeText(error.message || error, 180) : localizedLabel;
         }
-        if (label) label.textContent = labels[this._persistenceState];
+        if (label) label.textContent = localizedLabel;
         const dirtyPrefix = this._isDirty ? '* ' : '';
-        const stateSuffix = this._persistenceState === 'saving' ? ' (Saving)' : this._persistenceState === 'error' ? ' (Save failed)' : '';
+        const stateSuffix = this._persistenceState === 'saving' ? `（${this._t('Saving…')}）` : this._persistenceState === 'error' ? `（${this._t('Save failed')}）` : '';
         document.title = `${dirtyPrefix}${this._docName || 'Untitled'}${stateSuffix} — OpenShop v0.29.0`;
         if (this.session) this.session.persistence = { state:this._persistenceState, dirty:Boolean(this._isDirty) };
     },
@@ -5574,7 +6417,7 @@ const OS = {
             <div class="modal-row"><label>Background</label>
                 <select id="ni-bg-mode">
                     <option value="transparent">Transparent</option>
-                    <option value="white">White</option>
+                    <option value="white">White background</option>
                     <option value="custom">Custom colour</option>
                 </select>
                 <input id="ni-bg" type="color" value="#ffffff" aria-label="Custom background colour" disabled></div>
@@ -5590,7 +6433,7 @@ const OS = {
         const pixels = o.querySelector('#ni-pixels');
         const refresh = () => {
             const size = this._documentPixelSize(wInput.value, hInput.value, unit.value, dpi.value);
-            pixels.textContent = `${size.width} x ${size.height} px`;
+            pixels.textContent = this._format('{width} × {height} 像素', { width:size.width, height:size.height });
         };
         // Switching units converts what is already typed rather than
         // reinterpreting it, so 210mm does not silently become 210px.
@@ -5640,8 +6483,10 @@ const OS = {
         this._documentResolution = size.resolution;
         this.trackRecentFile(this._docName, w, h);
         o.remove();
-        const physical = unit === 'px' ? '' : ` (${o.querySelector('#ni-w')?.value}${unit} x ${o.querySelector('#ni-h')?.value}${unit} at ${size.resolution} PPI)`;
-        this.toast(`Created ${w} × ${h} canvas${physical}`, 'success');
+        const physical = unit === 'px' ? '' : this._format(' ({width}{unit} × {height}{unit} at {resolution} PPI)', {
+            width:o.querySelector('#ni-w')?.value, height:o.querySelector('#ni-h')?.value, unit, resolution:size.resolution
+        });
+        this.toast(this._format('Created {width} × {height} canvas{physical}', { width:w, height:h, physical }), 'success');
     },
 
     // ====================== FILE I/O ======================
@@ -6044,18 +6889,18 @@ const OS = {
         overlay.className = 'modal-overlay adjustment-layer-dialog show';
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
-        overlay.setAttribute('aria-label', `${this._adjustmentLayerName(adjustment.type)} adjustment`);
+        overlay.setAttribute('aria-label', this._format('{type} adjustment', { type:this._t(this._adjustmentLayerName(adjustment.type)) }));
         const modal = document.createElement('div');
         modal.className = 'modal';
         const title = document.createElement('h3');
-        title.textContent = `${this._adjustmentLayerName(adjustment.type)} Adjustment Layer`;
+        title.textContent = this._format('{type} Adjustment Layer', { type:this._t(this._adjustmentLayerName(adjustment.type)) });
         modal.appendChild(title);
         const fields = new Map();
         const addRange = (label, key, { min, max, step = 1, value, format = v => v } = {}) => {
             const row = document.createElement('div');
             row.className = 'modal-row';
             const caption = document.createElement('label');
-            caption.textContent = label;
+            caption.textContent = this._t(label);
             const input = document.createElement('input');
             input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value;
             const output = document.createElement('span');
@@ -6080,16 +6925,16 @@ const OS = {
             const middle = adjustment.params.points.find(point => point[0] === 128)?.[1] ?? 128;
             addRange('Midpoint', 'curve', { min:-100, max:100, value:middle - 128 });
             const hint = document.createElement('p');
-            hint.textContent = 'Raises or lowers the curve midpoint while preserving the endpoints.';
+            hint.textContent = this._t('Raises or lowers the curve midpoint while preserving the endpoints.');
             hint.style.cssText = 'font-size:11px;color:var(--text-muted);margin:0 0 8px 100px';
             modal.appendChild(hint);
         }
         const buttons = document.createElement('div');
         buttons.className = 'modal-btns';
         const cancel = document.createElement('button');
-        cancel.type = 'button'; cancel.className = 'btn'; cancel.textContent = 'Cancel';
+        cancel.type = 'button'; cancel.className = 'btn'; cancel.textContent = this._t('Cancel');
         const apply = document.createElement('button');
-        apply.type = 'button'; apply.className = 'btn btn-primary'; apply.textContent = 'Update Layer';
+        apply.type = 'button'; apply.className = 'btn btn-primary'; apply.textContent = this._t('Update Layer');
         buttons.append(cancel, apply); modal.appendChild(buttons); overlay.appendChild(modal); document.body.appendChild(overlay);
         const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); };
         const onKey = event => { if (event.key === 'Escape') close(); };
@@ -6604,9 +7449,9 @@ const OS = {
     // metadata an export depends on. The user saw only "Cropped to W x H".
     _documentStateLoss() {
         const loss = [];
-        if (this.guides?.length) loss.push(`${this.guides.length} guide${this.guides.length === 1 ? '' : 's'}`);
-        if (this._animFrames?.length) loss.push(`${this._animFrames.length} animation frame${this._animFrames.length === 1 ? '' : 's'}`);
-        if (this._psdInterchange) loss.push('PSD group metadata used by PSD export');
+        if (this.guides?.length) loss.push(this._format('{count} guides', { count:this.guides.length }));
+        if (this._animFrames?.length) loss.push(this._format('{count} animation frames', { count:this._animFrames.length }));
+        if (this._psdInterchange) loss.push(this._t('PSD group metadata used by PSD export'));
         return loss;
     },
     _confirmDocumentStateLoss(action) {
@@ -6620,10 +7465,10 @@ const OS = {
             const modal = document.createElement('div');
             modal.className = 'modal';
             const title = document.createElement('h3');
-            title.textContent = `${action} discards part of this document`;
+            title.textContent = this._format('{action} discards part of this document', { action:this._t(action) });
             const message = document.createElement('p');
             message.style.cssText = 'font-size:12px;color:var(--text-secondary);margin:8px 0 8px';
-            message.textContent = `${action} rebuilds the document as a single image. This is undoable, but it removes:`;
+            message.textContent = this._format('{action} rebuilds the document as a single image. This is undoable, but it removes:', { action:this._t(action) });
             const list = document.createElement('ul');
             list.style.cssText = 'font-size:12px;color:var(--text-secondary);margin:0 0 16px 18px';
             loss.forEach(item => {
@@ -6636,11 +7481,11 @@ const OS = {
             const cancel = document.createElement('button');
             cancel.className = 'btn';
             cancel.dataset.modalCancel = '';
-            cancel.textContent = 'Cancel';
+            cancel.textContent = this._t('Cancel');
             cancel.addEventListener('click', () => finish(false));
             const proceed = document.createElement('button');
             proceed.className = 'btn btn-primary';
-            proceed.textContent = action;
+            proceed.textContent = this._t(action);
             proceed.addEventListener('click', () => finish(true));
             buttons.append(cancel, proceed);
             modal.append(title, message, list, buttons);
@@ -6659,20 +7504,20 @@ const OS = {
             const modal = document.createElement('div');
             modal.className = 'modal';
             const title = document.createElement('h3');
-            title.textContent = 'Discard unsaved changes?';
+            title.textContent = this._t('Discard unsaved changes?');
             const message = document.createElement('p');
             message.style.cssText = 'font-size:12px;color:var(--text-secondary);margin:8px 0 16px';
-            message.textContent = `${action} will discard edits you have not saved. This cannot be undone.`;
+            message.textContent = this._format('{action} will discard edits you have not saved. This cannot be undone.', { action:this._t(action) });
             const buttons = document.createElement('div');
             buttons.className = 'modal-btns';
             const cancel = document.createElement('button');
             cancel.className = 'btn';
             cancel.dataset.modalCancel = '';
-            cancel.textContent = 'Cancel';
+            cancel.textContent = this._t('Cancel');
             cancel.addEventListener('click', () => finish(false));
             const save = document.createElement('button');
             save.className = 'btn';
-            save.textContent = 'Save first';
+            save.textContent = this._t('Save first');
             save.addEventListener('click', async () => {
                 save.disabled = true;
                 const saved = await this.saveProject();
@@ -6680,7 +7525,7 @@ const OS = {
             });
             const discard = document.createElement('button');
             discard.className = 'btn btn-danger';
-            discard.textContent = 'Discard';
+            discard.textContent = this._t('Discard');
             discard.addEventListener('click', () => finish(true));
             buttons.append(cancel, save, discard);
             modal.append(title, message, buttons);
@@ -7501,30 +8346,30 @@ const OS = {
         const filteredCount = objects.filter(object => Array.isArray(object.filters) && object.filters.length).length;
 
         if (raster || normalizedFormat === 'pdf') {
-            if (contentLayers.length > 1) warnings.push(`${contentLayers.length} editable layers will be flattened into one image.`);
-            if (textCount) warnings.push(`${textCount} text object${textCount === 1 ? '' : 's'} will no longer be editable.`);
-            if (vectorCount) warnings.push(`${vectorCount} vector object${vectorCount === 1 ? '' : 's'} will be rasterized.`);
-            if (maskCount) warnings.push(`${maskCount} mask${maskCount === 1 ? '' : 's'} will be baked into pixels.`);
+            if (contentLayers.length > 1) warnings.push(this._format('{count} editable layers will be flattened into one image.', { count:contentLayers.length }));
+            if (textCount) warnings.push(this._format('{count} text objects will no longer be editable.', { count:textCount }));
+            if (vectorCount) warnings.push(this._format('{count} vector objects will be rasterized.', { count:vectorCount }));
+            if (maskCount) warnings.push(this._format('{count} masks will be baked into pixels.', { count:maskCount }));
         } else if (normalizedFormat === 'svg') {
-            if (contentLayers.length > 1) warnings.push('OpenShop layer names, order metadata, locks, and blend settings are not stored as editable project layers in SVG.');
-            if (filteredCount) warnings.push(`${filteredCount} filtered image object${filteredCount === 1 ? '' : 's'} may be embedded as raster content.`);
+            if (contentLayers.length > 1) warnings.push(this._t('OpenShop layer names, order metadata, locks, and blend settings are not stored as editable project layers in SVG.'));
+            if (filteredCount) warnings.push(this._format('{count} filtered image objects may be embedded as raster content.', { count:filteredCount }));
         } else if (normalizedFormat === 'psd') {
             const nativeTextCount = contentLayers.filter(layer => {
                 const layerObjects = layer.objects.filter(object => object.name !== '__boundary__' && !object.excludeFromExport);
                 return layerObjects.length === 1 && Boolean(this._fabricTextToPSD(layerObjects[0]));
             }).length;
             const flattenedTextCount = Math.max(0, textCount - nativeTextCount);
-            if (nativeTextCount) warnings.push(`${nativeTextCount} single-style text layer${nativeTextCount === 1 ? '' : 's'} will remain editable in PSD.`);
-            if (flattenedTextCount) warnings.push(`${flattenedTextCount} text object${flattenedTextCount === 1 ? '' : 's'} will be rasterized because its layer contains mixed content.`);
-            if (vectorCount) warnings.push(`${vectorCount} vector object${vectorCount === 1 ? '' : 's'} will be rasterized by the current PSD exporter.`);
-            if (maskCount) warnings.push(`${maskCount} OpenShop mask${maskCount === 1 ? '' : 's'} will be baked into layer pixels.`);
-            if (this._psdInterchange?.groups?.length) warnings.push(`${this._psdInterchange.groups.length} imported PSD group${this._psdInterchange.groups.length === 1 ? '' : 's'} will be reconstructed.`);
+            if (nativeTextCount) warnings.push(this._format('{count} single-style text layers will remain editable in PSD.', { count:nativeTextCount }));
+            if (flattenedTextCount) warnings.push(this._format('{count} text objects will be rasterized because its layer contains mixed content.', { count:flattenedTextCount }));
+            if (vectorCount) warnings.push(this._format('{count} vector objects will be rasterized by the current PSD exporter.', { count:vectorCount }));
+            if (maskCount) warnings.push(this._format('{count} OpenShop masks will be baked into layer pixels.', { count:maskCount }));
+            if (this._psdInterchange?.groups?.length) warnings.push(this._format('{count} imported PSD groups will be reconstructed.', { count:this._psdInterchange.groups.length }));
         }
-        if (this._animFrames.length > 1) warnings.push(`Only the current canvas is exported; ${this._animFrames.length} animation frames remain in the project.`);
-        if (normalizedFormat === 'jpeg') warnings.push('JPEG has no alpha channel; transparent pixels will use the selected matte color.');
-        else if (['png','webp','avif'].includes(normalizedFormat) && !transparent) warnings.push('Transparency is disabled; transparent pixels will use the selected matte color.');
-        warnings.push('History, selections, guides, and other project-only editing state are not included in this export.');
-        if (this._isDirty) warnings.push('This export does not save the editable project; unsaved project changes will remain.');
+        if (this._animFrames.length > 1) warnings.push(this._format('Only the current canvas is exported; {count} animation frames remain in the project.', { count:this._animFrames.length }));
+        if (normalizedFormat === 'jpeg') warnings.push(this._t('JPEG has no alpha channel; transparent pixels will use the selected matte color.'));
+        else if (['png','webp','avif'].includes(normalizedFormat) && !transparent) warnings.push(this._t('Transparency is disabled; transparent pixels will use the selected matte color.'));
+        warnings.push(this._t('History, selections, guides, and other project-only editing state are not included in this export.'));
+        if (this._isDirty) warnings.push(this._t('This export does not save the editable project; unsaved project changes will remain.'));
         return { format:normalizedFormat, warnings };
     },
     saveFile(format, options = {}) {
@@ -7707,9 +8552,11 @@ const OS = {
                 const index = Math.min(total, Math.max(0, Number(detail?.index) || 0));
                 progress.max = total;
                 progress.value = index;
-                if (detail?.stage === 'zip') status.textContent = `Building ZIP (${index}/${total})…`;
-                else if (detail?.cancelled) status.textContent = 'Batch cancelled; restoring the open document…';
-                else status.textContent = `${index}/${total}: ${this._safeText(detail?.file || 'file', 120)} — ${detail?.failed || 0} failed`;
+                if (detail?.stage === 'zip') status.textContent = this._format('Building ZIP ({index}/{total})…', { index, total });
+                else if (detail?.cancelled) status.textContent = this._t('Batch cancelled; restoring the open document…');
+                else status.textContent = this._format('{index}/{total}: {file} — {failed} failed', {
+                    index, total, file:this._safeText(detail?.file || this._t('file'), 120), failed:detail?.failed || 0
+                });
             },
             close: () => overlay.remove()
         };
@@ -7737,7 +8584,7 @@ const OS = {
     },
     _parseBatchRecipe(payload) {
         const commands = this._parseMacroPayload(payload);
-        if (!commands.length) throw new Error('Batch recipe is empty');
+        if (!commands.length) throw new Error(this._t('Batch recipe is empty'));
         return commands;
     },
     _batchTargetObject() {
@@ -7745,7 +8592,7 @@ const OS = {
         if (!object || object.name === '__boundary__' || object.excludeFromExport) {
             object = this.canvas?.getObjects?.().find(candidate => candidate.type === 'image' && candidate.name !== '__boundary__' && !candidate.excludeFromExport);
         }
-        if (!object) throw new Error('Batch recipes need an editable image target');
+        if (!object) throw new Error(this._t('Batch recipes need an editable image target'));
         const layerIndex = this.layers.findIndex(layer => layer.objects?.includes(object));
         if (layerIndex >= 0) this.activeLayerIdx = layerIndex;
         this.canvas.setActiveObject(object);
@@ -7755,7 +8602,7 @@ const OS = {
         const target = this._batchTargetObject();
         const objectId = this._ensureObjectId(target);
         const activeLayer = this.layers[this.activeLayerIdx] || this.layers.find(layer => !layer.locked);
-        if (!activeLayer?.id) throw new Error('Batch document has no editable layer');
+        if (!activeLayer?.id) throw new Error(this._t('Batch document has no editable layer'));
         const layerId = activeLayer.id;
         const layerMap = new Map();
         const mappedLayer = id => layerMap.get(String(id || '')) || layerId;
@@ -7776,13 +8623,13 @@ const OS = {
         });
     },
     async _loadBatchImageFile(file) {
-        if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) throw new Error('Batch input is not an image');
-        if (this._isSVGFile(file) || this._isAvifFile(file) || this._isRAWFile(file)) throw new Error('Batch processor currently accepts raster images only');
+        if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) throw new Error(this._t('Batch input is not an image'));
+        if (this._isSVGFile(file) || this._isAvifFile(file) || this._isRAWFile(file)) throw new Error(this._t('Batch processor currently accepts raster images only'));
         this._validateImageFile(file);
         const url = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = event => resolve(event.target.result);
-            reader.onerror = () => reject(new Error('Could not read the batch image'));
+            reader.onerror = () => reject(new Error(this._t('Could not read the batch image')));
             reader.readAsDataURL(file);
         });
         const image = await fabric.Image.fromURL(url);
@@ -7965,12 +8812,15 @@ const OS = {
         };
     },
     _collabSetStatus(message, type = 'info') {
+        const localizedMessage = this._t(message);
         const status = document.getElementById('collab-status');
-        if (status) status.textContent = this._safeText(message, 240);
+        if (status) status.textContent = this._safeText(localizedMessage, 240);
         const peer = document.getElementById('collab-peer');
         if (peer) {
             const peerId = this._collab?.remotePeerId;
-            peer.textContent = peerId ? `Peer fingerprint: ${this._safeText(peerId, 80)}` : 'Peer fingerprint: not established';
+            peer.textContent = peerId
+                ? this._format('Peer fingerprint: {peer}', { peer:this._safeText(peerId, 80) })
+                : this._t('Peer fingerprint: not established');
         }
         if (message && type === 'error') this.toast(message, 'error');
     },
@@ -9319,22 +10169,22 @@ self.onmessage = function(event) {
         modal.setAttribute('aria-labelledby', 'psd-compat-title');
         const heading = document.createElement('h3');
         heading.id = 'psd-compat-title';
-        heading.textContent = title;
+        heading.textContent = this._t(title);
         const intro = document.createElement('p');
         intro.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-bottom:10px';
         intro.textContent = report.accepted === false
-            ? 'The file was not opened; the current document was left unchanged.'
+            ? this._t('The file was not opened; the current document was left unchanged.')
             : report.flattenWholeDocument
-                ? 'Appearance was prioritized through a flattened fallback.'
-                : 'Supported layers remain editable; the exceptions below use explicit pixel fallbacks.';
+                ? this._t('Appearance was prioritized through a flattened fallback.')
+                : this._t('Supported layers remain editable; the exceptions below use explicit pixel fallbacks.');
         const summary = document.createElement('p');
         summary.style.cssText = 'font-size:11px;color:var(--text-muted);margin:0 0 8px';
-        summary.textContent = `${losses.length} structured compatibility loss${losses.length === 1 ? '' : 'es'} recorded.`;
+        summary.textContent = this._format('{count} structured compatibility losses recorded.', { count:losses.length });
         const list = document.createElement('ul');
         list.style.cssText = 'max-height:260px;overflow:auto;padding-left:20px;font-size:12px;color:var(--text-secondary);display:grid;gap:6px';
         warnings.forEach(warning => {
             const item = document.createElement('li');
-            item.textContent = warning;
+            item.textContent = this._t(warning);
             list.appendChild(item);
         });
         const buttons = document.createElement('div');
@@ -9342,7 +10192,7 @@ self.onmessage = function(event) {
         const close = document.createElement('button');
         close.className = 'btn btn-primary';
         close.type = 'button';
-        close.textContent = 'Continue';
+        close.textContent = this._t('Continue');
         close.addEventListener('click', () => overlay.remove());
         buttons.appendChild(close);
         modal.append(heading, intro, summary, list, buttons);
@@ -10327,14 +11177,20 @@ self.onmessage = function(event) {
             const hasTextOnPath = l.objects.some(o => o._openShopTextOnPath);
             const isBg = l.objects.some(o => o.name === '__boundary__');
             const thumbStyle = isBg ? 'layer-thumb-checker' : '';
+            const objectCount = l.objects.filter(o => o.name !== '__boundary__').length;
             const layerType = l.kind === 'adjustment'
-                ? `${this._adjustmentLayerName(l.adjustment?.type)} adjustment`
-                : `${l.objects.filter(o=>o.name!=='__boundary__').length} obj${hasMask?' &middot; M':''}${hasSmartObject?' &middot; SO':''}${hasTextOnPath?' &middot; Text Path':''}`;
-            d.innerHTML = `<div class="layer-drag-handle" title="Drag to reorder">&#9776;</div>
-                <button class="layer-vis ${l.visible?'':'hidden'}" title="${l.visible?'Hide layer':'Show layer'}" aria-label="${l.visible?'Hide layer':'Show layer'}" aria-pressed="${l.visible?'false':'true'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${eyeSvg}</svg></button>
-                <button class="layer-lock ${l.locked?'locked':''}" title="${l.locked?'Unlock layer':'Lock layer'}" aria-label="${l.locked?'Unlock layer':'Lock layer'}">${lockSvg}</button>
+                ? this._format('{type} adjustment', { type:this._t(this._adjustmentLayerName(l.adjustment?.type)) })
+                : `${this._objectCountLabel(objectCount)}${hasMask?' &middot; 蒙版':''}${hasSmartObject?' &middot; 智能对象':''}${hasTextOnPath?' &middot; 路径文字':''}`;
+            const layerStatus = [
+                l.locked ? this._t('Locked') : '',
+                l.blend !== 'source-over' ? this._t(l.blend) : ''
+            ].filter(Boolean).join(' &middot; ');
+            const displayName = this._displayLayerName(l.name);
+            d.innerHTML = `<div class="layer-drag-handle" title="${this._t('Drag to reorder')}">&#9776;</div>
+                <button class="layer-vis ${l.visible?'':'hidden'}" title="${this._t(l.visible?'Hide layer':'Show layer')}" aria-label="${this._t(l.visible?'Hide layer':'Show layer')}" aria-pressed="${l.visible?'false':'true'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${eyeSvg}</svg></button>
+                <button class="layer-lock ${l.locked?'locked':''}" title="${this._t(l.locked?'Unlock layer':'Lock layer')}" aria-label="${this._t(l.locked?'Unlock layer':'Lock layer')}">${lockSvg}</button>
                 <div class="layer-thumb"><div class="${thumbStyle}" style="width:32px;height:32px;${isBg?'':'background:var(--bg-depth-4);'}border-radius:2px"></div></div>
-                <div class="layer-info"><div class="layer-name">${this._esc(l.name)}</div><div class="layer-type">${l.locked?'Locked &middot; ':''}${l.blend!=='source-over'?this._esc(l.blend)+' &middot; ':''}${layerType}</div></div>`;
+                <div class="layer-info"><div class="layer-name">${this._esc(displayName)}</div><div class="layer-type">${layerStatus ? `${layerStatus} &middot; ` : ''}${layerType}</div></div>`;
             d.querySelector('.layer-vis').addEventListener('click', e => { e.stopPropagation(); this.toggleLayerVisibility(i); });
             d.querySelector('.layer-lock').addEventListener('click', e => { e.stopPropagation(); this.toggleLayerLock(i); });
             d.querySelector('.layer-name').addEventListener('dblclick', function() {
@@ -10355,7 +11211,7 @@ self.onmessage = function(event) {
             d.setAttribute('aria-selected', i === this.activeLayerIdx ? 'true' : 'false');
             d.setAttribute('aria-posinset', String(this.layers.length - i));
             d.setAttribute('aria-setsize', String(this.layers.length));
-            d.setAttribute('aria-label', `${l.name}${l.visible === false ? ', hidden' : ''}${l.locked ? ', locked' : ''}`);
+            d.setAttribute('aria-label', `${displayName}${l.visible === false ? `，${this._t('hidden')}` : ''}${l.locked ? `，${this._t('Locked')}` : ''}`);
             d.addEventListener('click', () => this.selectLayer(i));
             this.initLayerDrag(d, i);
             list.appendChild(d);
@@ -10821,8 +11677,7 @@ self.onmessage = function(event) {
         }
         this._applyToolOptions(tool);
         this._applyLayerInteractionState({ render:false });
-        const toolNames = {'marquee-rect':'Rect Marquee','marquee-ellipse':'Ellipse Marquee','magic-wand':'Magic Wand','ai-segment':'AI Segment'};
-        document.getElementById('tool-display').textContent = toolNames[tool] || tool.charAt(0).toUpperCase()+tool.replace(/-/g,' ').slice(1);
+        document.getElementById('tool-display').textContent = this._toolLabel(tool);
         this._syncSessionWorkspace();
         this._renderAccessibilityTree();
     },
@@ -11208,7 +12063,7 @@ self.onmessage = function(event) {
     onMouseMove(opt) {
         const ptr=this.canvas.getPointer(opt.e);
         this._updatePressureBrush(opt.e);
-        document.getElementById('cursor-pos').textContent=`X: ${Math.round(ptr.x)} Y: ${Math.round(ptr.y)}`;
+        document.getElementById('cursor-pos').textContent=this._format('X: {x} Y: {y}', { x:Math.round(ptr.x), y:Math.round(ptr.y) });
         // Light the close marker while the pointer is over it.
         if (this.state.tool === 'lasso') {
             this._updateCloseHandle('lasso-close-handle', this._lassoPoints, { x:opt.e.offsetX, y:opt.e.offsetY }, 3);
@@ -11829,26 +12684,26 @@ self.onmessage = function(event) {
 
         const o = document.createElement('div'); o.className = 'modal-overlay'; o.id = 'cr-overlay';
         o.innerHTML = `<div class="modal" style="min-width:auto;max-width:600px;padding:16px">
-            <h3 style="margin-bottom:12px">Color Range</h3>
+            <h3 style="margin-bottom:12px">${this._t('Color Range')}</h3>
             <div class="cr-dialog">
                 <div class="cr-left">
                     <div class="cr-select-row">
-                        <label>Select:</label>
+                        <label>${this._t('Select:')}</label>
                         <select id="cr-mode-select">
-                            <option value="sampled" selected>Sampled Colors</option>
-                            <option value="reds">Reds</option>
-                            <option value="yellows">Yellows</option>
-                            <option value="greens">Greens</option>
-                            <option value="cyans">Cyans</option>
-                            <option value="blues">Blues</option>
-                            <option value="magentas">Magentas</option>
-                            <option value="highlights">Highlights</option>
-                            <option value="midtones">Midtones</option>
-                            <option value="shadows">Shadows</option>
+                            <option value="sampled" selected>${this._t('Sampled Colors')}</option>
+                            <option value="reds">${this._t('Reds')}</option>
+                            <option value="yellows">${this._t('Yellows')}</option>
+                            <option value="greens">${this._t('Greens')}</option>
+                            <option value="cyans">${this._t('Cyans')}</option>
+                            <option value="blues">${this._t('Blues')}</option>
+                            <option value="magentas">${this._t('Magentas')}</option>
+                            <option value="highlights">${this._t('Highlights')}</option>
+                            <option value="midtones">${this._t('Midtones')}</option>
+                            <option value="shadows">${this._t('Shadows')}</option>
                         </select>
                     </div>
                     <div class="cr-fuzz-row">
-                        <label>Fuzziness:</label>
+                        <label>${this._t('Fuzziness:')}</label>
                         <input type="range" id="cr-fuzz" min="0" max="200" value="80">
                         <input type="number" id="cr-fuzz-num" min="0" max="200" value="80">
                     </div>
@@ -11856,22 +12711,22 @@ self.onmessage = function(event) {
                         <canvas id="cr-preview-canvas"></canvas>
                     </div>
                     <div class="cr-preview-mode">
-                        <label><input type="radio" name="cr-prev" value="selection" checked> Selection</label>
-                        <label><input type="radio" name="cr-prev" value="image"> Image</label>
+                        <label><input type="radio" name="cr-prev" value="selection" checked> ${this._t('Selection')}</label>
+                        <label><input type="radio" name="cr-prev" value="image"> ${this._t('Image')}</label>
                     </div>
                 </div>
                 <div class="cr-right">
-                    <button class="btn btn-primary" id="cr-ok-btn">OK</button>
-                    <button class="btn" data-modal-close>Cancel</button>
+                    <button class="btn btn-primary" id="cr-ok-btn">${this._t('OK')}</button>
+                    <button class="btn" data-modal-close>${this._t('Cancel')}</button>
                     <div style="height:8px"></div>
                     <div class="cr-eyedroppers">
-                        <button class="cr-eyedrop-btn active" id="cr-eye-add" title="Add to sample">+</button>
-                        <button class="cr-eyedrop-btn" id="cr-eye-sub" title="Subtract from sample">-</button>
+                        <button class="cr-eyedrop-btn active" id="cr-eye-add" title="${this._t('Add to sample')}">+</button>
+                        <button class="cr-eyedrop-btn" id="cr-eye-sub" title="${this._t('Subtract from sample')}">-</button>
                     </div>
                     <div style="height:4px"></div>
                     <div class="cr-invert-row">
                         <input type="checkbox" id="cr-invert">
-                        <label for="cr-invert">Invert</label>
+                        <label for="cr-invert">${this._t('Invert')}</label>
                     </div>
                 </div>
             </div>
@@ -13636,7 +14491,7 @@ self.onmessage = function(event) {
         baseline.id = 'openshop-history-option-baseline';
         baseline.dataset.historyIndex = '-1';
         baseline.tabIndex = -1;
-        baseline.textContent = this._historyBaseLabel;
+        baseline.textContent = this._t(this._historyBaseLabel);
         baseline.setAttribute('role', 'option');
         baseline.setAttribute('aria-selected', this.historyIdx < 0 ? 'true' : 'false');
         baseline.setAttribute('aria-posinset', '1');
@@ -13649,7 +14504,7 @@ self.onmessage = function(event) {
             item.id = `openshop-history-option-${index}`;
             item.dataset.historyIndex = String(index);
             item.tabIndex = -1;
-            item.textContent = entry.action;
+            item.textContent = this._t(entry.action);
             item.setAttribute('role', 'option');
             item.setAttribute('aria-selected', index === this.historyIdx ? 'true' : 'false');
             item.setAttribute('aria-posinset', String(index + 2));
@@ -13716,7 +14571,10 @@ self.onmessage = function(event) {
         if (!steps.length) return null;
         const branch = {
             id:`branch-${++this._snapshotSequence}`,
-            name:`${steps.length} step${steps.length === 1 ? '' : 's'} after "${this._safeText(this._lastAction || 'start', 40)}"`,
+            name:this._format('{count} steps after “{action}”', {
+                count:steps.length,
+                action:this._t(this._safeText(this._lastAction || 'start', 40))
+            }),
             reason:this._safeText(reason, 60),
             createdAt:Date.now(),
             entries:steps,
@@ -13742,8 +14600,8 @@ self.onmessage = function(event) {
         this._snapshots.push(entry);
         const dropped = this._enforceSnapshotBudget();
         this.toast(dropped
-            ? `Saved snapshot "${label}"; ${dropped} older entr${dropped === 1 ? 'y was' : 'ies were'} released to stay within the memory budget`
-            : `Saved snapshot "${label}"`, 'success');
+            ? this._format('Saved snapshot “{name}”; {count} older entries were released to stay within the memory budget', { name:label, count:dropped })
+            : this._format('Saved snapshot “{name}”', { name:label }), 'success');
         return entry;
     },
     renameSnapshot(id, name) {
@@ -13779,22 +14637,26 @@ self.onmessage = function(event) {
             this.toast(`Snapshot restore failed: ${error.message}`, 'error');
             return false;
         }
-        this._pushHistoryEntry(branch ? `Branch from "${entry.name}"` : `Restore "${entry.name}"`, entry.snapshot, { markDirty:true });
-        this.toast(branch ? `Branched from "${entry.name}"` : `Restored "${entry.name}"`, 'success');
+        this._pushHistoryEntry(branch
+            ? this._format('Branch from “{name}”', { name:entry.name })
+            : this._format('Restore “{name}”', { name:entry.name }), entry.snapshot, { markDirty:true });
+        this.toast(branch
+            ? this._format('Branched from “{name}”', { name:entry.name })
+            : this._format('Restored “{name}”', { name:entry.name }), 'success');
         return true;
     },
     _formatSnapshotAge(timestamp) {
         const seconds = Math.max(0, Math.round((Date.now() - Number(timestamp || 0)) / 1000));
-        if (seconds < 60) return `${seconds}s ago`;
-        if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-        return `${Math.round(seconds / 3600)}h ago`;
+        if (seconds < 60) return this._format('{count} seconds ago', { count:seconds });
+        if (seconds < 3600) return this._format('{count} minutes ago', { count:Math.round(seconds / 60) });
+        return this._format('{count} hours ago', { count:Math.round(seconds / 3600) });
     },
     promptNameCurrentState() {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `<div class="modal"><h3>Name This State</h3>
             <p class="offline-manager-intro">Snapshots are kept for this session and are not limited by the undo step count.</p>
-            <div class="modal-row"><label>Name</label><input id="snap-name" type="text" maxlength="80" value="${this._safeText(this._lastAction || 'Snapshot', 60)}"></div>
+            <div class="modal-row"><label>Name</label><input id="snap-name" type="text" maxlength="80" value="${this._safeText(this._lastAction ? this._t(this._lastAction) : this._t('Snapshot'), 60)}"></div>
             <div class="modal-btns"><button class="btn" data-modal-close>Cancel</button>
             <button class="btn btn-primary" data-modal-action>Save</button></div></div>`;
         overlay.querySelector('[data-modal-action]').addEventListener('click', () => {
@@ -13857,7 +14719,7 @@ self.onmessage = function(event) {
                     const name = document.createElement('strong');
                     name.textContent = entry.name;
                     const meta = document.createElement('span');
-                    meta.textContent = `${entry.tipLabel || entry.action || ''} · ${this._formatSnapshotAge(entry.createdAt)}`;
+                    meta.textContent = `${this._t(entry.tipLabel || entry.action || '')} · ${this._formatSnapshotAge(entry.createdAt)}`;
                     row.append(name, meta);
                     const action = (text, handler) => {
                         const button = document.createElement('button');
@@ -14517,14 +15379,17 @@ self.onmessage = function(event) {
         const card = document.createElement('button');
         card.type = 'button';
         card.className = 'template-card';
-        card.setAttribute('aria-label', `${this._safeText(t.name, 80)}, ${t.w} by ${t.h} pixels`);
+        const templateName = this._t(this._safeText(t.name, 80));
+        card.setAttribute('aria-label', this._format('{name}，{width} × {height} 像素', {
+            name:templateName, width:t.w, height:t.h
+        }));
         const preview = document.createElement('div');
         preview.className = 'tpl-preview';
         preview.style.background = 'linear-gradient(135deg,var(--bg-depth-3),var(--bg-depth-4))';
         preview.textContent = this._safeText(t.icon, 12);
         const name = document.createElement('div');
         name.className = 'tpl-name';
-        name.textContent = this._safeText(t.name, 80);
+        name.textContent = templateName;
         const dims = document.createElement('div');
         dims.className = 'tpl-dims';
         dims.textContent = `${t.w} x ${t.h}`;
@@ -14591,7 +15456,7 @@ self.onmessage = function(event) {
             grid.appendChild(this._createTemplateCard(t, () => {
                 this.dismissWelcome();
                 this.createNewDocument(t.w, t.h, { resetProject:true });
-                this.toast(`Created: ${t.name}`, 'success');
+                this.toast(this._format('Created: {name}', { name:this._t(t.name) }), 'success');
             }));
         });
     },
@@ -14603,12 +15468,12 @@ self.onmessage = function(event) {
         modal.style.minWidth = '500px';
         modal.style.maxWidth = '620px';
         const title = document.createElement('h3');
-        title.textContent = 'Templates';
+        title.textContent = this._t('Templates');
         modal.appendChild(title);
         for (const [cat, tpls] of Object.entries(cats)) {
             const heading = document.createElement('div');
             heading.style.cssText = 'font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px';
-            heading.textContent = this._safeText(cat, 40);
+            heading.textContent = this._t(this._safeText(cat, 40));
             const grid = document.createElement('div');
             grid.className = 'template-grid';
             tpls.forEach(t => {
@@ -14616,7 +15481,7 @@ self.onmessage = function(event) {
                     if (!await this._confirmDiscardUnsaved('Creating a new document')) return;
                     this.createNewDocument(t.w, t.h, { resetProject:true });
                     o.remove();
-                    this.toast(`Created: ${t.name}`, 'success');
+                    this.toast(this._format('Created: {name}', { name:this._t(t.name) }), 'success');
                 }));
             });
             modal.append(heading, grid);
@@ -14808,9 +15673,9 @@ self.onmessage = function(event) {
             splitter.className = 'panel-splitter';
             splitter.setAttribute('role', 'separator');
             splitter.setAttribute('aria-orientation', 'horizontal');
-            const label = this._menuOwnText(group.querySelector('.panel-tab')) || `Section ${index + 1}`;
-            splitter.setAttribute('aria-label', `Resize ${label} panel`);
-            splitter.title = 'Drag, or focus and use the arrow keys, to resize';
+            const label = this._menuOwnText(group.querySelector('.panel-tab')) || this._format('Section {index}', { index:index + 1 });
+            splitter.setAttribute('aria-label', this._format('Resize {label} panel', { label:this._t(label) }));
+            splitter.title = this._t('Drag, or focus and use the arrow keys, to resize');
             group.after(splitter);
             this._wirePanelSplitter(splitter, group);
         });
@@ -14949,15 +15814,15 @@ self.onmessage = function(event) {
         } else if (!state.online) {
             text = 'Offline unavailable';
         }
-        label.textContent = text;
+        label.textContent = this._t(text);
         button.dataset.state = visualState;
         button.title = state.error
             ? this._safeText(state.error, 180)
             : state.lane === 'standalone'
-                ? 'Standalone file: a cold open requires network access'
+                ? this._t('Standalone file: a cold open requires network access')
                 : state.shellReady
-                    ? 'Hosted shell cached for offline reload'
-                    : 'Hosted shell is not yet cached';
+                    ? this._t('Hosted shell cached for offline reload')
+                    : this._t('Hosted shell is not yet cached');
         return state;
     },
 
@@ -15174,17 +16039,21 @@ self.onmessage = function(event) {
         const external = snapshot.hosts.filter(host => host.external);
         const sent = external.reduce((total, host) => total + host.sent, 0);
         if (snapshot.strict) {
-            label.textContent = snapshot.blocked ? `Strict · ${snapshot.blocked} blocked` : 'Strict offline';
+            label.textContent = snapshot.blocked
+                ? this._format('Strict · {count} blocked', { count:snapshot.blocked })
+                : this._t('Strict offline');
             button.dataset.state = 'ready';
-            button.title = 'Strict offline mode is on: requests to anywhere but this page are refused unless they are already cached.';
+            button.title = this._t('Strict offline mode is on: requests to anywhere but this page are refused unless they are already cached.');
         } else if (!sent) {
-            label.textContent = 'Nothing sent';
+            label.textContent = this._t('Nothing sent');
             button.dataset.state = 'ready';
-            button.title = 'No request has left this page. Your images are never uploaded.';
+            button.title = this._t('No request has left this page. Your images are never uploaded.');
         } else {
-            label.textContent = `${sent} download${sent === 1 ? '' : 's'}`;
+            label.textContent = this._format(sent === 1 ? '{count} download' : '{count} downloads', { count:sent });
             button.dataset.state = 'limited';
-            button.title = `${sent} outbound request${sent === 1 ? '' : 's'} to ${external.map(host => host.host).join(', ')} — code and model weights only, never document pixels.`;
+            button.title = this._format(sent === 1 ? '{count} outbound request to {hosts} — code and model weights only, never document pixels.' : '{count} outbound requests to {hosts} — code and model weights only, never document pixels.', {
+                count:sent, hosts:external.map(host => host.host).join(', ')
+            });
         }
         return snapshot;
     },
@@ -15239,8 +16108,10 @@ self.onmessage = function(event) {
         summary.className = 'offline-manager-note';
         summary.id = 'network-activity-summary';
         summary.textContent = external.length
-            ? `${external.reduce((total, host) => total + host.sent, 0)} outbound request(s) this session across ${external.length} host(s).`
-            : 'No request has left this page this session.';
+            ? this._format('{requests} outbound requests this session across {hosts} hosts.', {
+                requests:external.reduce((total, host) => total + host.sent, 0), hosts:external.length
+            })
+            : this._t('No request has left this page this session.');
         modal.appendChild(summary);
 
         const details = document.createElement('dl');
@@ -15251,16 +16122,23 @@ self.onmessage = function(event) {
                 const dt = document.createElement('dt');
                 dt.textContent = host.host;
                 const dd = document.createElement('dd');
-                dd.textContent = `${host.purpose} · ${host.sent} sent`
-                    + (host.blocked ? ` · ${host.blocked} blocked` : '')
-                    + (host.failed ? ` · ${host.failed} failed` : '');
+                const key = host.blocked && host.failed
+                    ? '{purpose} · {sent} sent · {blocked} blocked · {failed} failed'
+                    : host.blocked
+                        ? '{purpose} · {sent} sent · {blocked} blocked'
+                        : host.failed
+                            ? '{purpose} · {sent} sent · {failed} failed'
+                            : '{purpose} · {sent} sent';
+                dd.textContent = this._format(key, {
+                    purpose:this._t(host.purpose), sent:host.sent, blocked:host.blocked, failed:host.failed
+                });
                 details.append(dt, dd);
             });
         } else {
             const dt = document.createElement('dt');
-            dt.textContent = 'Outbound hosts';
+            dt.textContent = this._t('Outbound hosts');
             const dd = document.createElement('dd');
-            dd.textContent = 'None';
+            dd.textContent = this._t('None');
             details.append(dt, dd);
         }
         modal.appendChild(details);
@@ -15292,7 +16170,7 @@ self.onmessage = function(event) {
             strictNote.textContent = on
                 ? this._t('On. Anything not already downloaded stays unavailable until you turn this off. A cold start on the standalone file lane cannot honour it, because the three pinned libraries are the app itself; OpenShop stands the mode down and says so rather than failing to open.')
                 : snapshot.strictDisabledReason
-                    ? `${this._t('Off.')} ${snapshot.strictDisabledReason}`
+                    ? `${this._t('Off.')} ${this._t(snapshot.strictDisabledReason)}`
                     : this._t('Off. Program code and AI model weights may be downloaded on demand from the pinned hosts above.');
             const impact = await this._strictOfflineImpact();
             impactList.replaceChildren();
@@ -15300,7 +16178,7 @@ self.onmessage = function(event) {
                 const row = document.createElement('div');
                 row.className = 'offline-model';
                 const name = document.createElement('strong');
-                name.textContent = entry.label;
+                name.textContent = this._t(entry.label);
                 const value = document.createElement('span');
                 value.textContent = entry.available
                     ? this._t('Available')
@@ -15588,56 +16466,61 @@ self.onmessage = function(event) {
         modal.setAttribute('aria-labelledby', 'offline-manager-title');
         const title = document.createElement('h3');
         title.id = 'offline-manager-title';
-        title.textContent = 'Offline & Install';
+        title.textContent = this._t('Offline & Install');
         const intro = document.createElement('p');
         intro.className = 'offline-manager-intro';
         intro.textContent = state.lane === 'hosted'
-            ? 'This hosted copy stages a verified application shell. Core editing, PSD import, and standard export can reload without a connection once the shell is ready.'
-            : 'This standalone HTML loads its core libraries from pinned CDNs. A cold open requires network access; local files cannot install a service worker or guarantee an offline reload.';
+            ? this._t('This hosted copy stages a verified application shell. Core editing, PSD import, and standard export can reload without a connection once the shell is ready.')
+            : this._t('This standalone HTML loads its core libraries from pinned CDNs. A cold open requires network access; local files cannot install a service worker or guarantee an offline reload.');
         modal.append(title, intro);
 
         if (state.rolledBackFrom) {
             const warning = document.createElement('p');
             warning.className = 'offline-warning';
-            warning.textContent = `OpenShop returned to ${state.activeRevision} because ${state.rolledBackFrom} did not confirm a healthy startup.`;
+            warning.textContent = this._format('OpenShop returned to {activeRevision} because {rolledBackFrom} did not confirm a healthy startup.', {
+                activeRevision:state.activeRevision,
+                rolledBackFrom:state.rolledBackFrom
+            });
             modal.appendChild(warning);
         }
 
         const details = document.createElement('dl');
         details.className = 'info-grid offline-details';
         const rows = [
-            ['Distribution', state.lane === 'hosted' ? 'Hosted PWA lane' : 'Standalone file lane'],
-            ['Connection', state.online ? 'Online' : 'Offline'],
-            ['Installation', state.installed ? 'Installed' : state.installAvailable ? 'Install available' : state.lane === 'hosted' ? 'Use browser install menu' : 'Unavailable for file://'],
-            ['Core shell', state.shellReady ? `${state.requiredCached}/${state.requiredTotal} required assets verified` : state.lane === 'hosted' ? 'Not ready' : 'Network-first'],
-            ['Optional shell', state.lane === 'hosted' ? `${state.optionalCached || 0}/${state.optionalTotal || 0} helpers cached` : 'Loaded on demand from network'],
-            ['File launch', typeof window.launchQueue?.setConsumer === 'function' ? 'Installed-app launches supported' : 'Use Open, drag/drop, or file picker'],
-            ['Active shell', state.activeRevision || 'Not managed']
+            ['Distribution', state.lane === 'hosted' ? this._t('Hosted PWA lane') : this._t('Standalone file lane')],
+            ['Connection', state.online ? this._t('Online') : this._t('Offline')],
+            ['Installation', state.installed ? this._t('Installed') : state.installAvailable ? this._t('Install available') : state.lane === 'hosted' ? this._t('Use browser install menu') : this._t('Unavailable for file://')],
+            ['Core shell', state.shellReady ? this._format('{cached}/{total} required assets verified', { cached:state.requiredCached, total:state.requiredTotal }) : state.lane === 'hosted' ? this._t('Not ready') : this._t('Network-first')],
+            ['Optional shell', state.lane === 'hosted' ? this._format('{cached}/{total} helpers cached', { cached:state.optionalCached || 0, total:state.optionalTotal || 0 }) : this._t('Loaded on demand from network')],
+            ['File launch', typeof window.launchQueue?.setConsumer === 'function' ? this._t('Installed-app launches supported') : this._t('Use Open, drag/drop, or file picker')],
+            ['Active shell', state.activeRevision || this._t('Not managed')]
         ];
         rows.forEach(([name, value]) => {
-            const dt = document.createElement('dt'); dt.textContent = name;
+            const dt = document.createElement('dt'); dt.textContent = this._t(name);
             const dd = document.createElement('dd'); dd.textContent = value;
             details.append(dt, dd);
         });
         modal.appendChild(details);
 
         const aiTitle = document.createElement('h3');
-        aiTitle.textContent = 'AI assets';
+        aiTitle.textContent = this._t('AI assets');
         aiTitle.style.marginBottom = '4px';
         const aiNote = document.createElement('p');
         aiNote.className = 'offline-manager-note';
-        aiNote.textContent = `AI models are not part of the core offline shell. Each pinned model must be used online once; model and verified WASM runtime caches are reported separately. Inference backend: ${this._aiDevice || 'selected on first use'}.`;
+        aiNote.textContent = this._format('AI models are not part of the core offline shell. Each pinned model must be used online once; model and verified WASM runtime caches are reported separately. Inference backend: {backend}.', {
+            backend:this._t(this._aiDevice || 'selected on first use')
+        });
         const aiList = document.createElement('div');
         aiList.className = 'offline-model-list';
         const runtimeRow = document.createElement('div');
         runtimeRow.className = 'offline-model';
         const runtimeName = document.createElement('strong');
-        runtimeName.textContent = 'Transformers.js WASM runtime';
+        runtimeName.textContent = this._t('Transformers.js WASM runtime');
         const runtimeState = document.createElement('span');
         const runtimeSize = aiRuntime.bytes ? ` · ${this._formatBytes(aiRuntime.bytes)}` : '';
         runtimeState.textContent = aiRuntime.cached === aiRuntime.total
-            ? `Offline ready${runtimeSize}`
-            : `${aiRuntime.cached}/${aiRuntime.total} verified files cached`;
+            ? `${this._t('Offline ready')}${runtimeSize}`
+            : this._format('{cached}/{total} verified files cached', { cached:aiRuntime.cached, total:aiRuntime.total });
         runtimeRow.append(runtimeName, runtimeState);
         aiList.appendChild(runtimeRow);
         aiModels.forEach(entry => {
@@ -15648,17 +16531,17 @@ self.onmessage = function(event) {
             const cacheState = document.createElement('span');
             const size = entry.bytes ? ` · ${(entry.bytes / 1024 / 1024).toFixed(1)} MB` : '';
             cacheState.textContent = entry.matches
-                ? `${entry.matches} cached response${entry.matches === 1 ? '' : 's'}${size}${entry.loaded ? ' · loaded' : ''}`
+                ? `${this._format('{count} cached response(s)', { count:entry.matches })}${size}${entry.loaded ? ` · ${this._t('loaded')}` : ''}`
                 : entry.footprint?.exact
-                    ? `${this._formatBytes(entry.footprint.totalBytes)} first download`
-                    : 'Size checked on first use';
+                    ? this._format('{size} first download', { size:this._formatBytes(entry.footprint.totalBytes) })
+                    : this._t('Size checked on first use');
             row.append(name, cacheState);
             if (entry.matches) {
                 const clear = document.createElement('button');
                 clear.className = 'btn';
                 clear.type = 'button';
-                clear.textContent = 'Clear';
-                clear.setAttribute('aria-label', `Clear cached files for ${entry.model}`);
+                clear.textContent = this._t('Clear');
+                clear.setAttribute('aria-label', this._format('Clear cached files for {model}', { model:entry.model }));
                 clear.addEventListener('click', async () => {
                     clear.disabled = true;
                     const removed = await this.clearModelCache(entry.model);
@@ -15676,7 +16559,7 @@ self.onmessage = function(event) {
         const addButton = (label, className, handler) => {
             const button = document.createElement('button');
             button.className = className;
-            button.textContent = label;
+            button.textContent = this._t(label);
             button.addEventListener('click', handler);
             buttons.appendChild(button);
             return button;
@@ -18287,7 +19170,11 @@ self.onmessage = async function(event) {
             for (let i = 0; i < 256; i++) { if (arr[i] > 0 && !total) min = i; if (arr[i] > 0) mx = i; total += arr[i]; sum += i * arr[i]; }
             const mean = total > 0 ? Math.round(sum / total) : 0;
             const minEl = document.getElementById('hist-min'), meanEl = document.getElementById('hist-mean'), maxEl = document.getElementById('hist-max');
-            if (minEl) { minEl.textContent = `Min: ${min}`; meanEl.textContent = `Mean: ${mean}`; maxEl.textContent = `Max: ${mx}`; }
+            if (minEl) {
+                minEl.textContent = this._format('Min: {value}', { value:min });
+                meanEl.textContent = this._format('Mean: {value}', { value:mean });
+                maxEl.textContent = this._format('Max: {value}', { value:mx });
+            }
         } catch(e) { console.debug('Histogram update skipped:', e.message); }
     },
 
@@ -18701,7 +19588,7 @@ self.onmessage = async function(event) {
     // ====================== UPDATE INFO PANEL ======================
     updateInfoPanel() {
         const el = id => document.getElementById(id);
-        if (el('info-dims')) el('info-dims').textContent = this._hasActiveDocument() ? `${this.canvasW} x ${this.canvasH}` : 'No document';
+        if (el('info-dims')) el('info-dims').textContent = this._hasActiveDocument() ? `${this.canvasW} x ${this.canvasH}` : this._t('No document');
         if (el('info-layers')) el('info-layers').textContent = this.layers.length;
         if (el('info-objects')) el('info-objects').textContent = this.canvas ? this.canvas.getObjects().filter(o => o.name !== '__boundary__').length : 0;
         if (el('info-zoom')) el('info-zoom').textContent = this._hasActiveDocument() ? Math.round(this.zoom * 100) + '%' : '—';
@@ -19654,12 +20541,12 @@ self.onmessage = async function(e) {
             alpha.checked = false;
             alpha.disabled = true;
             matteRow.style.display = 'flex';
-            alphaHelp.textContent = 'JPEG always uses a matte';
+            alphaHelp.textContent = this._t('JPEG always uses a matte');
         } else {
             alpha.disabled = false;
             alpha.checked = alpha.dataset.previous ? alpha.dataset.previous === 'true' : true;
             matteRow.style.display = alpha.checked ? 'none' : 'flex';
-            alphaHelp.textContent = 'PNG, WebP, and AVIF can preserve alpha';
+            alphaHelp.textContent = this._t('PNG, WebP, and AVIF can preserve alpha');
         }
         this._esUpdate(overlay);
     },
@@ -19684,7 +20571,11 @@ self.onmessage = async function(e) {
         const ratio = fmt === 'png' ? 0.5 : fmt === 'jpeg' ? 0.1 : fmt === 'avif' ? 0.06 : 0.08;
         const est = Math.round(raw * ratio / 1024);
         const el = overlay.querySelector('#es-size');
-        if (el) el.textContent = `${w}x${h} — Est. ~${est > 1024 ? (est/1024).toFixed(1)+'MB' : est+'KB'}`;
+        if (el) el.textContent = this._format('{width}x{height} — Est. ~{size}', {
+            width:w,
+            height:h,
+            size:est > 1024 ? `${(est / 1024).toFixed(1)} MB` : `${est} KB`
+        });
     },
     _renderExportImpact(overlay) {
         const settings = this._readExportSettings(overlay);
@@ -19692,11 +20583,11 @@ self.onmessage = async function(e) {
         const container = overlay.querySelector('#es-impact');
         this._clearNode(container);
         const title = document.createElement('strong');
-        title.textContent = 'Export impact';
+        title.textContent = this._t('Export impact');
         const list = document.createElement('ul');
         impact.warnings.forEach(warning => {
             const item = document.createElement('li');
-            item.textContent = warning;
+            item.textContent = this._t(warning);
             list.appendChild(item);
         });
         container.append(title, list);
@@ -19725,15 +20616,15 @@ self.onmessage = async function(e) {
             const label = document.createElement('span');
             label.className = 'export-preview-label';
             label.textContent = captured.options.transparent
-                ? `${settings.format.toUpperCase()} · alpha preview`
-                : `${settings.format.toUpperCase()} · matte ${captured.options.matte}`;
+                ? this._format('{format} · alpha preview', { format:settings.format.toUpperCase() })
+                : this._format('{format} · matte {matte}', { format:settings.format.toUpperCase(), matte:captured.options.matte });
             preview.append(image, label);
             preview.setAttribute('aria-label', label.textContent);
         } catch (error) {
             this._clearNode(preview);
             preview.classList.remove('alpha');
             preview.style.background = '';
-            preview.textContent = `Preview unavailable: ${error.message}`;
+            preview.textContent = this._format('Preview unavailable: {error}', { error:error.message });
             preview.setAttribute('aria-label', preview.textContent);
         }
     },
@@ -19856,7 +20747,7 @@ self.onmessage = async function(e) {
         const command = this._makeCommand('canvas.rotate', { degrees });
         const result = this._executeCommand(command, { label:`Rotate Canvas ${command.args.degrees}` });
         return Promise.resolve(result).then(success => {
-            if (success) this.toast(`Canvas rotated ${command.args.degrees > 0 ? 'CW' : 'CCW'}`, 'success');
+            if (success) this.toast(this._t(command.args.degrees > 0 ? 'Canvas rotated clockwise' : 'Canvas rotated counterclockwise'), 'success');
             return success;
         });
     },
@@ -19884,7 +20775,7 @@ self.onmessage = async function(e) {
         const command = this._makeCommand('canvas.flip', { axis });
         const result = this._executeCommand(command, { label:`Flip Canvas ${command.args.axis}` });
         return Promise.resolve(result).then(success => {
-            if (success) this.toast(`Canvas flipped ${command.args.axis === 'h' ? 'horizontally' : 'vertically'}`, 'success');
+            if (success) this.toast(this._t(command.args.axis === 'h' ? 'Canvas flipped horizontally' : 'Canvas flipped vertically'), 'success');
             return success;
         });
     },
@@ -22094,7 +22985,10 @@ self.onmessage = async function(e) {
         this._drawPixelGrid();
         this.updateMinimap();
         this.updateHistogram();
-        if (!silent) this.toast(`Theme: ${next.charAt(0).toUpperCase() + next.slice(1)}`, 'info');
+        if (!silent) {
+            const label = this._t(({ default:'Dark', midnight:'Midnight', oled:'OLED' })[next] || next);
+            this.toast(this._format('Theme: {theme}', { theme:label }), 'info');
+        }
     },
     _restoreTheme() {
         try {
@@ -24817,25 +25711,47 @@ self.onmessage = async function(e) {
     // ====================== STATUS / TOAST ======================
     _toolLabel(tool) {
         const names = {
+            'select':'Select',
             'marquee-rect':'Rect Marquee', 'marquee-ellipse':'Ellipse Marquee',
-            'magic-wand':'Magic Wand', 'ai-segment':'AI Segment',
-            'clone':'Clone Stamp', 'healing':'Healing Brush'
+            'magic-wand':'Magic Wand Tool', 'ai-segment':'AI Segment Select',
+            'clone':'Clone Stamp', 'healing':'Healing Brush',
+            'brush':'Brush', 'pencil':'Pencil', 'spray':'Spray / Airbrush',
+            'fill':'Paint Bucket Tool', 'pattern':'Pattern Fill', 'eyedropper':'Eyedropper Tool',
+            'line':'Line Tool', 'rect':'Rectangle Tool', 'circle':'Ellipse Tool',
+            'triangle':'Triangle', 'arrow':'Arrow', 'polygon':'Polygon Tool', 'star':'Star',
+            'pen':'Pen Tool', 'text':'Horizontal Type Tool', 'gradient':'Gradient Tool',
+            'eraser':'Eraser Tool', 'smudge':'Smudge Tool', 'dodge':'Dodge Tool',
+            'burn':'Burn Tool', 'sponge':'Sponge Tool', 'pan':'Hand Tool', 'zoom':'Zoom Tool',
+            'lasso':'Lasso Tool', 'crop':'Crop Tool', 'measure':'Ruler Tool', 'note':'Note Tool'
         };
         const value = tool || this.state.tool || 'select';
-        return names[value] || value.charAt(0).toUpperCase() + value.replace(/-/g, ' ').slice(1);
+        const catalogLabel = this._toolCatalog?.().find(item => item.toolState === value)?.label;
+        return this._t(names[value] || catalogLabel || value.charAt(0).toUpperCase() + value.replace(/-/g, ' ').slice(1));
+    },
+    _displayLayerName(name) {
+        const raw = String(name ?? '');
+        if (raw === 'Background') return this._t('Background');
+        const generated = /^Layer (\d+)(?: \((copy|cut)\))?$/.exec(raw);
+        if (!generated) return raw;
+        return generated[2]
+            ? this._format('Layer {index} ({kind})', { index:generated[1], kind:this._t(generated[2]) })
+            : this._format('Layer {index}', { index:generated[1] });
+    },
+    _objectCountLabel(count) {
+        return this._format('{count} objects', { count:Math.max(0, Number(count) || 0) });
     },
     _activeLayerSummary() {
         const layer = this.layers[this.activeLayerIdx];
-        if (!layer) return 'none';
+        if (!layer) return this._t('none');
         const objectCount = layer.objects.filter(o => o.name !== '__boundary__').length;
         const state = [
-            layer.visible === false ? 'hidden' : 'visible',
-            layer.locked ? 'locked' : 'unlocked',
-            `${layer.opacity}% opacity`,
-            layer.blend && layer.blend !== 'source-over' ? layer.blend : 'normal blend',
-            `${objectCount} object${objectCount !== 1 ? 's' : ''}`
+            this._t(layer.visible === false ? 'hidden' : 'visible'),
+            this._t(layer.locked ? 'Locked' : 'unlocked'),
+            this._format('{opacity}% opacity', { opacity:layer.opacity }),
+            layer.blend && layer.blend !== 'source-over' ? this._t(layer.blend) : this._t('normal blend'),
+            this._objectCountLabel(objectCount)
         ];
-        return `${layer.name}, ${state.join(', ')}`;
+        return `${this._displayLayerName(layer.name)}，${state.join('，')}`;
     },
     // Masks built elsewhere (Grow, Invert, a restored project) may arrive
     // without the cached count; compute it once and keep it.
@@ -24846,15 +25762,19 @@ self.onmessage = async function(e) {
         return count;
     },
     _selectionSummary() {
-        if (!this._selectionBounds) return 'none';
+        if (!this._selectionBounds) return this._t('none');
         const b = this._selectionBounds;
         const count = this._selectionMask ? (this._selectionMask.count ?? this._countMaskPixels(this._selectionMask)) : null;
-        const size = `${Math.round(b.w)} by ${Math.round(b.h)} pixels at ${Math.round(b.x)}, ${Math.round(b.y)}`;
-        return count ? `${count.toLocaleString()} pixels selected, ${size}` : `selection bounds ${size}`;
+        const size = this._format('{width} × {height} pixels at {x}, {y}', {
+            width:Math.round(b.w), height:Math.round(b.h), x:Math.round(b.x), y:Math.round(b.y)
+        });
+        return count
+            ? this._format('{count} pixels selected, {size}', { count:count.toLocaleString(), size })
+            : this._format('selection bounds {size}', { size });
     },
     _objectSummary() {
         const objs = this.canvas ? this.canvas.getObjects().filter(o => o.name !== '__boundary__' && !o._wandOverlay) : [];
-        return `${objs.length} object${objs.length !== 1 ? 's' : ''}`;
+        return this._objectCountLabel(objs.length);
     },
     _renderAccessibilityTree() {
         const root = document.getElementById('canvas-a11y-tree');
@@ -24863,14 +25783,18 @@ self.onmessage = async function(e) {
         const layer = this._activeLayerSummary();
         const selection = this._selectionSummary();
         const objects = this._objectSummary();
-        const action = this._lastAction ? ` Last action: ${this._lastAction}.` : '';
-        const summary = `Tool: ${tool}. Active layer: ${layer}. Selection: ${selection}. ${objects}.${action}`;
+        const action = this._lastAction
+            ? this._format('Last action: {action}.', { action:this._t(this._lastAction) })
+            : '';
+        const summary = this._format('Tool: {tool}. Active layer: {layer}. Selection: {selection}. {objects}.{action}', {
+            tool, layer, selection, objects, action
+        });
         const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
         setText('canvas-a11y-summary', summary);
-        setText('canvas-a11y-tool', `Tool: ${tool}`);
-        setText('canvas-a11y-layer', `Active layer: ${layer}`);
-        setText('canvas-a11y-selection', `Selection: ${selection}`);
-        setText('canvas-a11y-objects', `Objects: ${objects}`);
+        setText('canvas-a11y-tool', this._format('Tool: {tool}', { tool }));
+        setText('canvas-a11y-layer', this._format('Active layer: {layer}', { layer }));
+        setText('canvas-a11y-selection', this._format('Selection: {selection}', { selection }));
+        setText('canvas-a11y-objects', this._format('Objects: {objects}', { objects }));
         const canvasArea = document.getElementById('canvas-area');
         if (canvasArea) canvasArea.setAttribute('aria-label', summary);
         const list = document.getElementById('canvas-a11y-layers');
@@ -24879,7 +25803,14 @@ self.onmessage = async function(e) {
             this.layers.forEach((l, i) => {
                 const item = document.createElement('li');
                 const objectCount = l.objects.filter(o => o.name !== '__boundary__').length;
-                item.textContent = `${i === this.activeLayerIdx ? 'Active layer' : 'Layer'} ${i}: ${l.name}, ${l.visible === false ? 'hidden' : 'visible'}, ${l.locked ? 'locked' : 'unlocked'}, ${objectCount} object${objectCount !== 1 ? 's' : ''}`;
+                item.textContent = this._format('{role} {index}: {layer}, {visibility}, {lock}, {objects}', {
+                    role:this._t(i === this.activeLayerIdx ? 'Active layer' : 'Layer'),
+                    index:i,
+                    layer:this._displayLayerName(l.name),
+                    visibility:this._t(l.visible === false ? 'hidden' : 'visible'),
+                    lock:this._t(l.locked ? 'Locked' : 'unlocked'),
+                    objects:this._objectCountLabel(objectCount)
+                });
                 list.appendChild(item);
             });
         }
@@ -24891,7 +25822,7 @@ self.onmessage = async function(e) {
     },
     updateStatus() {
         const objs=this.canvas.getObjects().filter(o=>o.name!=='__boundary__');
-        document.getElementById('object-count').textContent=`${objs.length} object${objs.length!==1?'s':''}`;
+        document.getElementById('object-count').textContent=this._objectCountLabel(objs.length);
         this.updateInfoPanel();
         this._renderAccessibilityTree();
     },
