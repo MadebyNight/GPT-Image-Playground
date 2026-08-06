@@ -1097,11 +1097,19 @@ export async function initStore() {
 
 type TaskApiCaller = (opts: CallApiOptions) => Promise<CallApiResult>
 
+interface AgentTaskMetadata {
+  origin: 'agent'
+  agentConversationId: string
+  agentTurn: number
+}
+
 interface SubmitTaskOptions {
   allowFullMask?: boolean
   useCurrentApiProfileWhenReusedMissing?: boolean
   callApi?: TaskApiCaller
   onTaskCreated?: (taskId: string) => void
+  /** 仅默认 Agent 在任务落库时写入的会话元数据。 */
+  taskMetadata?: AgentTaskMetadata
 }
 
 interface ExecuteTaskOptions {
@@ -1218,6 +1226,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
+    ...(options.taskMetadata ?? {}),
   }
 
   const latestTasks = useStore.getState().tasks
@@ -1359,6 +1368,9 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
     // 更新任务
     const latestBeforeUpdate = useStore.getState().tasks.find((t) => t.id === taskId)
     if (!latestBeforeUpdate || latestBeforeUpdate.status !== 'running') return
+    const agentAssistantText = latestBeforeUpdate.origin === 'agent' && result.assistantText?.trim()
+      ? result.assistantText.trim()
+      : undefined
     clearOpenAIWatchdogTimer(taskId)
     updateTaskInStore(taskId, {
       outputImages: outputIds,
@@ -1371,6 +1383,7 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       elapsed: Date.now() - task.createdAt,
       falRecoverable: false,
       customRecoverable: false,
+      ...(agentAssistantText ? { agentAssistantText } : {}),
     })
 
     useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')

@@ -282,9 +282,11 @@ function useIsMobile() {
 interface InputBarProps {
   onTaskSubmitted?: (taskId: string) => void
   layout?: 'default' | 'agent'
+  /** 当前默认 Agent 会话；为空时下一次提交会创建新会话。 */
+  agentConversationId?: string | null
 }
 
-export default function InputBar({ onTaskSubmitted, layout = 'default' }: InputBarProps) {
+export default function InputBar({ onTaskSubmitted, layout = 'default', agentConversationId = null }: InputBarProps) {
   const prompt = useStore((s) => s.prompt)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
@@ -500,10 +502,11 @@ export default function InputBar({ onTaskSubmitted, layout = 'default' }: InputB
         params,
         stream: settings.agentStreaming,
         imageCount: settings.agentImageCount,
+        conversationId: agentConversationId,
       })
       : await submitTask()
     if (taskId) onTaskSubmitted?.(taskId)
-  }, [activeProfile.apiMode, activeProfile.provider, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, serverManaged, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
+  }, [activeProfile.apiMode, activeProfile.provider, agentConversationId, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, serverManaged, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
   const missingApiConfigMessage = serverManaged
     ? '服务端 API 配置不可用，请联系部署管理员'
     : '尚未完成 API 配置，请在右上角设置中进行'

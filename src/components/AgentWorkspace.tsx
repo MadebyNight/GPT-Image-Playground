@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
+import { getConversationTasks } from '../lib/agentConversation'
 import AgentHistoryPanel from './AgentHistoryPanel'
 import AgentMainWorkspace from './AgentMainWorkspace'
 import AgentTemplateRail from './AgentTemplateRail'
@@ -15,16 +16,26 @@ export function getNextAgentTaskIdAfterRemoval(previousTaskIds: string[], curren
 interface AgentWorkspaceProps {
   activeTaskId: string | null
   onActiveTaskChange: (taskId: string | null) => void
+  onNewConversation?: () => void
 }
 
-export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: AgentWorkspaceProps) {
+export default function AgentWorkspace({ activeTaskId, onActiveTaskChange, onNewConversation }: AgentWorkspaceProps) {
   const tasks = useStore((s) => s.tasks)
   const [mobilePanel, setMobilePanel] = useState<AgentMobilePanel>('workspace')
+  const [isStartingNewConversation, setIsStartingNewConversation] = useState(false)
   const sortedTasks = useMemo(() => [...tasks].sort((a, b) => b.createdAt - a.createdAt), [tasks])
   const previousTaskIdsRef = useRef<string[] | undefined>(undefined)
-  const activeTask = useMemo(
+  const selectedTask = useMemo(
     () => sortedTasks.find((task) => task.id === activeTaskId) ?? null,
     [activeTaskId, sortedTasks],
+  )
+  const activeConversationTasks = useMemo(
+    () => selectedTask ? getConversationTasks(tasks, selectedTask) : [],
+    [selectedTask, tasks],
+  )
+  const activeTask = useMemo(
+    () => activeConversationTasks[activeConversationTasks.length - 1] ?? selectedTask,
+    [activeConversationTasks, selectedTask],
   )
 
   useEffect(() => {
@@ -33,7 +44,7 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: Age
     previousTaskIdsRef.current = currentTaskIds
 
     if (!previousTaskIds) {
-      if (!activeTaskId && currentTaskIds[0]) onActiveTaskChange(currentTaskIds[0])
+      if (!activeTaskId && currentTaskIds[0] && !isStartingNewConversation) onActiveTaskChange(currentTaskIds[0])
       return
     }
 
@@ -43,6 +54,7 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: Age
 
     if (hasNewLatestTask && latestTaskId) {
       onActiveTaskChange(latestTaskId)
+      setIsStartingNewConversation(false)
       setMobilePanel('workspace')
       return
     }
@@ -52,11 +64,19 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: Age
       return
     }
 
-    if (!activeTaskId && latestTaskId) onActiveTaskChange(latestTaskId)
-  }, [activeTaskId, onActiveTaskChange, sortedTasks])
+    if (!activeTaskId && latestTaskId && !isStartingNewConversation) onActiveTaskChange(latestTaskId)
+  }, [activeTaskId, isStartingNewConversation, onActiveTaskChange, sortedTasks])
 
   const handleSelectTask = (taskId: string) => {
+    setIsStartingNewConversation(false)
     onActiveTaskChange(taskId)
+    setMobilePanel('workspace')
+  }
+
+  const handleNewConversation = () => {
+    setIsStartingNewConversation(true)
+    onActiveTaskChange(null)
+    onNewConversation?.()
     setMobilePanel('workspace')
   }
 
@@ -89,10 +109,10 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: Age
 
       <div data-agent-desktop-layout className="hidden h-[calc(100vh-13rem)] min-h-[36rem] grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)_minmax(18rem,22rem)] gap-4 2xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)_minmax(19rem,23rem)] xl:grid">
         <div className="min-h-0 overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950">
-          <AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} />
+          <AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} onNewConversation={onNewConversation ? handleNewConversation : undefined} />
         </div>
         <div className="min-h-0 overflow-hidden pb-36">
-          <AgentMainWorkspace task={activeTask} />
+          <AgentMainWorkspace task={activeTask} conversationTasks={activeConversationTasks} />
         </div>
         <div className="min-h-0 overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950">
           <AgentTemplateRail />
@@ -102,11 +122,11 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange }: Age
       <div className="xl:hidden">
         <div data-agent-mobile-panel="history" className={mobilePanel === 'history' ? 'block' : 'hidden'}>
           <div className="h-[calc(100vh-15rem)] overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950">
-            <AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} />
+            <AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} onNewConversation={onNewConversation ? handleNewConversation : undefined} />
           </div>
         </div>
         <div data-agent-mobile-panel="workspace" className={mobilePanel === 'workspace' ? 'block pb-48' : 'hidden'}>
-          <AgentMainWorkspace task={activeTask} />
+          <AgentMainWorkspace task={activeTask} conversationTasks={activeConversationTasks} />
         </div>
         <div data-agent-mobile-panel="templates" className={mobilePanel === 'templates' ? 'block' : 'hidden'}>
           <div className="h-[calc(100vh-15rem)] overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950">

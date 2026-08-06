@@ -175,7 +175,13 @@ export interface TaskRecord {
   /** 是否收藏 */
   isFavorite?: boolean
   /** 任务入口。旧任务未设置时按 gallery 处理。 */
-  origin?: 'gallery' | 'restricted-agent' | 'openshop'
+  origin?: 'gallery' | 'agent' | 'restricted-agent' | 'openshop'
+  /** 默认 Agent 对话的本地会话标识。旧记录未设置时按单独会话兼容。 */
+  agentConversationId?: string
+  /** 默认 Agent 对话中的轮次，从 1 开始。 */
+  agentTurn?: number
+  /** 默认 Agent 返回的最终文本，用于刷新后恢复会话摘要与上下文。 */
+  agentAssistantText?: string
   /** OpenShop 编辑结果对应的源任务 ID。 */
   sourceTaskId?: string
   /** 受限 Agent 服务端计划 ID。 */

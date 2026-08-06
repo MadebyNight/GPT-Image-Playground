@@ -15,6 +15,8 @@ export interface CallApiOptions {
   params: TaskParams
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
+  /** 仅默认 Agent 使用的有限文本上下文。 */
+  agentConversationContext?: string | null
   maskDataUrl?: string
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
@@ -31,6 +33,8 @@ export interface CallApiResult {
   revisedPrompts?: Array<string | undefined>
   /** API 返回的原始图片 HTTP URL（非 base64 时记录） */
   rawImageUrls?: string[]
+  /** Agent Responses API 返回的最终文本，仅 Agent 任务会持久化使用。 */
+  assistantText?: string
 }
 
 export function isHttpUrl(value: unknown): value is string {

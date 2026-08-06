@@ -1,5 +1,6 @@
 import type { ApiProfile, ResponsesApiResponse, TaskParams } from '../types'
 import { submitTask, useStore } from '../store'
+import { buildAgentConversationContext, createAgentConversationId, getConversationTasks } from './agentConversation'
 import { getActiveApiProfile } from './apiProfiles'
 import { buildOpenAIRequestUrl, createRequestHeaders, createResponsesImageTool, parseResponsesImageResults } from './openaiCompatibleImageApi'
 import { readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
@@ -22,6 +23,8 @@ export interface AgentGenerationRequest {
   params: TaskParams
   stream: boolean
   imageCount: number
+  /** 为空时开始一段新会话。 */
+  conversationId?: string | null
 }
 
 export type AgentToolStatus = 'queued' | 'in_progress' | 'generating' | 'completed'
@@ -31,7 +34,7 @@ export type AgentProgressEvent =
   | { type: 'assistant_delta'; taskId?: string; text: string }
   | { type: 'tool_status'; taskId?: string; status: AgentToolStatus; message: string }
   | { type: 'partial_image'; taskId?: string; image: string; index?: number }
-  | { type: 'done'; taskId?: string; imageCount: number; revisedPrompts?: Array<string | undefined> }
+  | { type: 'done'; taskId?: string; imageCount: number; revisedPrompts?: Array<string | undefined>; assistantText?: string }
   | { type: 'error'; taskId?: string; message: string }
 
 export interface AgentExecutor {
@@ -54,14 +57,17 @@ function getAgentImageCount(value: number): number {
   return Math.min(4, Math.max(1, Math.round(value || 1)))
 }
 
-function createAgentResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
-  if (!inputImageDataUrls.length) return prompt
+function createAgentResponsesInput(prompt: string, inputImageDataUrls: string[], conversationContext?: string | null): unknown {
+  const requestText = conversationContext?.trim()
+    ? `${conversationContext.trim()}\n\n本轮请求：\n${prompt}`
+    : prompt
+  if (!inputImageDataUrls.length) return requestText
 
   return [
     {
       role: 'user',
       content: [
-        { type: 'input_text', text: prompt },
+        { type: 'input_text', text: requestText },
         ...inputImageDataUrls.map((dataUrl) => ({
           type: 'input_image',
           image_url: dataUrl,
@@ -81,6 +87,27 @@ function getSseDataLines(chunk: string): string[] {
 
 function getEventTextDelta(event: Record<string, unknown>): string {
   return typeof event.delta === 'string' ? event.delta : ''
+}
+
+function getResponsesOutputText(payload: ResponsesApiResponse): string | undefined {
+  const texts: string[] = []
+
+  for (const output of payload.output ?? []) {
+    const item = output as unknown as Record<string, unknown>
+    if (typeof item.text === 'string' && item.text.trim()) texts.push(item.text)
+
+    if (!Array.isArray(item.content)) continue
+    for (const content of item.content) {
+      if (!content || typeof content !== 'object') continue
+      const contentItem = content as Record<string, unknown>
+      if (contentItem.type === 'output_text' && typeof contentItem.text === 'string' && contentItem.text.trim()) {
+        texts.push(contentItem.text)
+      }
+    }
+  }
+
+  const result = texts.join('\n').trim()
+  return result || undefined
 }
 
 function getEventPartialImage(event: Record<string, unknown>): string | null {
@@ -121,6 +148,7 @@ async function readResponsesStream(
   const decoder = new TextDecoder()
   let buffer = ''
   let completedPayload: ResponsesApiResponse | null = null
+  let assistantText = ''
   const handleData = (data: string) => {
     if (data === '[DONE]') return
     let event: Record<string, unknown>
@@ -133,7 +161,10 @@ async function readResponsesStream(
     const eventType = typeof event.type === 'string' ? event.type : ''
     if (eventType === 'response.output_text.delta') {
       const text = getEventTextDelta(event)
-      if (text) emitAgentProgress({ type: 'assistant_delta', taskId, text })
+      if (text) {
+        assistantText += text
+        emitAgentProgress({ type: 'assistant_delta', taskId, text })
+      }
     }
 
     const status = getImageGenerationStatus(eventType)
@@ -177,11 +208,13 @@ async function readResponsesStream(
 
   if (!completedPayload) throw new Error('流式响应结束但没有返回完整结果')
   const imageResults = parseResponsesImageResults(completedPayload, fallbackMime)
+  const finalAssistantText = assistantText.trim() || getResponsesOutputText(completedPayload)
   return {
     images: imageResults.map((result) => result.image),
     actualParams: mergeActualParams(imageResults[0]?.actualParams ?? {}),
     actualParamsList: imageResults.map((result) => mergeActualParams(result.actualParams ?? {})),
     revisedPrompts: imageResults.map((result) => result.revisedPrompt),
+    ...(finalAssistantText ? { assistantText: finalAssistantText } : {}),
   }
 }
 
@@ -221,7 +254,7 @@ async function callAgentResponsesImageApiSingle(
 
     const body = {
       model: profile.model,
-      input: createAgentResponsesInput(prompt, inputImageDataUrls),
+      input: createAgentResponsesInput(prompt, inputImageDataUrls, opts.agentConversationContext),
       tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
       tool_choice: 'required',
       ...(stream ? { stream: true } : {}),
@@ -247,12 +280,14 @@ async function callAgentResponsesImageApiSingle(
     emitAgentProgress({ type: 'tool_status', taskId, status: 'in_progress', message: getToolStatusMessage('in_progress', index, total) })
     const payload = await response.json() as ResponsesApiResponse
     const imageResults = parseResponsesImageResults(payload, mime)
+    const assistantText = getResponsesOutputText(payload)
     emitAgentProgress({ type: 'tool_status', taskId, status: 'completed', message: getToolStatusMessage('completed', index, total) })
     return {
       images: imageResults.map((result) => result.image),
       actualParams: mergeActualParams(imageResults[0]?.actualParams ?? {}),
       actualParamsList: imageResults.map((result) => mergeActualParams(result.actualParams ?? {})),
       revisedPrompts: imageResults.map((result) => result.revisedPrompt),
+      ...(assistantText ? { assistantText } : {}),
     }
   } finally {
     clearTimeout(timeoutId)
@@ -281,6 +316,10 @@ export async function callAgentResponsesImageApi(
   const revisedPrompts = results.flatMap((result) =>
     result.revisedPrompts?.length ? result.revisedPrompts : result.images.map(() => undefined),
   )
+  const assistantTexts = results
+    .map((result) => result.assistantText?.trim())
+    .filter((text): text is string => Boolean(text))
+  const assistantText = assistantTexts[assistantTexts.length - 1]
   const actualParams = mergeActualParams(results[0]?.actualParams ?? {}, { n: images.length })
 
   emitAgentProgress({
@@ -288,9 +327,10 @@ export async function callAgentResponsesImageApi(
     taskId: options.taskId,
     imageCount: images.length,
     revisedPrompts,
+    assistantText,
   })
 
-  return { images, actualParams, actualParamsList, revisedPrompts }
+  return { images, actualParams, actualParamsList, revisedPrompts, ...(assistantText ? { assistantText } : {}) }
 }
 
 export const storeBackedAgentExecutor: AgentExecutor = {
@@ -310,9 +350,14 @@ export const storeBackedAgentExecutor: AgentExecutor = {
     state.setPrompt(request.prompt)
     state.setParams({ ...request.params, n: imageCount })
 
+    const conversationId = request.conversationId?.trim() || createAgentConversationId()
+    const existingTasks = state.tasks ?? []
+    const conversationContext = buildAgentConversationContext(existingTasks, conversationId)
+    const turn = getConversationTasks(existingTasks, conversationId).length + 1
+
     let taskId: string | undefined
     const result = await submitTask({
-      callApi: (opts) => callAgentResponsesImageApi(opts, {
+      callApi: (opts) => callAgentResponsesImageApi({ ...opts, agentConversationContext: conversationContext }, {
         stream: request.stream,
         imageCount,
         taskId,
@@ -329,6 +374,11 @@ export const storeBackedAgentExecutor: AgentExecutor = {
           imageCount,
           stream: request.stream,
         })
+      },
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: conversationId,
+        agentTurn: turn,
       },
     })
     return result

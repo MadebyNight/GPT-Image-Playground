@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const runtimeConfigMock = vi.hoisted(() => ({ enabled: false, agentOnly: false }))
 
 vi.mock('./store', () => {
-  const state = { setSettings: vi.fn() }
+  const state = { setSettings: vi.fn(), tasks: [] }
   return {
     initStore: vi.fn(),
     ensureImageCached: vi.fn(),

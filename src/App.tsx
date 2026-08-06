@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ensureImageCached, initStore, saveOpenShopEdit, useStore } from './store'
+import { getAgentConversationId } from './lib/agentConversation'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { getOpenShopRoute, type OpenShopRoute } from './lib/openshopRoute'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
@@ -26,6 +27,7 @@ function getCurrentOpenShopRoute(): OpenShopRoute | null {
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
+  const tasks = useStore((s) => s.tasks)
   const recoverRestrictedAgent = useRestrictedAgentStore((s) => s.recover)
   const restrictedAgentEnabled = isRestrictedAgentEnabled()
   const restrictedAgentOnly = restrictedAgentEnabled && isRestrictedAgentOnly()
@@ -35,6 +37,14 @@ export default function App() {
   const [openShopSource, setOpenShopSource] = useState<string | undefined>()
   const [openShopSourceError, setOpenShopSourceError] = useState<string | undefined>()
   useDockerApiUrlMigrationNotice()
+
+  const activeAgentTask = useMemo(
+    () => tasks.find((task) => task.id === activeAgentTaskId) ?? null,
+    [activeAgentTaskId, tasks],
+  )
+  const activeAgentConversationId = activeAgentTask?.origin === 'agent'
+    ? getAgentConversationId(activeAgentTask)
+    : null
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -181,6 +191,7 @@ export default function App() {
               <AgentWorkspace
                 activeTaskId={activeAgentTaskId}
                 onActiveTaskChange={setActiveAgentTaskId}
+                onNewConversation={() => setActiveAgentTaskId(null)}
               />
             </div>
           )}
@@ -189,6 +200,7 @@ export default function App() {
       <InputBar
         layout={workspaceMode === 'agent' ? 'agent' : 'default'}
         onTaskSubmitted={workspaceMode === 'agent' ? setActiveAgentTaskId : undefined}
+        agentConversationId={workspaceMode === 'agent' ? activeAgentConversationId : null}
       />
       <DetailModal />
       <Lightbox />

@@ -8,6 +8,7 @@ import TaskDetailContent from './TaskDetailContent'
 
 interface AgentMainWorkspaceProps {
   task: TaskRecord | null
+  conversationTasks?: TaskRecord[]
 }
 
 const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
