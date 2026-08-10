@@ -2,11 +2,16 @@ import { create } from 'zustand'
 import { putTask, storeImage } from './lib/db'
 import {
   cancelRestrictedAgentExecution,
+  computeRestrictedAgentConfirmationHash,
   createRestrictedAgentPlan,
+  decodeRestrictedAgentAssetBindings,
+  decodeRestrictedAgentPlan,
   executeRestrictedAgentPlan,
   getRestrictedAgentAsset,
   getRestrictedAgentExecution,
   subscribeRestrictedAgentExecution,
+  getRestrictedAgentPlanOperation,
+  type RestrictedAgentPlanRequest,
 } from './lib/restrictedAgentApi'
 import {
   clearComposerDraft,
@@ -18,6 +23,7 @@ import {
 import { isRestrictedAgentEnabled } from './lib/serverApiConfig'
 import type {
   RestrictedAgentExecution,
+  RestrictedAgentAssetBinding,
   RestrictedAgentPlan,
   TaskRecord,
 } from './types'
@@ -31,14 +37,16 @@ export type AgentFlowPhase =
   | 'completed'
   | 'failed'
   | 'expired'
+  | 'stale'
 
-interface PersistedAgentFlow {
+export interface PersistedAgentFlow {
   phase: AgentFlowPhase
   plan: RestrictedAgentPlan | null
   execution: RestrictedAgentExecution | null
   taskId: string | null
   error: string | null
   composerSnapshotVersion: number | null
+  assetBindings: RestrictedAgentAssetBinding[]
 }
 
 interface RestrictedAgentState extends PersistedAgentFlow {
@@ -57,31 +65,61 @@ const executionEventStops = new Map<string, () => void>()
 const finalizingExecutions = new Set<string>()
 const taskCreationPromises = new Map<string, Promise<string>>()
 
-function readPersistedState(): PersistedAgentFlow {
-  const fallback: PersistedAgentFlow = {
+function fallbackPersistedState(): PersistedAgentFlow {
+  return {
     phase: 'idle',
     plan: null,
     execution: null,
     taskId: null,
     error: null,
     composerSnapshotVersion: null,
+    assetBindings: [],
   }
-  if (typeof window === 'undefined') return fallback
+}
+
+export function decodePersistedAgentFlow(value: unknown, now = Date.now()): PersistedAgentFlow {
+  const fallback = fallbackPersistedState()
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<PersistedAgentFlow> | null
-    if (!parsed || typeof parsed !== 'object') return fallback
-    const plan = parsed.plan ?? null
-    const expired = Boolean(plan?.expiresAt && Date.parse(plan.expiresAt) <= Date.now())
+    const parsed = value as Partial<PersistedAgentFlow> | null
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback
+    const plan = parsed.plan ? decodeRestrictedAgentPlan(parsed.plan) : null
+    const expired = Boolean(plan?.expiresAt && Date.parse(plan.expiresAt) <= now)
+    const persistedPhase = parsed.phase ?? 'idle'
+    const needsConfirmationBindings = plan?.schemaVersion === 2
+      && ['awaiting_confirmation', 'confirming', 'stale'].includes(persistedPhase)
+    let assetBindings: RestrictedAgentAssetBinding[] = []
+    let bindingError: string | null = null
+    if (needsConfirmationBindings) {
+      try {
+        assetBindings = decodeRestrictedAgentAssetBindings(plan, parsed.assetBindings)
+      } catch (error) {
+        bindingError = error instanceof Error ? error.message : String(error)
+      }
+    } else if (Array.isArray(parsed.assetBindings)) {
+      assetBindings = parsed.assetBindings
+    }
     return {
-      phase: expired && parsed.phase === 'awaiting_confirmation' ? 'expired' : parsed.phase ?? 'idle',
+      phase: expired && persistedPhase === 'awaiting_confirmation'
+        ? 'expired'
+        : bindingError ? 'stale' : persistedPhase,
       plan,
       execution: parsed.execution ?? null,
       taskId: parsed.taskId ?? null,
-      error: parsed.error ?? null,
+      error: bindingError ? `计划输入 binding 已失效：${bindingError}` : parsed.error ?? null,
       composerSnapshotVersion: typeof parsed.composerSnapshotVersion === 'number' ? parsed.composerSnapshotVersion : null,
+      assetBindings,
     }
   } catch {
     return fallback
+  }
+}
+
+export function readPersistedState(): PersistedAgentFlow {
+  if (typeof window === 'undefined') return fallbackPersistedState()
+  try {
+    return decodePersistedAgentFlow(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null'))
+  } catch {
+    return fallbackPersistedState()
   }
 }
 
@@ -94,6 +132,7 @@ function persistState(state: RestrictedAgentState) {
     taskId: state.taskId,
     error: state.error,
     composerSnapshotVersion: state.composerSnapshotVersion,
+    assetBindings: state.assetBindings,
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted))
 }
@@ -117,6 +156,45 @@ function stopExecutionWatch(executionId: string) {
   executionPollTimers.delete(executionId)
   executionEventStops.get(executionId)?.()
   executionEventStops.delete(executionId)
+}
+
+function getSourceTaskId(browserImageId: string) {
+  return useStore.getState().tasks.find((task) => task.outputImages.includes(browserImageId))?.id ?? null
+}
+
+function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot): RestrictedAgentPlanRequest {
+  const request = draftSnapshot.prompt.trim()
+  const maskTargetId = draftSnapshot.maskDraft?.targetImageId ?? null
+  const inputs = draftSnapshot.inputImages.map((image) => ({
+    role: image.id === maskTargetId ? 'mask_target' as const : 'reference' as const,
+    browserImageId: image.id,
+    sourceTaskId: getSourceTaskId(image.id),
+    dataUrl: image.dataUrl,
+  }))
+  if (maskTargetId && !inputs.some((input) => input.browserImageId === maskTargetId)) {
+    throw new Error('遮罩主图已不存在，请重新选择')
+  }
+  return {
+    request,
+    size: draftSnapshot.params.size,
+    quality: draftSnapshot.params.quality,
+    outputFormat: draftSnapshot.params.output_format,
+    outputCompression: draftSnapshot.params.output_compression,
+    moderation: draftSnapshot.params.moderation,
+    imageCount: Math.min(4, Math.max(1, Math.round(draftSnapshot.params.n))),
+    inputs,
+    mask: draftSnapshot.maskDraft
+      ? {
+          targetBrowserImageId: draftSnapshot.maskDraft.targetImageId,
+          dataUrl: draftSnapshot.maskDraft.maskDataUrl,
+        }
+      : undefined,
+    temporaryProfile: {
+      id: draftSnapshot.reusedTaskApiProfileId,
+      name: draftSnapshot.reusedTaskApiProfileName,
+      missing: draftSnapshot.reusedTaskApiProfileMissing,
+    },
+  }
 }
 
 async function materializePlanInputs(plan: RestrictedAgentPlan) {
@@ -156,6 +234,11 @@ async function createTaskForExecutionInternal(plan: RestrictedAgentPlan, executi
   const taskId = `agent-${execution.id}`
   const existing = useStore.getState().tasks.find((task) => task.agentExecutionId === execution.id || task.id === taskId)
   if (existing) return existing.id
+  const operation = getRestrictedAgentPlanOperation(plan)
+  if (operation.type === 'openshop.edit') {
+    throw new Error('OpenShop operation 尚未接入 Gateway Execution；本阶段不会创建执行任务')
+  }
+  const generation = operation.generation
 
   let inputs: Awaited<ReturnType<typeof materializePlanInputs>> = {
     inputImageIds: [],
@@ -170,14 +253,14 @@ async function createTaskForExecutionInternal(plan: RestrictedAgentPlan, executi
 
   const task: TaskRecord = {
     id: taskId,
-    prompt: plan.generation.exactPrompt,
+    prompt: generation.exactPrompt,
     params: {
-      size: plan.generation.size,
-      quality: plan.generation.quality,
-      output_format: plan.generation.outputFormat,
-      output_compression: plan.generation.outputCompression,
+      size: generation.size,
+      quality: generation.quality,
+      output_format: generation.outputFormat,
+      output_compression: generation.outputCompression,
       moderation: 'auto',
-      n: plan.generation.imageCount,
+      n: generation.imageCount,
     },
     apiProvider: 'restricted-agent',
     apiProfileName: '受限 Agent Gateway',
@@ -338,27 +421,26 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       taskId: null,
       error: null,
       composerSnapshotVersion: draftSnapshot.composerVersion,
+      assetBindings: [],
     })
     try {
-      const maskTarget = draftSnapshot.maskDraft
-        ? draftSnapshot.inputImages.find((image) => image.id === draftSnapshot.maskDraft?.targetImageId)
-        : undefined
-      if (draftSnapshot.maskDraft && !maskTarget) throw new Error('遮罩主图已不存在，请重新选择')
-
-      const plan = await createRestrictedAgentPlan({
-        request,
-        size: draftSnapshot.params.size,
-        quality: draftSnapshot.params.quality,
-        outputFormat: draftSnapshot.params.output_format,
-        outputCompression: draftSnapshot.params.output_compression,
-        imageCount: Math.min(4, Math.max(1, Math.round(draftSnapshot.params.n))),
-        references: draftSnapshot.inputImages
-          .filter((image) => image.id !== maskTarget?.id)
-          .map((image) => ({ dataUrl: image.dataUrl })),
-        maskTarget: maskTarget ? { dataUrl: maskTarget.dataUrl } : undefined,
-        mask: draftSnapshot.maskDraft ? { dataUrl: draftSnapshot.maskDraft.maskDataUrl } : undefined,
+      const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot))
+      const currentDraft = getComposerDraftSnapshot('tool')
+      const currentHash = await computeRestrictedAgentConfirmationHash(
+        creation.plan,
+        creation.assetBindings,
+        createPlanRequestFromDraft(currentDraft),
+      )
+      const fresh = creation.plan.schemaVersion !== 2 || currentHash === creation.plan.composerSnapshotHash
+      set({
+        phase: fresh ? 'awaiting_confirmation' : 'stale',
+        plan: creation.plan,
+        assetBindings: creation.assetBindings,
+        execution: null,
+        taskId: null,
+        error: fresh ? null : '输入已在规划期间变化，旧计划不可确认',
       })
-      set({ phase: 'awaiting_confirmation', plan, execution: null, taskId: null, error: null })
+      const plan = creation.plan
       return plan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -369,16 +451,36 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   },
 
   async confirmAndExecute() {
-    if (get().phase === 'confirming' || get().phase === 'executing') return get().taskId
-    const { plan } = get()
+    const current = get()
+    if (current.phase === 'confirming' || current.phase === 'executing') return current.taskId
+    if (current.phase !== 'awaiting_confirmation') return null
+    const { plan, assetBindings } = current
     if (!plan) return null
     if (Date.parse(plan.expiresAt) <= Date.now()) {
       set({ phase: 'expired', error: '计划已过期，请重新生成计划' })
       return null
     }
+    const operation = getRestrictedAgentPlanOperation(plan)
+    if (operation.type === 'openshop.edit') {
+      set({ error: 'OpenShop 计划将在下一阶段接入浏览器执行，本阶段不可确认' })
+      return null
+    }
     set({ phase: 'confirming', error: null })
     try {
-      const execution = await executeRestrictedAgentPlan(plan)
+      let composerSnapshotHash: string | null = null
+      if (plan.schemaVersion === 2) {
+        const currentDraft = getComposerDraftSnapshot('tool')
+        composerSnapshotHash = await computeRestrictedAgentConfirmationHash(
+          plan,
+          assetBindings,
+          createPlanRequestFromDraft(currentDraft),
+        )
+        if (composerSnapshotHash !== plan.composerSnapshotHash) {
+          set({ phase: 'stale', error: 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认' })
+          return null
+        }
+      }
+      const execution = await executeRestrictedAgentPlan(plan, composerSnapshotHash)
       set({
         phase: isTerminalExecution(execution) ? (execution.status === 'completed' ? 'completed' : 'failed') : 'executing',
         execution,
@@ -386,7 +488,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       })
       if (!isTerminalExecution(execution)) watchExecution(execution.id, null)
       const taskId = await createTaskForExecution(plan, execution)
-      set({ taskId, composerSnapshotVersion: null })
+      set({ taskId, composerSnapshotVersion: null, assetBindings: [] })
       const latestExecution = get().execution?.id === execution.id ? get().execution! : execution
       await applyExecution(latestExecution, taskId)
       if (!isTerminalExecution(latestExecution)) watchExecution(latestExecution.id, taskId)
@@ -407,7 +509,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   },
 
   returnToEditing() {
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null })
+    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null, assetBindings: [] })
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-bar] [contenteditable="true"]')?.focus())
   },
 
@@ -444,8 +546,52 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   reset() {
     const executionId = get().execution?.id
     if (executionId) stopExecutionWatch(executionId)
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null })
+    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null, assetBindings: [] })
   },
 }))
 
 useRestrictedAgentStore.subscribe(persistState)
+
+let freshnessRevision = 0
+let lastToolComposerVersion = getComposerDraftSnapshot('tool').composerVersion
+
+async function refreshPlanFreshness() {
+  const revision = ++freshnessRevision
+  const flow = useRestrictedAgentStore.getState()
+  if ((flow.phase !== 'awaiting_confirmation' && flow.phase !== 'stale')
+    || !flow.plan
+    || flow.plan.schemaVersion !== 2) return
+  if (Date.parse(flow.plan.expiresAt) <= Date.now()) {
+    useRestrictedAgentStore.setState({ phase: 'expired', error: '计划已过期，请重新生成计划' })
+    return
+  }
+  try {
+    const draft = getComposerDraftSnapshot('tool')
+    const currentHash = await computeRestrictedAgentConfirmationHash(
+      flow.plan,
+      flow.assetBindings,
+      createPlanRequestFromDraft(draft),
+    )
+    const latest = useRestrictedAgentStore.getState()
+    if (revision !== freshnessRevision || latest.plan?.id !== flow.plan.id
+      || (latest.phase !== 'awaiting_confirmation' && latest.phase !== 'stale')) return
+    const fresh = currentHash === flow.plan.composerSnapshotHash
+    useRestrictedAgentStore.setState({
+      phase: fresh ? 'awaiting_confirmation' : 'stale',
+      error: fresh ? null : 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认',
+    })
+  } catch (error) {
+    if (revision !== freshnessRevision) return
+    useRestrictedAgentStore.setState({
+      phase: 'stale',
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+useStore.subscribe(() => {
+  const currentVersion = getComposerDraftSnapshot('tool').composerVersion
+  if (currentVersion === lastToolComposerVersion) return
+  lastToolComposerVersion = currentVersion
+  void refreshPlanFreshness()
+})

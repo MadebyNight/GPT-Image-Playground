@@ -37,6 +37,7 @@ export class AssetStore {
       if (fileStat.size < 1 || fileStat.size > this.config.maxFileBytes) {
         throw new AppError(413, 'file_too_large', `单个图片不得超过 ${this.config.maxFileBytes} 字节`);
       }
+      const sourceBytes = await readFile(temporaryPath);
 
       const image = sharp(temporaryPath, { limitInputPixels: this.config.maxImagePixels, animated: false, failOn: 'error' });
       const metadata = await image.metadata();
@@ -61,6 +62,7 @@ export class AssetStore {
         role,
         mimeType: 'image/png',
         sha256: createHash('sha256').update(normalized).digest('hex'),
+        sourceSha256: createHash('sha256').update(sourceBytes).digest('hex'),
         storagePath: normalizedPath,
         byteSize: normalized.byteLength,
         width: outputInfo.width,

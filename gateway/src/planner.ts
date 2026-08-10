@@ -8,6 +8,7 @@ export interface PlannerInput {
   request: string;
   preferences: PlanPreferences;
   assets: StoredAsset[];
+  allowOpenShop: boolean;
 }
 
 export interface Planner {
@@ -41,22 +42,25 @@ export class ResponsesPlanner implements Planner {
     const content: Array<Record<string, unknown>> = [{
       type: 'input_text',
       text: [
-        '你是一个受限图片生成计划器。只返回符合 schema 的计划，不执行任何工具。',
+        '你是一个受限图片工具计划器。只返回符合 schema 的单一 operation，不执行任何工具。',
         '精确描述最终图像，并把用户未明确说明但执行所必需的判断列入 assumptions。',
-        '有参考图且用户要求修改时 action=edit；纯参考风格也可 edit。每个 step 的 operation 必须等于 generation.action。',
+        '图片 API 只能选择 image.generate 或 image.edit，operation.type 必须与 generation.action 一致。',
+        input.allowOpenShop
+          ? '仅当用户明确要求裁剪、±90/±180 度旋转、水平/垂直翻转或扁平化，且只有一张普通参考图、没有 mask 时，才可选择 openshop.edit。inputIndex 是按输入顺序从 0 开始的索引；每次 1-5 条 command，只能使用 canvas.crop/canvas.rotate/canvas.flip/canvas.flatten、target=document，不得输出 objectId/layerId。canvas.crop 必须满足 width * height <= 80_000_000。'
+          : '当前客户端不支持 OpenShop；只能选择 image.generate 或 image.edit。',
         `用户需求：${input.request}`,
         `用户偏好：${JSON.stringify(input.preferences)}`,
       ].join('\n'),
     }];
 
-    for (const asset of input.assets) {
+    for (const [index, asset] of input.assets.entries()) {
       const bytes = await readFile(asset.storagePath);
       content.push({
         type: 'input_image',
         image_url: `data:${asset.mimeType};base64,${bytes.toString('base64')}`,
         detail: 'high',
       });
-      content.push({ type: 'input_text', text: `上一张图片的受控角色：${asset.role}；SHA-256：${asset.sha256}` });
+      content.push({ type: 'input_text', text: `输入索引：${index}；受控角色：${asset.role}；SHA-256：${asset.sha256}` });
     }
 
     const signal = AbortSignal.timeout(this.config.plannerTimeoutMs);
@@ -74,7 +78,7 @@ export class ResponsesPlanner implements Planner {
           text: {
             format: {
               type: 'json_schema',
-              name: 'restricted_image_plan',
+              name: 'single_tool_operation_plan',
               strict: true,
               schema: plannerJsonSchema,
             },

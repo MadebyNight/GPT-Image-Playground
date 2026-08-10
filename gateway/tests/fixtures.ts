@@ -3,26 +3,30 @@ import type { ImageExecutor } from '../src/executor.js'
 import type { Planner } from '../src/planner.js'
 
 export const RESTRICTED_PLAN_RESPONSE_FIXTURE = {
+  schemaVersion: 2,
   id: '<plan-id>',
   version: 1,
   status: 'awaiting_confirmation',
   expiresAt: '<expires-at>',
   originalRequest: '生成一张红色图片',
+  composerSnapshotHash: '<composer-snapshot-hash>',
   summary: '生成一张测试图片',
-  steps: [{ title: '生成图片', operation: 'generate' }],
-  generation: {
-    exactPrompt: '一张红色测试图片',
-    action: 'generate',
-    size: '1024x1024',
-    quality: 'medium',
-    outputFormat: 'png',
-    outputCompression: null,
-    imageCount: 1,
+  operation: {
+    type: 'image.generate',
+    generation: {
+      exactPrompt: '一张红色测试图片',
+      action: 'generate',
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      outputCompression: null,
+      imageCount: 1,
+    },
   },
   inputs: [],
   assumptions: [],
   warnings: [],
-  policyVersion: 'restricted-image-v1',
+  policyVersion: 'tool-operation-v2',
 } as const
 
 export const RESTRICTED_EXECUTION_RESPONSE_FIXTURE = {
@@ -65,6 +69,9 @@ export function normalizeRestrictedPlanResponse(value: unknown): unknown {
     ...plan,
     id: normalizeUuid(plan.id, '<plan-id>'),
     expiresAt: normalizeIsoTimestamp(plan.expiresAt, '<expires-at>'),
+    composerSnapshotHash: typeof plan.composerSnapshotHash === 'string' && /^[a-f0-9]{64}$/.test(plan.composerSnapshotHash)
+      ? '<composer-snapshot-hash>'
+      : plan.composerSnapshotHash,
   }
 }
 
@@ -97,20 +104,29 @@ export function normalizeRestrictedExecutionResponse(value: unknown, expectedPla
   }
 }
 
-export function createDeterministicPlannerFixture(action: 'generate' | 'edit' = 'generate'): Planner {
+export function createDeterministicPlannerFixture(action: 'generate' | 'edit' | 'openshop.edit' = 'generate'): Planner {
   return {
     createDraft: vi.fn(async () => ({
-      summary: '生成一张测试图片',
-      steps: [{ title: action === 'generate' ? '生成图片' : '编辑图片', operation: action }],
-      generation: {
-        exactPrompt: '一张红色测试图片',
-        action,
-        size: '1024x1024',
-        quality: 'medium',
-        outputFormat: 'png',
-        outputCompression: null,
-        imageCount: 1,
-      },
+      summary: action === 'openshop.edit' ? '旋转现有图片' : '生成一张测试图片',
+      operation: action === 'openshop.edit'
+        ? {
+            type: 'openshop.edit',
+            inputIndex: 0,
+            commands: [{ schemaVersion: 1, id: 'canvas.rotate', target: 'document', args: { degrees: 90 } }],
+            outputFormat: 'png',
+          }
+        : {
+            type: action === 'generate' ? 'image.generate' : 'image.edit',
+            generation: {
+              exactPrompt: '一张红色测试图片',
+              action,
+              size: '1024x1024',
+              quality: 'medium',
+              outputFormat: 'png',
+              outputCompression: null,
+              imageCount: 1,
+            },
+          },
       assumptions: [],
       warnings: [],
     })),

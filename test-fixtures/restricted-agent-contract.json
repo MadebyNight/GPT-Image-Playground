@@ -1,0 +1,100 @@
+{
+  "canonicalComposer": {
+    "manifest": {
+      "schemaVersion": 2,
+      "scope": "tool",
+      "prompt": "生成一张红色图片",
+      "inputs": [],
+      "mask": null,
+      "params": {
+        "size": "1024x1024",
+        "quality": "medium",
+        "outputFormat": "png",
+        "outputCompression": null,
+        "moderation": "auto",
+        "imageCount": 1
+      },
+      "temporaryProfile": {
+        "id": null,
+        "name": null,
+        "missing": false
+      }
+    },
+    "expectedHash": "a7230805750d5b6731760b0bb4ed54bb305692369f8bc0059e868e7bf3d06f31"
+  },
+  "validPlans": {
+    "tool": {
+      "schemaVersion": 2,
+      "composerSnapshotHash": "a7230805750d5b6731760b0bb4ed54bb305692369f8bc0059e868e7bf3d06f31",
+      "id": "11111111-1111-4111-8111-111111111111",
+      "version": 1,
+      "status": "awaiting_confirmation",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "originalRequest": "生成一张红色图片",
+      "summary": "生成一张测试图片",
+      "operation": {
+        "type": "image.generate",
+        "generation": {
+          "exactPrompt": "一张红色测试图片",
+          "action": "generate",
+          "size": "1024x1024",
+          "quality": "medium",
+          "outputFormat": "png",
+          "outputCompression": null,
+          "imageCount": 1
+        }
+      },
+      "inputs": [],
+      "assumptions": [],
+      "warnings": [],
+      "policyVersion": "tool-operation-v2"
+    },
+    "legacy": {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "version": 1,
+      "status": "awaiting_confirmation",
+      "expiresAt": "2099-01-01T00:00:00Z",
+      "originalRequest": "生成一张红色图片",
+      "summary": "生成一张测试图片",
+      "steps": [
+        {
+          "title": "生成图片",
+          "operation": "generate"
+        }
+      ],
+      "generation": {
+        "exactPrompt": "一张红色测试图片",
+        "action": "generate",
+        "size": "1024x1024",
+        "quality": "medium",
+        "outputFormat": "png",
+        "outputCompression": null,
+        "imageCount": 1
+      },
+      "inputs": [],
+      "assumptions": [],
+      "warnings": [],
+      "policyVersion": "restricted-image-v1"
+    }
+  },
+  "invalidPlanMutations": [
+    { "name": "empty id", "base": "tool", "path": ["id"], "value": "" },
+    { "name": "zero version", "base": "tool", "path": ["version"], "value": 0 },
+    { "name": "unknown status", "base": "tool", "path": ["status"], "value": "ready" },
+    { "name": "locale date", "base": "tool", "path": ["expiresAt"], "value": "8/10/2026, 12:00:00 PM" },
+    { "name": "empty summary", "base": "tool", "path": ["summary"], "value": "" },
+    { "name": "non-array inputs", "base": "tool", "path": ["inputs"], "value": {} },
+    { "name": "non-string assumptions", "base": "tool", "path": ["assumptions"], "value": [1] },
+    { "name": "empty policy version", "base": "tool", "path": ["policyVersion"], "value": "" },
+    { "name": "empty exact prompt", "base": "tool", "path": ["operation", "generation", "exactPrompt"], "value": "" },
+    { "name": "empty size", "base": "tool", "path": ["operation", "generation", "size"], "value": "" },
+    { "name": "invalid image count", "base": "tool", "path": ["operation", "generation", "imageCount"], "value": 0 },
+    { "name": "uppercase composer hash", "base": "tool", "path": ["composerSnapshotHash"], "value": "A7230805750D5B6731760B0BB4ED54BB305692369F8BC0059E868E7BF3D06F31" },
+    { "name": "empty mime type", "base": "tool", "path": ["inputs"], "value": [{ "assetId": "33333333-3333-4333-8333-333333333333", "role": "reference", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mimeType": "", "width": 1, "height": 1 }] },
+    { "name": "invalid asset uuid", "base": "tool", "path": ["inputs"], "value": [{ "assetId": "not-a-uuid", "role": "reference", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mimeType": "image/png", "width": 1, "height": 1 }] },
+    { "name": "mixed v2 generation", "base": "tool", "path": ["generation"], "value": { "exactPrompt": "一张红色测试图片", "action": "generate", "size": "1024x1024", "quality": "medium", "outputFormat": "png", "outputCompression": null, "imageCount": 1 } },
+    { "name": "legacy empty steps", "base": "legacy", "path": ["steps"], "value": [] },
+    { "name": "legacy empty step title", "base": "legacy", "path": ["steps", 0, "title"], "value": "" },
+    { "name": "legacy step mismatch", "base": "legacy", "path": ["steps", 0, "operation"], "value": "edit" }
+  ]
+}

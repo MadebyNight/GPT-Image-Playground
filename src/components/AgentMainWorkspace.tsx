@@ -27,11 +27,12 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const execution = useRestrictedAgentStore((state) => state.execution)
   const flowTaskId = useRestrictedAgentStore((state) => state.taskId)
   const error = useRestrictedAgentStore((state) => state.error)
+  const assetBindings = useRestrictedAgentStore((state) => state.assetBindings)
   const confirmAndExecute = useRestrictedAgentStore((state) => state.confirmAndExecute)
   const returnToEditing = useRestrictedAgentStore((state) => state.returnToEditing)
   const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
 
-  const showPlanningFlow = phase === 'planning' || phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || (phase === 'failed' && !execution)
+  const showPlanningFlow = phase === 'planning' || phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale' || (phase === 'failed' && !execution)
   const showExecutionFlow = Boolean(execution && (!task || task.id === flowTaskId))
   const requestText = plan?.originalRequest || task?.agentOriginalRequest || task?.prompt || ''
   const planForTask = useMemo(() => plan ?? task?.agentPlanSnapshot ?? null, [plan, task?.agentPlanSnapshot])
@@ -72,10 +73,12 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
           </div>
         )}
 
-        {plan && (phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired') && (
+        {plan && (phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale') && (
           <AgentPlanCard
             plan={plan}
+            assetBindings={assetBindings}
             confirming={phase === 'confirming'}
+            stale={phase === 'stale'}
             onConfirm={() => { void confirmAndExecute() }}
             onReturnToEditing={returnToEditing}
           />
@@ -84,6 +87,12 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
         {phase === 'expired' && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
             计划已过期。返回修改后重新生成计划，旧计划不会被执行。
+          </div>
+        )}
+
+        {phase === 'stale' && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+            输入已变化。返回修改后重新生成计划，旧计划不会被确认。
           </div>
         )}
 

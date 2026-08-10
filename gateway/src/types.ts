@@ -23,6 +23,7 @@ export const EXECUTION_STATUSES = [
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
 export type AssetRole = 'reference' | 'mask_target' | 'mask' | 'generated';
+export type PlanInputRole = Exclude<AssetRole, 'generated'>;
 
 export interface StoredAsset {
   id: string;
@@ -33,6 +34,8 @@ export interface StoredAsset {
   role: AssetRole;
   mimeType: string;
   sha256: string;
+  /** 上传文件在 Gateway 规范化前的原始字节 SHA-256，仅输入资产存在。 */
+  sourceSha256?: string;
   storagePath: string;
   byteSize: number;
   width: number;
@@ -43,7 +46,7 @@ export interface StoredAsset {
 
 export interface PlanInputView {
   assetId: string;
-  role: Exclude<AssetRole, 'generated'>;
+  role: PlanInputRole;
   sha256: string;
   mimeType: string;
   width: number;
@@ -65,20 +68,85 @@ export interface GenerationPlan {
   imageCount: number;
 }
 
-export interface RestrictedAgentPlanSnapshot {
+export interface OpenShopCropCommand {
+  schemaVersion: 1;
+  id: 'canvas.crop';
+  target: 'document';
+  args: { x: number; y: number; width: number; height: number };
+}
+
+export interface OpenShopRotateCommand {
+  schemaVersion: 1;
+  id: 'canvas.rotate';
+  target: 'document';
+  args: { degrees: 90 | -90 | 180 | -180 };
+}
+
+export interface OpenShopFlipCommand {
+  schemaVersion: 1;
+  id: 'canvas.flip';
+  target: 'document';
+  args: { axis: 'h' | 'v' };
+}
+
+export interface OpenShopFlattenCommand {
+  schemaVersion: 1;
+  id: 'canvas.flatten';
+  target: 'document';
+  args: Record<never, never>;
+}
+
+export type OpenShopCanvasCommand =
+  | OpenShopCropCommand
+  | OpenShopRotateCommand
+  | OpenShopFlipCommand
+  | OpenShopFlattenCommand;
+
+export type ImageToolOperation =
+  | { type: 'image.generate'; generation: GenerationPlan & { action: 'generate' } }
+  | { type: 'image.edit'; generation: GenerationPlan & { action: 'edit' } };
+
+export interface OpenShopEditOperation {
+  type: 'openshop.edit';
+  /** Gateway asset UUID。浏览器 IndexedDB ID 只存在于前端 binding，不进入计划。 */
+  inputAssetId: string;
+  commands: OpenShopCanvasCommand[];
+  outputFormat: 'png';
+}
+
+export type ToolOperation = ImageToolOperation | OpenShopEditOperation;
+
+interface RestrictedAgentPlanSnapshotBase {
   id: string;
   version: number;
   status: PlanStatus;
   expiresAt: string;
   originalRequest: string;
   summary: string;
-  steps: PlanStep[];
-  generation: GenerationPlan;
   inputs: PlanInputView[];
   assumptions: string[];
   warnings: string[];
   policyVersion: string;
 }
+
+export interface LegacyRestrictedAgentPlanSnapshot extends RestrictedAgentPlanSnapshotBase {
+  schemaVersion?: never;
+  composerSnapshotHash?: never;
+  operation?: never;
+  steps: PlanStep[];
+  generation: GenerationPlan;
+}
+
+export interface ToolAgentPlanSnapshot extends RestrictedAgentPlanSnapshotBase {
+  schemaVersion: 2;
+  composerSnapshotHash: string;
+  operation: ToolOperation;
+  steps?: never;
+  generation?: never;
+  actions?: never;
+}
+
+export type RestrictedAgentPlanSnapshot = LegacyRestrictedAgentPlanSnapshot | ToolAgentPlanSnapshot;
 
 export interface ExecutionView {
   id: string;
@@ -103,10 +171,47 @@ export interface ExecutionView {
 
 export interface PlannerDraft {
   summary: string;
-  steps: PlanStep[];
-  generation: GenerationPlan;
+  operation:
+    | ImageToolOperation
+    | {
+        type: 'openshop.edit';
+        inputIndex: number;
+        commands: OpenShopCanvasCommand[];
+        outputFormat: 'png';
+      };
   assumptions: string[];
   warnings: string[];
+}
+
+export interface ComposerSnapshotInput {
+  browserImageId: string;
+  contentSha256: string;
+  role: Exclude<PlanInputRole, 'mask'>;
+  ordinal: number;
+}
+
+export interface ComposerSnapshotManifest {
+  schemaVersion: 2;
+  scope: 'tool';
+  prompt: string;
+  inputs: ComposerSnapshotInput[];
+  mask: {
+    targetBrowserImageId: string;
+    contentSha256: string;
+  } | null;
+  params: {
+    size: string;
+    quality: GenerationPlan['quality'];
+    outputFormat: GenerationPlan['outputFormat'];
+    outputCompression: number | null;
+    moderation: 'auto' | 'low';
+    imageCount: number;
+  };
+  temporaryProfile: {
+    id: string | null;
+    name: string | null;
+    missing: boolean;
+  };
 }
 
 export interface PlanPreferences {

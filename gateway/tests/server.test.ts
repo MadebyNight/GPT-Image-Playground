@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,9 @@ import { loadConfig, type GatewayConfig } from '../src/config.js';
 import { GatewayDatabase } from '../src/db.js';
 import { ExecutionEvents } from '../src/events.js';
 import type { ImageExecutor } from '../src/executor.js';
-import type { Planner } from '../src/planner.js';
+import { decodeRestrictedAgentPlanSnapshot } from '../src/plan.js';
+import { hashComposerSnapshot, plannerJsonSchema } from '../src/policy.js';
+import { ResponsesPlanner, type Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
 import type { RestrictedAgentPlanSnapshot } from '../src/types.js';
 import {
@@ -20,6 +23,30 @@ import {
   normalizeRestrictedExecutionResponse,
   normalizeRestrictedPlanResponse,
 } from './fixtures.js';
+
+interface ContractFixture {
+  canonicalComposer: { manifest: Record<string, unknown>; expectedHash: string };
+  validPlans: { tool: Record<string, unknown>; legacy: Record<string, unknown> };
+  invalidPlanMutations: Array<{
+    name: string;
+    base: 'tool' | 'legacy';
+    path: Array<string | number>;
+    value: unknown;
+  }>;
+}
+
+const contractFixture = JSON.parse(readFileSync(
+  new URL('../../test-fixtures/restricted-agent-contract.json', import.meta.url),
+  'utf8',
+)) as ContractFixture;
+
+function applyInvalidPlanMutation(mutation: ContractFixture['invalidPlanMutations'][number]) {
+  const plan = structuredClone(contractFixture.validPlans[mutation.base]);
+  let target: Record<string | number, unknown> = plan;
+  for (const key of mutation.path.slice(0, -1)) target = target[key] as Record<string | number, unknown>;
+  target[mutation.path.at(-1)!] = structuredClone(mutation.value);
+  return plan;
+}
 
 const apps: FastifyInstance[] = [];
 const tempDirs: string[] = [];
@@ -76,6 +103,56 @@ function multipart(fields: Record<string, string>, files: Array<{ field: string;
   return { payload: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
+function composerSnapshot(options: {
+  request?: string;
+  inputs?: Array<{
+    browserImageId: string;
+    bytes: Buffer;
+    role?: 'reference' | 'mask_target';
+    ordinal?: number;
+  }>;
+  mask?: { bytes: Buffer; targetBrowserImageId: string };
+  params?: Partial<{
+    size: string;
+    quality: 'auto' | 'low' | 'medium' | 'high';
+    outputFormat: 'png' | 'jpeg' | 'webp';
+    outputCompression: number | null;
+    moderation: 'auto' | 'low';
+    imageCount: number;
+  }>;
+  overrides?: Record<string, unknown>;
+} = {}) {
+  const inputs = options.inputs ?? [];
+  return JSON.stringify({
+    schemaVersion: 2,
+    scope: 'tool',
+    prompt: options.request ?? '生成一张红色图片',
+    inputs: inputs.map((input, index) => ({
+      browserImageId: input.browserImageId,
+      contentSha256: createHash('sha256').update(input.bytes).digest('hex'),
+      role: input.role ?? 'reference',
+      ordinal: input.ordinal ?? index,
+    })),
+    mask: options.mask
+      ? {
+          targetBrowserImageId: options.mask.targetBrowserImageId,
+          contentSha256: createHash('sha256').update(options.mask.bytes).digest('hex'),
+        }
+      : null,
+    params: {
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      outputCompression: null,
+      moderation: 'auto',
+      imageCount: 1,
+      ...options.params,
+    },
+    temporaryProfile: { id: null, name: null, missing: false },
+    ...options.overrides,
+  });
+}
+
 async function setup(overrides: { config?: Partial<GatewayConfig>; planner?: Planner; executor?: ImageExecutor } = {}) {
   const config = await makeConfig(overrides.config);
   const executor = overrides.executor ?? fakeExecutor();
@@ -89,7 +166,26 @@ async function setup(overrides: { config?: Partial<GatewayConfig>; planner?: Pla
 }
 
 async function createPlan(context: Awaited<ReturnType<typeof setup>>, fields: Record<string, string> = { request: '生成一张红色图片' }) {
-  const form = multipart(fields);
+  const request = fields.request ?? '生成一张红色图片';
+  const form = multipart({
+    size: '1024x1024',
+    quality: 'medium',
+    outputFormat: 'png',
+    imageCount: '1',
+    ...fields,
+    composerSnapshot: fields.composerSnapshot ?? composerSnapshot({
+      request,
+      params: {
+        size: fields.size ?? '1024x1024',
+        quality: (fields.quality as 'auto' | 'low' | 'medium' | 'high' | undefined) ?? 'medium',
+        outputFormat: (fields.outputFormat as 'png' | 'jpeg' | 'webp' | undefined) ?? 'png',
+        outputCompression: fields.outputFormat === 'png' || !fields.outputFormat
+          ? null
+          : fields.outputCompression ? Number(fields.outputCompression) : 90,
+        imageCount: fields.imageCount ? Number(fields.imageCount) : 1,
+      },
+    }),
+  });
   return context.app.inject({
     method: 'POST', url: '/v1/plans', payload: form.payload,
     headers: { ...context.mutationHeaders, 'content-type': form.contentType },
@@ -165,7 +261,60 @@ describe('two phase gateway', () => {
     expect(text).not.toContain('planner-fixed');
     expect(text).not.toContain('image-fixed');
     expect(text).not.toContain('upstream.invalid');
+    expect(response.json().data.composerSnapshotHash).toBe('a7230805750d5b6731760b0bb4ed54bb305692369f8bc0059e868e7bf3d06f31');
+    expect(hashComposerSnapshot(contractFixture.canonicalComposer.manifest as never))
+      .toBe(contractFixture.canonicalComposer.expectedHash);
     expect(normalizeRestrictedPlanResponse(response.json().data)).toEqual(RESTRICTED_PLAN_RESPONSE_FIXTURE);
+  });
+
+  it('旧客户端仍读取原形 v1 generation 计划并可按旧确认语义执行', async () => {
+    const context = await setup();
+    const form = multipart({ request: '生成一张红色图片' });
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/plans', payload: form.payload,
+      headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+    });
+    expect(response.statusCode).toBe(201);
+    const legacy = response.json().data;
+    expect(legacy.schemaVersion).toBeUndefined();
+    expect(legacy.operation).toBeUndefined();
+    expect(legacy.composerSnapshotHash).toBeUndefined();
+    expect(legacy.generation.action).toBe('generate');
+    expect(legacy.steps).toEqual([{ title: '生成图片', operation: 'generate' }]);
+
+    const accepted = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${legacy.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+    });
+    expect(accepted.statusCode).toBe(202);
+    await waitForTerminal(context.app, accepted.json().data.id, context.cookie);
+  });
+
+  it('runtime decoder fail-closed 拒绝未知 schema、actions、混合字段与对象命令', async () => {
+    const context = await setup();
+    const plan = (await createPlan(context)).json().data;
+    for (const invalid of [
+      { ...plan, schemaVersion: 3 },
+      { ...plan, actions: [] },
+      { ...plan, generation: plan.operation.generation },
+      {
+        ...plan,
+        operation: {
+          type: 'openshop.edit', inputAssetId: '00000000-0000-4000-8000-000000000000', outputFormat: 'png',
+          commands: [{ schemaVersion: 1, id: 'canvas.flatten', target: 'document', args: { objectId: 'forbidden' } }],
+        },
+      },
+    ]) {
+      expect(() => decodeRestrictedAgentPlanSnapshot(invalid)).toThrowError(expect.objectContaining({ code: 'invalid_plan_snapshot' }));
+    }
+    expect(decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.tool))).toBeTruthy();
+    expect(decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.legacy))).toBeTruthy();
+    for (const mutation of contractFixture.invalidPlanMutations) {
+      expect(
+        () => decodeRestrictedAgentPlanSnapshot(applyInvalidPlanMutation(mutation)),
+        mutation.name,
+      ).toThrowError(expect.objectContaining({ code: 'invalid_plan_snapshot' }));
+    }
   });
 
   it('拒绝 model、tools、upstream 等未知客户端字段', async () => {
@@ -196,7 +345,17 @@ describe('two phase gateway', () => {
   it('上传图片按真实内容校验并绑定哈希', async () => {
     const planner = createDeterministicPlannerFixture('edit');
     const context = await setup({ planner });
-    const form = multipart({ request: '把图片改成蓝色' }, [{ field: 'reference', bytes: png }]);
+    const form = multipart({
+      request: '把图片改成蓝色',
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      imageCount: '1',
+      composerSnapshot: composerSnapshot({
+        request: '把图片改成蓝色',
+        inputs: [{ browserImageId: 'indexeddb-image-1', bytes: png }],
+      }),
+    }, [{ field: 'reference', bytes: png }]);
     const response = await context.app.inject({
       method: 'POST', url: '/v1/plans', payload: form.payload,
       headers: { ...context.mutationHeaders, 'content-type': form.contentType },
@@ -206,6 +365,152 @@ describe('two phase gateway', () => {
     expect(input.role).toBe('reference');
     expect(input.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(input.mimeType).toBe('image/png');
+  });
+
+  it('创建 OpenShop 单 operation，并只在本地 binding 中关联 Gateway 与 IndexedDB ID', async () => {
+    const context = await setup({ planner: createDeterministicPlannerFixture('openshop.edit') });
+    const form = multipart({
+      request: '顺时针旋转图片',
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      imageCount: '1',
+      composerSnapshot: composerSnapshot({
+        request: '顺时针旋转图片',
+        inputs: [{ browserImageId: 'indexeddb-source-image', bytes: png }],
+      }),
+    }, [{ field: 'reference', bytes: png }]);
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/plans', payload: form.payload,
+      headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const plan = response.json().data;
+    expect(plan).not.toHaveProperty('generation');
+    expect(plan).not.toHaveProperty('steps');
+    expect(plan).not.toHaveProperty('actions');
+    expect(plan.operation).toEqual({
+      type: 'openshop.edit',
+      inputAssetId: plan.inputs[0].assetId,
+      commands: [{ schemaVersion: 1, id: 'canvas.rotate', target: 'document', args: { degrees: 90 } }],
+      outputFormat: 'png',
+    });
+    expect(plan.operation).not.toHaveProperty('inputBrowserImageId');
+    expect(JSON.stringify(plan.operation)).not.toMatch(/objectId|layerId/);
+    expect(context.executor.execute).not.toHaveBeenCalled();
+  });
+
+  it('拒绝 OpenShop 缺少单一已有图片、非法命令和超过五条命令', async () => {
+    const missingInput = await setup({ planner: createDeterministicPlannerFixture('openshop.edit') });
+    const noInputResponse = await createPlan(missingInput, { request: '旋转图片' });
+    expect(noInputResponse.statusCode).toBe(400);
+    expect(noInputResponse.json().error.code).toBe('invalid_openshop_input');
+
+    const invalidCommandPlanner: Planner = {
+      createDraft: vi.fn(async () => ({
+        summary: '非法编辑',
+        operation: {
+          type: 'openshop.edit',
+          inputIndex: 0,
+          commands: [{ schemaVersion: 1, id: 'object.remove', target: 'document', args: { objectId: 'forbidden' } }],
+          outputFormat: 'png',
+        },
+        assumptions: [],
+        warnings: [],
+      })),
+    };
+    const invalidCommand = await setup({ planner: invalidCommandPlanner });
+    const invalidForm = multipart({
+      request: '删除对象',
+      size: '1024x1024', quality: 'medium', outputFormat: 'png', imageCount: '1',
+      composerSnapshot: composerSnapshot({ request: '删除对象', inputs: [{ browserImageId: 'source', bytes: png }] }),
+    }, [{ field: 'reference', bytes: png }]);
+    const invalidResponse = await invalidCommand.app.inject({
+      method: 'POST', url: '/v1/plans', payload: invalidForm.payload,
+      headers: { ...invalidCommand.mutationHeaders, 'content-type': invalidForm.contentType },
+    });
+    expect(invalidResponse.statusCode).toBe(502);
+    expect(invalidResponse.json().error.code).toBe('invalid_planner_output');
+
+    const tooManyPlanner: Planner = {
+      createDraft: vi.fn(async () => ({
+        summary: '过多命令',
+        operation: {
+          type: 'openshop.edit',
+          inputIndex: 0,
+          commands: Array.from({ length: 6 }, () => ({ schemaVersion: 1, id: 'canvas.flatten', target: 'document', args: {} })),
+          outputFormat: 'png',
+        },
+        assumptions: [],
+        warnings: [],
+      })),
+    };
+    const tooMany = await setup({ planner: tooManyPlanner });
+    const tooManyForm = multipart({
+      request: '扁平化',
+      size: '1024x1024', quality: 'medium', outputFormat: 'png', imageCount: '1',
+      composerSnapshot: composerSnapshot({ request: '扁平化', inputs: [{ browserImageId: 'source', bytes: png }] }),
+    }, [{ field: 'reference', bytes: png }]);
+    const tooManyResponse = await tooMany.app.inject({
+      method: 'POST', url: '/v1/plans', payload: tooManyForm.payload,
+      headers: { ...tooMany.mutationHeaders, 'content-type': tooManyForm.contentType },
+    });
+    expect(tooManyResponse.statusCode).toBe(502);
+  });
+
+  it('OpenShop crop 接受 8000 万像素边界并拒绝超限 Planner 输出', async () => {
+    const cropPlanner = (width: number, height: number): Planner => ({
+      createDraft: vi.fn(async () => ({
+        summary: '裁剪现有图片',
+        operation: {
+          type: 'openshop.edit', inputIndex: 0, outputFormat: 'png',
+          commands: [{ schemaVersion: 1, id: 'canvas.crop', target: 'document', args: { x: 0, y: 0, width, height } }],
+        },
+        assumptions: [], warnings: [],
+      })),
+    });
+    const createCrop = async (width: number, height: number) => {
+      const context = await setup({ planner: cropPlanner(width, height) });
+      const form = multipart({
+        request: '裁剪图片', size: '1024x1024', quality: 'medium', outputFormat: 'png', imageCount: '1',
+        composerSnapshot: composerSnapshot({ request: '裁剪图片', inputs: [{ browserImageId: 'source', bytes: png }] }),
+      }, [{ field: 'reference', bytes: png }]);
+      return context.app.inject({
+        method: 'POST', url: '/v1/plans', payload: form.payload,
+        headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+      });
+    };
+
+    const boundary = await createCrop(10_000, 8_000);
+    expect(boundary.statusCode).toBe(201);
+    expect(boundary.json().data.operation.commands[0].args).toMatchObject({ width: 10_000, height: 8_000 });
+
+    const overLimit = await createCrop(10_001, 8_000);
+    expect(overLimit.statusCode).toBe(502);
+    expect(overLimit.json().error.code).toBe('invalid_planner_output');
+  });
+
+  it('Planner schema 与 system prompt 同时明示 crop 8000 万像素约束', async () => {
+    expect(JSON.stringify(plannerJsonSchema)).toContain('width * height');
+    expect(JSON.stringify(plannerJsonSchema)).toContain('80_000_000');
+    const config = await makeConfig();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output_text: JSON.stringify({
+        summary: '生成图片',
+        operation: {
+          type: 'image.generate',
+          generation: {
+            exactPrompt: '生成图片', action: 'generate', size: '1024x1024', quality: 'medium',
+            outputFormat: 'png', outputCompression: null, imageCount: 1,
+          },
+        },
+        assumptions: [], warnings: [],
+      }),
+    }), { status: 200 }));
+    await new ResponsesPlanner(config).createDraft({ request: '裁剪图片', preferences: {}, assets: [], allowOpenShop: true });
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.input[0].content[0].text).toContain('width * height <= 80_000_000');
   });
 
   it('拒绝规范化后膨胀超过单文件限制的压缩图片并清理产物', async () => {
@@ -245,7 +550,7 @@ describe('two phase gateway', () => {
     const plan = planResponse.json().data;
     const request = () => context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     const [first, second] = await Promise.all([request(), request()]);
     expect([first.statusCode, second.statusCode].sort()).toEqual([200, 202]);
@@ -269,7 +574,7 @@ describe('two phase gateway', () => {
     const plan = (await createPlan(context, fields)).json().data;
     const started = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     const completed = await waitForTerminal(context.app, started.json().data.id, context.cookie);
     const asset = completed.outputAssets[0];
@@ -292,12 +597,24 @@ describe('two phase gateway', () => {
     const plan = (await createPlan(context)).json().data;
     const bodyResponse = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`, payload: { prompt: 'tampered' },
-      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'content-type': 'application/json' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash, 'content-type': 'application/json' },
     });
     expect(bodyResponse.statusCode).toBe(400);
+    const missingHashResponse = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+    });
+    expect(missingHashResponse.statusCode).toBe(428);
+    expect(missingHashResponse.json().error.code).toBe('composer_snapshot_hash_required');
+    const staleHashResponse = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': '0'.repeat(64) },
+    });
+    expect(staleHashResponse.statusCode).toBe(412);
+    expect(staleHashResponse.json().error.code).toBe('composer_snapshot_mismatch');
     const versionResponse = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"2"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"2"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     expect(versionResponse.statusCode).toBe(412);
     const otherCapabilities = await context.app.inject({ method: 'GET', url: '/v1/capabilities', headers: { host: 'app.internal' } });
@@ -308,17 +625,59 @@ describe('two phase gateway', () => {
     expect(crossSession.statusCode).toBe(404);
   });
 
+  it('OpenShop 计划确认先校验快照，再稳定拒绝浏览器 operation 且不消费执行额度', async () => {
+    const context = await setup({
+      config: { executeRatePerMinute: 1, imagesRatePerHour: 1 },
+      planner: createDeterministicPlannerFixture('openshop.edit'),
+    });
+    const form = multipart({
+      request: '顺时针旋转图片',
+      size: '1024x1024', quality: 'medium', outputFormat: 'png', imageCount: '1',
+      composerSnapshot: composerSnapshot({
+        request: '顺时针旋转图片',
+        inputs: [{ browserImageId: 'source', bytes: png }],
+      }),
+    }, [{ field: 'reference', bytes: png }]);
+    const planResponse = await context.app.inject({
+      method: 'POST', url: '/v1/plans', payload: form.payload,
+      headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+    });
+    const plan = planResponse.json().data;
+
+    const stale = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': '0'.repeat(64) },
+    });
+    expect(stale.statusCode).toBe(412);
+    expect(stale.json().error.code).toBe('composer_snapshot_mismatch');
+
+    const unsupported = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
+    });
+    expect(unsupported.statusCode).toBe(409);
+    expect(unsupported.json().error.code).toBe('client_operation_requires_browser');
+    expect(context.executor.execute).not.toHaveBeenCalled();
+
+    const repeated = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
+    });
+    expect(repeated.statusCode).toBe(409);
+    expect(repeated.json().error.code).toBe('client_operation_requires_browser');
+  });
+
   it('版本失败不消耗确认和图片速率额度', async () => {
     const context = await setup({ config: { executeRatePerMinute: 1, imagesRatePerHour: 1 } });
     const plan = (await createPlan(context)).json().data;
     const failed = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"2"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"2"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     expect(failed.statusCode).toBe(412);
     const accepted = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     expect(accepted.statusCode).toBe(202);
     await waitForTerminal(context.app, accepted.json().data.id, context.cookie);
@@ -333,7 +692,7 @@ describe('two phase gateway', () => {
     db.close();
     const response = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     expect([409, 410]).toContain(response.statusCode);
     expect(context.executor.execute).not.toHaveBeenCalled();
@@ -345,7 +704,7 @@ describe('two phase gateway', () => {
     const plan = (await createPlan(context)).json().data;
     const started = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
-      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+      headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     const id = started.json().data.id;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -371,6 +730,44 @@ describe('SSE event contract', () => {
     });
     expect(listener).toHaveBeenCalledWith('execution.started', expect.objectContaining({ status: 'executing' }));
     unsubscribe();
+  });
+});
+
+describe('plan audit metadata compatibility', () => {
+  it('image plan 同时保留 action 与 operation，OpenShop 仅记录 operation', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const legacy = decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.legacy));
+    const tool = decodeRestrictedAgentPlanSnapshot({
+      ...structuredClone(contractFixture.validPlans.tool),
+      id: '33333333-3333-4333-8333-333333333333',
+    });
+    const openShop = decodeRestrictedAgentPlanSnapshot({
+      ...structuredClone(contractFixture.validPlans.tool),
+      id: '44444444-4444-4444-8444-444444444444',
+      operation: {
+        type: 'openshop.edit',
+        inputAssetId: '55555555-5555-4555-8555-555555555555',
+        commands: [{ schemaVersion: 1, id: 'canvas.flatten', target: 'document', args: {} }],
+        outputFormat: 'png',
+      },
+      inputs: [{
+        assetId: '55555555-5555-4555-8555-555555555555', role: 'reference', sha256: 'a'.repeat(64),
+        mimeType: 'image/png', width: 1, height: 1,
+      }],
+    });
+    db.insertPlan(legacy, 'session', []);
+    db.insertPlan(tool, 'session', []);
+    db.insertPlan(openShop, 'session', []);
+    const rows = db.raw.prepare("SELECT entity_id, metadata_json FROM audit_events WHERE event_type = 'plan.created'")
+      .all() as Array<{ entity_id: string; metadata_json: string }>;
+    db.close();
+    const metadata = new Map(rows.map((row) => [row.entity_id, JSON.parse(row.metadata_json) as Record<string, unknown>]));
+
+    expect(metadata.get(legacy.id)).toMatchObject({ action: 'generate', operation: 'image.generate' });
+    expect(metadata.get(tool.id)).toMatchObject({ action: 'generate', operation: 'image.generate' });
+    expect(metadata.get(openShop.id)).toMatchObject({ operation: 'openshop.edit' });
+    expect(metadata.get(openShop.id)).not.toHaveProperty('action');
   });
 });
 

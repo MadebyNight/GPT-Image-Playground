@@ -1,3 +1,5 @@
+import type { OpenShopCanvasCommand } from './lib/openshopBridge'
+
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
@@ -250,19 +252,61 @@ export interface RestrictedAgentPlanInput {
   height: number
 }
 
-export interface RestrictedAgentPlan {
+interface RestrictedAgentPlanBase {
   id: string
   version: number
   status: RestrictedAgentPlanStatus
   expiresAt: string
   originalRequest: string
   summary: string
-  steps: RestrictedAgentPlanStep[]
-  generation: RestrictedAgentPlanGeneration
   inputs: RestrictedAgentPlanInput[]
   assumptions: string[]
   warnings: string[]
   policyVersion: string
+}
+
+export type RestrictedAgentToolOperation =
+  | {
+      type: 'image.generate'
+      generation: RestrictedAgentPlanGeneration & { action: 'generate' }
+    }
+  | {
+      type: 'image.edit'
+      generation: RestrictedAgentPlanGeneration & { action: 'edit' }
+    }
+  | {
+      type: 'openshop.edit'
+      /** Gateway asset UUID；禁止作为浏览器 IndexedDB key 使用。 */
+      inputAssetId: string
+      commands: OpenShopCanvasCommand[]
+      outputFormat: 'png'
+    }
+
+export interface LegacyRestrictedAgentPlan extends RestrictedAgentPlanBase {
+  schemaVersion?: never
+  composerSnapshotHash?: never
+  operation?: never
+  steps: RestrictedAgentPlanStep[]
+  generation: RestrictedAgentPlanGeneration
+}
+
+export interface ToolAgentPlan extends RestrictedAgentPlanBase {
+  schemaVersion: 2
+  composerSnapshotHash: string
+  operation: RestrictedAgentToolOperation
+  steps?: never
+  generation?: never
+  actions?: never
+}
+
+export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan
+
+export interface RestrictedAgentAssetBinding {
+  gatewayAssetId: string
+  browserImageId: string | null
+  sourceTaskId: string | null
+  role: RestrictedAgentPlanInput['role']
+  ordinal: number
 }
 
 export interface RestrictedAgentOutputAsset {
@@ -292,6 +336,8 @@ export interface RestrictedAgentCapabilities {
   enabled: boolean
   csrfToken: string
   policyVersion?: string
+  planSchemaVersions?: number[]
+  operationTypes?: RestrictedAgentToolOperation['type'][]
   limits?: {
     maxReferenceImages?: number
     maxFileBytes?: number

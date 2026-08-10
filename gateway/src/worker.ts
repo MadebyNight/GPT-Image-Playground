@@ -3,6 +3,7 @@ import type { GatewayDatabase } from './db.js';
 import { AppError } from './errors.js';
 import type { ExecutionEvents } from './events.js';
 import type { ImageExecutor } from './executor.js';
+import { requireImageGeneration } from './plan.js';
 
 export class ExecutionWorker {
   private active = 0;
@@ -79,6 +80,7 @@ export class ExecutionWorker {
         return;
       }
       const plan = this.db.getPlanForWorker(execution.planId);
+      const generation = requireImageGeneration(plan);
       const inputs = this.db.getPlanAssets(execution.planId);
       const sessionId = this.db.getExecutionSessionId(executionId);
       const buffers = await this.executor.execute({ plan, assets: inputs, signal: controller.signal });
@@ -92,8 +94,8 @@ export class ExecutionWorker {
       try {
         for (const buffer of buffers) {
           generatedAssets.push(await this.assets.storeGenerated(
-            buffer, sessionId, execution.planId, executionId, plan.generation.outputFormat,
-            plan.generation.outputCompression,
+            buffer, sessionId, execution.planId, executionId, generation.outputFormat,
+            generation.outputCompression,
           ));
         }
         this.db.insertOutputAssets(generatedAssets);

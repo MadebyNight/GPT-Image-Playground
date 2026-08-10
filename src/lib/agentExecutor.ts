@@ -8,11 +8,14 @@ export * from './legacyAgentExecutor'
  */
 export {
   cancelRestrictedAgentExecution,
+  computeRestrictedAgentConfirmationHash,
   createRestrictedAgentPlan,
+  decodeRestrictedAgentPlan,
   executeRestrictedAgentPlan,
   getRestrictedAgentAsset,
   getRestrictedAgentCapabilities,
   getRestrictedAgentExecution,
   getRestrictedAgentPlan,
+  getRestrictedAgentPlanOperation,
   subscribeRestrictedAgentExecution,
 } from './restrictedAgentApi'

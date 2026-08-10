@@ -4,6 +4,7 @@ import DatabaseConstructor from 'better-sqlite3';
 import type { Database as DatabaseType } from 'better-sqlite3';
 import type { GatewayConfig } from './config.js';
 import { AppError } from './errors.js';
+import { decodeRestrictedAgentPlanSnapshot, getPlanOperation } from './plan.js';
 import type {
   ExecutionStatus,
   ExecutionView,
@@ -112,12 +113,20 @@ export class GatewayDatabase {
         insertAsset.run(asset.id, plan.id, null, sessionId, asset.direction, asset.role, asset.mimeType, asset.sha256,
           asset.storagePath, asset.byteSize, asset.width, asset.height, asset.expiresAt, asset.createdAt);
       }
-      this.audit(sessionId, 'plan', plan.id, 'plan.created', {
-        promptSha256: createHash('sha256').update(plan.generation.exactPrompt).digest('hex'),
-        promptLength: plan.generation.exactPrompt.length,
-        action: plan.generation.action,
-        imageCount: plan.generation.imageCount,
-      }, now);
+      const operation = getPlanOperation(plan);
+      this.audit(sessionId, 'plan', plan.id, 'plan.created', operation.type !== 'openshop.edit'
+        ? {
+            promptSha256: createHash('sha256').update(operation.generation.exactPrompt).digest('hex'),
+            promptLength: operation.generation.exactPrompt.length,
+            action: operation.generation.action,
+            operation: operation.type,
+            imageCount: operation.generation.imageCount,
+          }
+        : {
+            operation: operation.type,
+            inputAssetId: operation.inputAssetId,
+            commands: operation.commands.map((command) => command.id),
+          }, now);
     })();
   }
 
@@ -128,14 +137,17 @@ export class GatewayDatabase {
       this.raw.prepare("UPDATE plans SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'awaiting_confirmation'").run(now, id);
       row = { ...row, status: 'expired', updated_at: now };
     }
-    const snapshot = JSON.parse(row.snapshot_json) as RestrictedAgentPlanSnapshot;
+    const snapshot = decodeRestrictedAgentPlanSnapshot(JSON.parse(row.snapshot_json));
     return { ...snapshot, status: row.status as RestrictedAgentPlanSnapshot['status'] };
   }
 
   getPlanForWorker(id: string): RestrictedAgentPlanSnapshot {
     const row = this.raw.prepare('SELECT * FROM plans WHERE id = ?').get(id) as PlanRow | undefined;
     if (!row) throw new AppError(404, 'plan_not_found', '计划不存在');
-    return { ...(JSON.parse(row.snapshot_json) as RestrictedAgentPlanSnapshot), status: row.status as RestrictedAgentPlanSnapshot['status'] };
+    return {
+      ...decodeRestrictedAgentPlanSnapshot(JSON.parse(row.snapshot_json)),
+      status: row.status as RestrictedAgentPlanSnapshot['status'],
+    };
   }
 
   getPlanAssets(planId: string, sessionId?: string): StoredAsset[] {
