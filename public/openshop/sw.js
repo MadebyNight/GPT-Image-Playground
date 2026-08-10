@@ -1,7 +1,7 @@
 'use strict';
 
-const SHELL_REVISION = '0.24.0-host.2';
-const PREVIOUS_SHELL_REVISION = '0.24.0-host.1';
+const SHELL_REVISION = '0.24.0-host.5';
+const PREVIOUS_SHELL_REVISION = '0.24.0-host.4';
 // State is origin-readable, so a cache name from it is never trusted merely
 // because it looks like a revision. Retain exactly the directly preceding
 // v0.24 host shell for a verified rollback, while discarding the incompatible
@@ -34,9 +34,7 @@ const REQUIRED_ASSETS = [
     "./manifest.webmanifest",
     "./icon-192.png",
     "./icon-512.png",
-    "https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js",
-    "https://cdn.jsdelivr.net/npm/ag-psd@22.0.2/dist/bundle.js",
-    "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js"
+    "./vendor/fabric-7.4.0.min.js"
 ];
 
 const OPTIONAL_ASSETS = [

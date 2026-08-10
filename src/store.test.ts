@@ -13,6 +13,8 @@ const dbMockState = vi.hoisted(() => ({
   getImage: vi.fn<(id: string) => Promise<StoredImage | undefined>>(),
   getAllImageIds: vi.fn<() => Promise<string[]>>(),
   deleteImage: vi.fn<(id: string) => Promise<void>>(),
+  putTask: vi.fn<(task: TaskRecord) => Promise<IDBValidKey>>(),
+  saveTaskWithImageAtomic: vi.fn(),
 }))
 vi.mock('./lib/db', () => {
   const tasks = dbMockState.tasks
@@ -22,10 +24,7 @@ vi.mock('./lib/db', () => {
   return {
     CURRENT_THUMBNAIL_VERSION: 2,
     getAllTasks: async () => [...tasks.values()],
-    putTask: vi.fn(async (task: TaskRecord) => {
-      tasks.set(task.id, task)
-      return task.id
-    }),
+    putTask: dbMockState.putTask,
     deleteTask: async (id: string) => {
       tasks.delete(id)
     },
@@ -50,6 +49,7 @@ vi.mock('./lib/db', () => {
       images.clear()
       thumbnails.clear()
     },
+    saveTaskWithImageAtomic: dbMockState.saveTaskWithImageAtomic,
     storeImage: async (dataUrl: string, source: StoredImage['source'] = 'upload') => {
       const id = `stored-image-${++dbMockState.imageSeq}`
       images.set(id, { id, dataUrl, source, createdAt: Date.now() })
@@ -74,11 +74,25 @@ beforeEach(() => {
   dbMockState.getImage.mockClear()
   dbMockState.getAllImageIds.mockClear()
   dbMockState.deleteImage.mockClear()
+  dbMockState.putTask.mockReset()
+  dbMockState.saveTaskWithImageAtomic.mockReset()
   dbMockState.getImage.mockImplementation(async (id) => dbMockState.images.get(id))
   dbMockState.getAllImageIds.mockImplementation(async () => [...dbMockState.images.keys()])
   dbMockState.deleteImage.mockImplementation(async (id) => {
     dbMockState.images.delete(id)
     dbMockState.thumbnails.delete(id)
+  })
+  dbMockState.putTask.mockImplementation(async (persistedTask) => {
+    dbMockState.tasks.set(persistedTask.id, persistedTask)
+    return persistedTask.id
+  })
+  dbMockState.saveTaskWithImageAtomic.mockImplementation(async ({ dataUrl, source, createTask, onCommit }) => {
+    const id = `stored-image-${++dbMockState.imageSeq}`
+    const persistedTask = createTask(id)
+    dbMockState.images.set(id, { id, dataUrl, source, createdAt: Date.now() })
+    dbMockState.tasks.set(persistedTask.id, persistedTask)
+    onCommit?.()
+    return { imageId: id, task: persistedTask }
   })
 })
 
@@ -198,6 +212,7 @@ describe('OpenShop 编辑历史', () => {
       outputImages: ['source-image-a', 'source-image-b'],
     })
     useStore.setState({ tasks: [sourceTask] })
+    const sourceSnapshot = structuredClone(sourceTask)
 
     const created = await saveOpenShopEdit({
       sourceTaskId: sourceTask.id,
@@ -217,6 +232,7 @@ describe('OpenShop 编辑历史', () => {
       elapsed: 0,
     })
     expect(created.params).not.toBe(sourceTask.params)
+    expect(sourceTask).toEqual(sourceSnapshot)
     expect(useStore.getState().tasks).toEqual([created, sourceTask])
     expect((await getAllTasks()).find((stored) => stored.id === created.id)).toEqual(created)
     expect(await getImage(created.outputImages[0])).toMatchObject({
@@ -240,6 +256,22 @@ describe('OpenShop 编辑历史', () => {
       dataUrl: 'data:image/png;base64,AQID',
       source: 'openshop',
     })
+  })
+
+  it('原子事务失败时不发布 asset、Task 或内存历史', async () => {
+    const sourceTask = task({ id: 'failed-save-source', outputImages: ['source-image-a'] })
+    useStore.setState({ tasks: [sourceTask] })
+    dbMockState.saveTaskWithImageAtomic.mockRejectedValueOnce(new Error('atomic save failed'))
+
+    await expect(saveOpenShopEdit({
+      sourceTaskId: sourceTask.id,
+      inputImageIds: ['source-image-a'],
+      outputImage: 'data:image/png;base64,ZmFpbGVk',
+    })).rejects.toThrow('atomic save failed')
+
+    expect(dbMockState.deleteImage).not.toHaveBeenCalled()
+    expect(useStore.getState().tasks).toEqual([sourceTask])
+    expect([...dbMockState.images.values()].some((image) => image.dataUrl === 'data:image/png;base64,ZmFpbGVk')).toBe(false)
   })
 })
 

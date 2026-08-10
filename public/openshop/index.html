@@ -10,8 +10,8 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-aRErPWa1IFIR9UivNZc2TxdWpV1vfFhC4h4FZG8oEkg=' 'sha256-cutjTo4vfRwFYs4BCvyXFSpT/HY10BGt2g+gjHJpIOU=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
-<title>OpenShop v0.24.0-host.2 — 在线图像编辑器</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-p7wJ1Vq4fkpiKgIlMXwiynzoeLFoeYzxzvK2aPUMzgA=' 'sha256-LKtfHFIL42+frALbxc3k3kS5UjUmi0L1DET1t1fVswU=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
+<title>OpenShop v0.24.0-host.5 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
 // Promise-based v7 API while each call site is migrated independently.
@@ -91,28 +91,15 @@ const applyFabricCompat = () => {
     });
 };
 
-// Fabric, ag-psd and jsPDF were <script src> tags on a CDN, which forced
-// script-src to allow the whole of cdn.jsdelivr.net. That allowance is far
-// wider than the three SRI-pinned tags needing it and is a standard bypass
-// primitive: any HTML-injection sink could load an arbitrary npm package,
-// because CSP does not require SRI on CDN scripts. They are fetched, SHA-384
-// verified in page and executed from blob: URLs now — the same path the eight
-// lazy assets already take — so script-src names no CDN at all.
+// Fabric is the only boot-time library: the editor and Tool runner must remain
+// usable without the optional PSD/PDF supply chain. It remains SHA-384 verified
+// before blob execution so a corrupted deployment or cache entry cannot
+// silently become executable code.
 const OPENSHOP_BOOT_ASSETS = Object.freeze([
     Object.freeze({
         name:'Fabric.js',
-        url:'https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js',
+        url:'./vendor/fabric-7.4.0.min.js',
         integrity:'sha384-T2IWa4YW4tn/gJpR880CrMehXQvwxwaRgQszdzYPA6jBbKH9sPZuTf9YrN/PqNP6'
-    }),
-    Object.freeze({
-        name:'ag-psd',
-        url:'https://cdn.jsdelivr.net/npm/ag-psd@22.0.2/dist/bundle.js',
-        integrity:'sha384-kla4KJzEnshZnuWyJ8+AF8KEX0YZ2rpxTaQpDtDUmDdUv7jK94knsRx/lcRZ/HF4'
-    }),
-    Object.freeze({
-        name:'jsPDF',
-        url:'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
-        integrity:'sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3'
     })
 ]);
 
@@ -123,7 +110,7 @@ const bootDigest = async bytes => {
 
 const fetchVerifiedBootAsset = async asset => {
     const load = async cache => {
-        const response = await fetch(asset.url, { cache, credentials:'omit', mode:'cors' });
+        const response = await fetch(asset.url, { cache, credentials:'same-origin', mode:'same-origin' });
         if (!response.ok) throw new Error(`${asset.name} request failed (${response.status})`);
         const bytes = await response.arrayBuffer();
         if (await bootDigest(bytes) !== asset.integrity) {
@@ -1784,7 +1771,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
 
 <!-- ===== TOP MENU ===== -->
 <div id="topbar">
-    <div class="logo" aria-label="OpenShop 版本 0.24.0-host.2">
+    <div class="logo" aria-label="OpenShop 版本 0.24.0-host.5">
         <span class="logo-mark">OS</span>
         <span class="logo-word">OpenShop</span>
         <span class="logo-version">v0.24</span>
@@ -2993,6 +2980,11 @@ const OS = {
             integrity:'sha384-kla4KJzEnshZnuWyJ8+AF8KEX0YZ2rpxTaQpDtDUmDdUv7jK94knsRx/lcRZ/HF4',
             type:'application/javascript'
         }),
+        pdfExporter: Object.freeze({
+            url:'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
+            integrity:'sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3',
+            type:'application/javascript'
+        }),
         photonModule: Object.freeze({
             url:'https://cdn.jsdelivr.net/npm/@silvia-odwyer/photon@0.3.3/photon_rs.js',
             integrity:'sha384-2poc6y7WarCbgFC86zFZ0ce5oBR0hkYUGIB2ySfyuYwEZ0KsRA51rtlAe7bnMEr0',
@@ -3031,6 +3023,7 @@ const OS = {
     }),
     _runtimeAssetPromises: new Map(),
     _runtimeBlobPromises: new Map(),
+    _runtimeScriptPromises: new Map(),
     async _verifyRuntimeBytes(bytes, integrity) {
         const match = /^sha(256|384|512)-([A-Za-z0-9+/]+={0,2})$/.exec(String(integrity || ''));
         if (!match) throw new Error('Runtime asset has an invalid integrity declaration');
@@ -3082,6 +3075,34 @@ const OS = {
             this._runtimeBlobPromises.set(name, pending);
         }
         return this._runtimeBlobPromises.get(name);
+    },
+    async _loadVerifiedRuntimeScript(name, isReady) {
+        if (isReady()) return true;
+        if (!this._runtimeScriptPromises.has(name)) {
+            const pending = this._fetchVerifiedRuntimeAsset(name)
+                .then(({asset, bytes}) => new Promise((resolve, reject) => {
+                    const url = URL.createObjectURL(new Blob([bytes], {type:asset.type}));
+                    const script = document.createElement('script');
+                    const cleanup = () => { script.remove(); URL.revokeObjectURL(url); };
+                    script.src = url;
+                    script.onload = () => {
+                        cleanup();
+                        if (isReady()) resolve(true);
+                        else reject(new Error(`${name} executed without exposing its expected API`));
+                    };
+                    script.onerror = () => {
+                        cleanup();
+                        reject(new Error(`${name} failed to execute`));
+                    };
+                    (document.head || document.documentElement).appendChild(script);
+                }))
+                .catch(error => {
+                    this._runtimeScriptPromises.delete(name);
+                    throw error;
+                });
+            this._runtimeScriptPromises.set(name, pending);
+        }
+        return this._runtimeScriptPromises.get(name);
     },
     _prepareClassicPhotonSource(bytes) {
         const source = new TextDecoder().decode(bytes);
@@ -4313,8 +4334,8 @@ const OS = {
         "History, selections, guides, and other project-only editing state are not included in this export.": "本次导出不包含历史记录、选区、参考线及其他仅项目内可用的编辑状态。",
         "This export does not save the editable project; unsaved project changes will remain.": "本次导出不会保存可编辑项目；未保存的项目更改仍会保留。",
         "Tiled / Repeat": "平铺 / 重复",
-        "This hosted copy stages a verified application shell. Core editing, PSD import, and standard export can reload without a connection once the shell is ready.": "此托管副本会准备经验证的应用外壳。外壳就绪后，核心编辑、PSD 导入和常规导出可在无网络时重新加载。",
-        "This standalone HTML loads its core libraries from pinned CDNs. A cold open requires network access; local files cannot install a service worker or guarantee an offline reload.": "此独立 HTML 从固定 CDN 加载核心库。冷启动需要网络；本地文件无法安装 Service Worker，也无法保证离线重新加载。",
+        "This hosted copy stages a verified application shell. Core editing and the OpenShop Tool runner can work offline once the shell is ready. PSD import/export and PDF export need a connection when their verified components are first loaded.": "此托管副本会准备经验证的应用外壳。外壳就绪后，核心编辑与 OpenShop Tool 可离线使用；PSD 导入/导出和 PDF 导出首次加载已验证组件时需要联网。",
+        "This standalone distribution keeps the core editor and OpenShop Tool runtime in local files. Once OpenShop has opened, core editing and the Tool runner do not need a network connection. PSD import/export and PDF export need a connection when their verified components are first loaded. file:// cannot install a service worker.": "此独立发行版将核心编辑器与 OpenShop Tool 运行时保存在本地文件中。OpenShop 启动后，核心编辑与 Tool 无需联网；PSD 导入/导出和 PDF 导出首次加载已验证组件时需要联网。file:// 无法安装 Service Worker。",
         "OpenShop returned to {activeRevision} because {rolledBackFrom} did not confirm a healthy startup.": "由于 {rolledBackFrom} 未确认健康启动，OpenShop 已回退到 {activeRevision}。",
         "Distribution": "发布方式",
         "Hosted PWA lane": "托管 PWA 模式",
@@ -4986,7 +5007,7 @@ const OS = {
         if (label) label.textContent = labelText;
         const dirtyPrefix = this._isDirty ? '* ' : '';
         const stateSuffix = this._persistenceState === 'saving' ? ` (${this._t('Saving')})` : this._persistenceState === 'error' ? ` (${this._t('Save failed')})` : '';
-        document.title = `${dirtyPrefix}${this._docName || this._t('Untitled')}${stateSuffix} — OpenShop v0.24.0-host.2`;
+        document.title = `${dirtyPrefix}${this._docName || this._t('Untitled')}${stateSuffix} — OpenShop v0.24.0-host.5`;
     },
     _markDocumentDirty() {
         this._documentRevision += 1;
@@ -5346,7 +5367,7 @@ const OS = {
         return {
             kind: 'openshop-document',
             schemaVersion: this._documentSchemaVersion,
-            appVersion: '0.24.0-host.2',
+            appVersion: '0.24.0-host.5',
             document: {
                 id:this._coerceDocumentId(this._documentId, 'document'),
                 name:this._safeText(this._docName || 'Untitled', 100)
@@ -6537,7 +6558,12 @@ const OS = {
         const header = this._readPSDHeader(bytes);
         this._validatePSDHeader(header, fileSize);
         this._updatePSDImportProgress(job, 'Verifying PSD decoder…');
-        const decoder = await this._fetchVerifiedRuntimeAsset('psdDecoder');
+        let decoder;
+        try {
+            decoder = await this._fetchVerifiedRuntimeAsset('psdDecoder');
+        } catch (error) {
+            throw new Error(`PSD 解码器不可用：该功能需联网加载已验证组件。${error.message}`);
+        }
         if (job?.cancelled) throw new DOMException('PSD import cancelled', 'AbortError');
         const code = `
 self.onmessage = function(event) {
@@ -9458,6 +9484,193 @@ self.onmessage = function(event) {
         this._commandRegistry = new Map(definitions);
         return this._commandRegistry;
     },
+    _toolBatchFailure(code, message, commandIndex = null, retryable = false) {
+        const error = new Error(message);
+        error.openShopToolCode = code;
+        error.openShopToolRetryable = Boolean(retryable);
+        if (Number.isInteger(commandIndex)) error.openShopToolCommandIndex = commandIndex;
+        return error;
+    },
+    _isToolPlainObject(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+    },
+    _hasExactToolKeys(value, required, optional = []) {
+        if (!this._isToolPlainObject(value)) return false;
+        const allowed = new Set([...required, ...optional]);
+        const keys = Object.keys(value);
+        return required.every(key => Object.prototype.hasOwnProperty.call(value, key))
+            && keys.every(key => allowed.has(key));
+    },
+    _isToolCommandSchema(command) {
+        if (!this._hasExactToolKeys(command, ['schemaVersion','id','target','args'])
+            || typeof command.schemaVersion !== 'number'
+            || command.schemaVersion !== 1
+            || command.target !== 'document'
+            || !this._isToolPlainObject(command.args)) return false;
+        const args = command.args;
+        switch (command.id) {
+            case 'canvas.crop':
+                return this._hasExactToolKeys(args, ['x','y','width','height'])
+                    && [args.x,args.y,args.width,args.height].every(value => typeof value === 'number' && Number.isFinite(value) && Number.isSafeInteger(value));
+            case 'canvas.rotate':
+                return this._hasExactToolKeys(args, ['degrees'])
+                    && typeof args.degrees === 'number'
+                    && [90,-90,180,-180].includes(args.degrees);
+            case 'canvas.flip':
+                return this._hasExactToolKeys(args, ['axis'])
+                    && (args.axis === 'h' || args.axis === 'v');
+            case 'canvas.flatten':
+                return this._hasExactToolKeys(args, []);
+            default:
+                return false;
+        }
+    },
+    _normalizeToolCommands(commands) {
+        if (!Array.isArray(commands) || commands.length < 1 || commands.length > 5) {
+            throw this._toolBatchFailure('INVALID_REQUEST', 'Tool batch must contain 1 to 5 commands');
+        }
+        const allowed = new Set(['canvas.crop','canvas.rotate','canvas.flip','canvas.flatten']);
+        const allowedArgs = {
+            'canvas.crop':new Set(['x','y','width','height']),
+            'canvas.rotate':new Set(['degrees']),
+            'canvas.flip':new Set(['axis']),
+            'canvas.flatten':new Set()
+        };
+        let width = this.canvasW;
+        let height = this.canvasH;
+        let flattened = false;
+        return commands.map((command, commandIndex) => {
+            try {
+                if (!this._hasExactToolKeys(command, ['schemaVersion','id','target','args'])) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool command fields are invalid', commandIndex);
+                }
+                if (typeof command.schemaVersion !== 'number' || command.schemaVersion !== 1) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool command schemaVersion must be number 1', commandIndex);
+                }
+                if (command.target !== 'document') {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool commands require the document target', commandIndex);
+                }
+                if (!allowed.has(command.id)) {
+                    throw this._toolBatchFailure('UNSUPPORTED_COMMAND', `Unsupported tool command: ${this._safeText(command.id, 80)}`, commandIndex);
+                }
+                if (flattened) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', 'canvas.flatten must be the last tool command', commandIndex);
+                }
+                if (!this._isToolPlainObject(command.args)) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', `Tool command ${command.id} requires an args object`, commandIndex);
+                }
+                const args = command.args;
+                if (Object.keys(args).some(key => !allowedArgs[command.id].has(key))) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', `Tool command ${command.id} contains unknown arguments`, commandIndex);
+                }
+                if (!this._isToolCommandSchema(command)) {
+                    throw this._toolBatchFailure('VALIDATION_FAILED', `Tool command ${command.id} has invalid argument types`, commandIndex);
+                }
+                const normalized = this._normalizeCommand({
+                    schemaVersion:command.schemaVersion,
+                    id:command.id,
+                    args
+                }, { allowSequence:false });
+                if (normalized.id === 'canvas.crop') {
+                    const { x, y, width:cropWidth, height:cropHeight } = normalized.args;
+                    if (![x,y,cropWidth,cropHeight].every(Number.isSafeInteger)) {
+                        throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool crop values must be integers', commandIndex);
+                    }
+                    if (x < 0 || y < 0 || x + cropWidth > width || y + cropHeight > height) {
+                        throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool crop must stay inside the current canvas', commandIndex);
+                    }
+                    if (cropWidth * cropHeight > 80000000) {
+                        throw this._toolBatchFailure('VALIDATION_FAILED', 'Tool crop exceeds the 80 megapixel limit', commandIndex);
+                    }
+                    width = cropWidth;
+                    height = cropHeight;
+                } else if (normalized.id === 'canvas.rotate' && Math.abs(normalized.args.degrees) === 90) {
+                    [width, height] = [height, width];
+                } else if (normalized.id === 'canvas.flatten') {
+                    flattened = true;
+                }
+                return normalized;
+            } catch (error) {
+                if (error?.openShopToolCode) throw error;
+                throw this._toolBatchFailure('VALIDATION_FAILED', String(error?.message || error), commandIndex);
+            }
+        });
+    },
+    async _executeToolBatch(commands) {
+        const normalized = this._normalizeToolCommands(commands);
+        const beforeSnapshot = JSON.stringify(this._captureDocumentState());
+        const rollback = {
+            history:this.history.slice(),
+            historyIdx:this.historyIdx,
+            historyBaseSnapshot:this._historyBaseSnapshot,
+            historyBaseLabel:this._historyBaseLabel,
+            historyCursorSnapshot:this._historyCursorSnapshot,
+            lastAction:this._lastAction,
+            savedSnapshot:this._savedSnapshot,
+            isDirty:this._isDirty,
+            autoSaveDirty:this._autoSaveDirty,
+            persistenceState:this._persistenceState,
+            documentRevision:this._documentRevision
+        };
+        let commandIndex = -1;
+        try {
+            for (commandIndex = 0; commandIndex < normalized.length; commandIndex++) {
+                const result = await this._invokeCommand(normalized[commandIndex]);
+                if (result === false) {
+                    throw this._toolBatchFailure(
+                        'EXECUTION_FAILED',
+                        `Tool command ${normalized[commandIndex].id} could not be applied`,
+                        commandIndex
+                    );
+                }
+            }
+            const afterSnapshot = JSON.stringify(this._captureDocumentState());
+            const changed = afterSnapshot !== beforeSnapshot;
+            if (changed) {
+                this._pushHistoryEntry('Tool Edit', afterSnapshot, {
+                    markDirty:true,
+                    command:null,
+                    recordMacro:false,
+                    beforeSnapshot
+                });
+            } else {
+                this._historyCursorSnapshot = beforeSnapshot;
+                this.updateHistoryPanel();
+                this.updateStatus();
+            }
+            return { appliedCommands:normalized.length, changed };
+        } catch (error) {
+            let rollbackError = null;
+            try {
+                await this._loadDocumentState(JSON.parse(beforeSnapshot), { trusted:true });
+            } catch (cause) {
+                rollbackError = cause;
+            } finally {
+                this.history = rollback.history;
+                this.historyIdx = rollback.historyIdx;
+                this._historyBaseSnapshot = rollback.historyBaseSnapshot;
+                this._historyBaseLabel = rollback.historyBaseLabel;
+                this._historyCursorSnapshot = rollback.historyCursorSnapshot;
+                this._lastAction = rollback.lastAction;
+                this._savedSnapshot = rollback.savedSnapshot;
+                this._isDirty = rollback.isDirty;
+                this._autoSaveDirty = rollback.autoSaveDirty;
+                this._documentRevision = rollback.documentRevision;
+                this._setPersistenceState(rollback.persistenceState);
+                this.updateHistoryPanel();
+                this.updateStatus();
+            }
+            if (rollbackError) console.error('Tool batch rollback failed:', rollbackError);
+            if (error?.openShopToolCode) throw error;
+            throw this._toolBatchFailure(
+                'EXECUTION_FAILED',
+                String(error?.message || error),
+                commandIndex >= 0 && commandIndex < normalized.length ? commandIndex : null
+            );
+        }
+    },
     _normalizeCommand(command, { allowSequence = true } = {}) {
         if (!command || typeof command !== 'object' || command.schemaVersion !== this._commandSchemaVersion || typeof command.id !== 'string') {
             throw new Error('Unsupported command schema');
@@ -9925,8 +10138,14 @@ self.onmessage = function(event) {
     },
 
     // ====================== PDF EXPORT ======================
-    exportPDF({ matte = '#ffffff' } = {}) {
-        if (typeof jspdf === 'undefined' && typeof window.jspdf === 'undefined') { this.toast('jsPDF not loaded', 'error'); return false; }
+    async exportPDF({ matte = '#ffffff' } = {}) {
+        try {
+            await this._loadVerifiedRuntimeScript('pdfExporter', () => Boolean(window.jspdf?.jsPDF));
+        } catch (error) {
+            console.error('PDF component load error:', error);
+            this.toast('PDF 导出不可用：该功能需联网加载已验证组件。', 'error');
+            return false;
+        }
         try {
             const { jsPDF } = window.jspdf;
             const landscape = this.canvasW > this.canvasH;
@@ -10202,9 +10421,15 @@ self.onmessage = function(event) {
         report.warnings = [...new Set(report.warnings)].slice(0, 100);
         return { structure, report };
     },
-    exportPSD() {
-        const lib = window.agPsd || (typeof agPsd !== 'undefined' ? agPsd : null);
-        if (!lib || !lib.writePsd) { this.toast('PSD library not loaded or does not support writing', 'error'); return false; }
+    async exportPSD() {
+        try {
+            await this._loadVerifiedRuntimeScript('psdDecoder', () => Boolean(window.agPsd?.writePsd));
+        } catch (error) {
+            console.error('PSD component load error:', error);
+            this.toast('PSD 导出不可用：该功能需联网加载已验证组件。', 'error');
+            return false;
+        }
+        const lib = window.agPsd;
         this.toast('Generating PSD...', 'info');
         try {
             const { structure, report } = this._withExportCanvasState(
@@ -10669,12 +10894,7 @@ self.onmessage = function(event) {
     },
     async _confirmOfflineBoot() {
         if (this._offlineState.lane !== 'hosted') return false;
-        const healthy = Boolean(
-            this.canvas?.getObjects &&
-            typeof fabric !== 'undefined' &&
-            typeof agPsd !== 'undefined' &&
-            window.jspdf
-        );
+        const healthy = Boolean(this.canvas?.getObjects && typeof fabric !== 'undefined');
         if (!healthy) return false;
         try {
             const status = await this._refreshOfflineStatus();
@@ -10827,8 +11047,8 @@ self.onmessage = function(event) {
         const intro = document.createElement('p');
         intro.className = 'offline-manager-intro';
         intro.textContent = state.lane === 'hosted'
-            ? 'This hosted copy stages a verified application shell. Core editing, PSD import, and standard export can reload without a connection once the shell is ready.'
-            : 'This standalone HTML loads its core libraries from pinned CDNs. A cold open requires network access; local files cannot install a service worker or guarantee an offline reload.';
+            ? 'This hosted copy stages a verified application shell. Core editing and the OpenShop Tool runner can work offline once the shell is ready. PSD import/export and PDF export need a connection when their verified components are first loaded.'
+            : 'This standalone distribution keeps the core editor and OpenShop Tool runtime in local files. Once OpenShop has opened, core editing and the Tool runner do not need a network connection. PSD import/export and PDF export need a connection when their verified components are first loaded. file:// cannot install a service worker.';
         modal.append(title, intro);
 
         if (state.rolledBackFrom) {
@@ -16421,7 +16641,7 @@ self.onmessage = async function(e) {
         const data = JSON.stringify({
             kind:'openshop-command-sequence',
             schemaVersion:this._commandSchemaVersion,
-            appVersion:'0.24.0-host.2',
+            appVersion:'0.24.0-host.5',
             commands:this._macroSteps.map(command => this._normalizeCommand(command, { allowSequence:false }))
         }, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
@@ -17621,7 +17841,13 @@ self.onmessage = async function(e) {
     _embedProtocolVersion: 1,
     _embedFormats: Object.freeze(['png']),
     _embed: null,
+    _embedNamespace: null,
     _embedBound: false,
+    _toolSessionId: null,
+    _toolPhase: 'idle',
+    _toolBusy: false,
+    _toolInFlightIds: new Set(),
+    _toolResponses: new Map(),
     _initEmbedBridge() {
         if (this._embedBound || window.parent === window) return false;
         this._embedBound = true;
@@ -17649,6 +17875,338 @@ self.onmessage = async function(e) {
             }, location.origin);
         } catch (error) {
             console.warn('Embed error reply failed:', error.message);
+        }
+    },
+    _isToolDocumentDescriptor(value) {
+        if (!this._hasExactToolKeys(value, ['canvas','primaryImage'])) return false;
+        const { canvas, primaryImage } = value;
+        if (!this._hasExactToolKeys(canvas, ['width','height'])
+            || !Number.isSafeInteger(canvas.width)
+            || !Number.isSafeInteger(canvas.height)
+            || canvas.width < 1
+            || canvas.height < 1
+            || !this._hasExactToolKeys(primaryImage, ['present'], ['bounds'])
+            || typeof primaryImage.present !== 'boolean') return false;
+        if (primaryImage.bounds === undefined) return true;
+        const bounds = primaryImage.bounds;
+        return this._hasExactToolKeys(bounds, ['x','y','width','height'])
+            && [bounds.x,bounds.y,bounds.width,bounds.height].every(value => typeof value === 'number' && Number.isFinite(value));
+    },
+    _hasExpectedToolImageMagic(mimeType, magic) {
+        if (!(magic instanceof Uint8Array)) return false;
+        if (mimeType === 'image/png') {
+            return magic.length >= 8 && [137,80,78,71,13,10,26,10].every((byte,index) => magic[index] === byte);
+        }
+        if (mimeType === 'image/jpeg') {
+            return magic.length >= 3 && magic[0] === 255 && magic[1] === 216 && magic[2] === 255;
+        }
+        return mimeType === 'image/webp'
+            && magic.length >= 12
+            && String.fromCharCode(...magic.subarray(0,4)) === 'RIFF'
+            && String.fromCharCode(...magic.subarray(8,12)) === 'WEBP';
+    },
+    _isToolEnvelope(value) {
+        return this._isToolPlainObject(value)
+            && typeof value.version === 'number'
+            && value.version === this._embedProtocolVersion
+            && typeof value.type === 'string'
+            && value.type.startsWith('openshop:tool:')
+            && typeof value.id === 'string'
+            && value.id.length > 0
+            && typeof value.requestId === 'string'
+            && value.requestId === value.id
+            && typeof value.sessionId === 'string'
+            && value.sessionId.length > 0;
+    },
+    _isToolRequestMessage(value) {
+        if (!this._isToolEnvelope(value)) return false;
+        const base = ['version','type','id','requestId','sessionId'];
+        switch (value.type) {
+            case 'openshop:tool:hello':
+                return this._hasExactToolKeys(value, base);
+            case 'openshop:tool:configure':
+                return this._hasExactToolKeys(value, [...base,'document'])
+                    && this._hasExactToolKeys(value.document, ['blob','name'])
+                    && value.document.blob instanceof Blob
+                    && typeof value.document.name === 'string'
+                    && value.document.name.length > 0;
+            case 'openshop:tool:execute':
+                return this._hasExactToolKeys(value, [...base,'commands'])
+                    && Array.isArray(value.commands)
+                    && value.commands.length >= 1
+                    && value.commands.length <= 5
+                    && value.commands.every(command => this._isToolCommandSchema(command));
+            case 'openshop:tool:export':
+                return this._hasExactToolKeys(value, [...base,'format']) && value.format === 'png';
+            default:
+                return false;
+        }
+    },
+    _isToolResponseMessage(value) {
+        if (!this._isToolEnvelope(value)) return false;
+        const base = ['version','type','id','requestId','sessionId'];
+        switch (value.type) {
+            case 'openshop:tool:ready': {
+                if (!this._hasExactToolKeys(value, [...base,'capabilities'])
+                    || !this._hasExactToolKeys(value.capabilities, ['commands','maxCommands','inputMimeTypes','outputFormats'])) return false;
+                const capabilities = value.capabilities;
+                return Array.isArray(capabilities.commands)
+                    && capabilities.commands.every(item => typeof item === 'string')
+                    && Number.isSafeInteger(capabilities.maxCommands)
+                    && capabilities.maxCommands > 0
+                    && Array.isArray(capabilities.inputMimeTypes)
+                    && capabilities.inputMimeTypes.every(item => typeof item === 'string')
+                    && Array.isArray(capabilities.outputFormats)
+                    && capabilities.outputFormats.every(item => typeof item === 'string');
+            }
+            case 'openshop:tool:configured':
+                return this._hasExactToolKeys(value, [...base,'document'])
+                    && this._isToolDocumentDescriptor(value.document);
+            case 'openshop:tool:executed':
+                return this._hasExactToolKeys(value, [...base,'appliedCommands','changed','document'])
+                    && Number.isSafeInteger(value.appliedCommands)
+                    && value.appliedCommands >= 0
+                    && typeof value.changed === 'boolean'
+                    && this._isToolDocumentDescriptor(value.document);
+            case 'openshop:tool:exported':
+                return this._hasExactToolKeys(value, [...base,'blob','filename','format','document'])
+                    && value.blob instanceof Blob
+                    && value.blob.type === 'image/png'
+                    && value.blob.size > 0
+                    && typeof value.filename === 'string'
+                    && value.filename.length > 0
+                    && value.format === 'png'
+                    && this._isToolDocumentDescriptor(value.document);
+            case 'openshop:tool:error': {
+                const codes = new Set(['INVALID_REQUEST','UNSUPPORTED_COMMAND','VALIDATION_FAILED','REVISION_CONFLICT','BUSY','CANCELLED','TIMEOUT','IMPORT_FAILED','EXECUTION_FAILED','EXPORT_FAILED','SESSION_EXPIRED']);
+                return this._hasExactToolKeys(value, [...base,'code','message','retryable'], ['commandIndex'])
+                    && codes.has(value.code)
+                    && typeof value.message === 'string'
+                    && value.message.length > 0
+                    && typeof value.retryable === 'boolean'
+                    && (value.commandIndex === undefined || (Number.isSafeInteger(value.commandIndex) && value.commandIndex >= 0));
+            }
+            default:
+                return false;
+        }
+    },
+    _postToolEvent(event, message) {
+        const outbound = { version:this._embedProtocolVersion, ...message };
+        if (!this._isToolResponseMessage(outbound)) {
+            console.warn('Tool reply schema invalid:', message?.type);
+            return false;
+        }
+        try {
+            event.source?.postMessage(outbound, event.origin);
+            return true;
+        } catch (error) {
+            console.warn('Tool reply failed:', error.message);
+            return false;
+        }
+    },
+    _postToolError(event, id, sessionId, code, message, { retryable = false, commandIndex = null } = {}) {
+        if (typeof id !== 'string' || !id || typeof sessionId !== 'string' || !sessionId) return null;
+        const response = {
+            type:'openshop:tool:error',
+            id,
+            requestId:id,
+            sessionId,
+            code,
+            message:String(message || code),
+            retryable:Boolean(retryable)
+        };
+        if (Number.isInteger(commandIndex)) response.commandIndex = commandIndex;
+        this._postToolEvent(event, response);
+        return response;
+    },
+    _toolDocumentDescriptor() {
+        const primary = this.canvas.getObjects().find(object => object?.name !== '__boundary__' && object?.type === 'image');
+        let primaryImage = { present:Boolean(primary) };
+        if (primary) {
+            const bounds = primary.getBoundingRect?.() || {
+                left:Number(primary.left || 0),
+                top:Number(primary.top || 0),
+                width:Number(primary.getScaledWidth?.() || primary.width || 0),
+                height:Number(primary.getScaledHeight?.() || primary.height || 0)
+            };
+            primaryImage = {
+                present:true,
+                bounds:{
+                    x:Number(bounds.left || 0),
+                    y:Number(bounds.top || 0),
+                    width:Number(bounds.width || 0),
+                    height:Number(bounds.height || 0)
+                }
+            };
+        }
+        return {
+            canvas:{ width:this.canvasW, height:this.canvasH },
+            primaryImage
+        };
+    },
+    async _applyToolDocument(spec) {
+        if (!this._hasExactToolKeys(spec, ['blob','name'])
+            || !(spec.blob instanceof Blob)
+            || typeof spec.name !== 'string'
+            || !spec.name) {
+            throw this._toolBatchFailure('IMPORT_FAILED', 'Tool configure requires an image Blob');
+        }
+        const mimeType = String(spec.blob.type || '').toLowerCase();
+        if (!['image/png','image/jpeg','image/webp'].includes(mimeType)) {
+            throw this._toolBatchFailure('IMPORT_FAILED', `Unsupported tool input format: ${mimeType || 'unknown'}`);
+        }
+        if (!spec.blob.size) throw this._toolBatchFailure('IMPORT_FAILED', 'Tool input image is empty');
+        const magic = new Uint8Array(await spec.blob.slice(0, 12).arrayBuffer());
+        if (!this._hasExpectedToolImageMagic(mimeType, magic)) {
+            throw this._toolBatchFailure('IMPORT_FAILED', 'Tool input MIME does not match its magic bytes');
+        }
+        await this._applyEmbedDocument(spec);
+        const descriptor = this._toolDocumentDescriptor();
+        if (!descriptor.primaryImage.present) throw this._toolBatchFailure('IMPORT_FAILED', 'Tool input did not create a primary image');
+        if (!Number.isSafeInteger(descriptor.canvas.width)
+            || !Number.isSafeInteger(descriptor.canvas.height)
+            || descriptor.canvas.width < 1
+            || descriptor.canvas.height < 1
+            || descriptor.canvas.width * descriptor.canvas.height > 80000000) {
+            throw this._toolBatchFailure('IMPORT_FAILED', 'Tool input dimensions are invalid or exceed 80 megapixels');
+        }
+        return descriptor;
+    },
+    _toolReply(id, sessionId, message) {
+        const response = { ...message, id, requestId:id, sessionId };
+        if (!this._isToolResponseMessage({ version:this._embedProtocolVersion, ...response })) {
+            throw this._toolBatchFailure('INVALID_REQUEST', 'Tool response schema is invalid');
+        }
+        this._toolResponses.set(id, response);
+        this._postEmbed(response);
+        return response;
+    },
+    async _onToolEmbedMessage(event, data) {
+        const id = typeof data.id === 'string' ? data.id : '';
+        const requestId = typeof data.requestId === 'string' ? data.requestId : '';
+        const sessionId = typeof data.sessionId === 'string' ? data.sessionId : '';
+        if (!id || !requestId || requestId !== id || !sessionId) {
+            this._postToolError(event, id, sessionId, 'INVALID_REQUEST', 'Tool requests require matching non-empty id/requestId and sessionId');
+            return;
+        }
+        if (!this._isToolRequestMessage(data)) {
+            this._postToolError(event, id, sessionId, 'INVALID_REQUEST', 'Tool request schema is invalid');
+            return;
+        }
+
+        const cached = this._toolResponses.get(id);
+        if (cached) {
+            if (cached.sessionId === sessionId) this._postToolEvent(event, cached);
+            else this._postToolError(event, id, sessionId, 'SESSION_EXPIRED', 'This request id belongs to another tool session');
+            return;
+        }
+        if (this._toolInFlightIds.has(id)) {
+            this._postToolError(event, id, sessionId, 'BUSY', 'This tool request is still running', { retryable:true });
+            return;
+        }
+
+        if (data.type === 'openshop:tool:hello') {
+            if (this._embedNamespace && this._embedNamespace !== 'tool') {
+                this._postToolError(event, id, sessionId, 'BUSY', 'This iframe is already bound to the manual editor bridge');
+                return;
+            }
+            if (this._toolSessionId && this._toolSessionId !== sessionId) {
+                this._postToolError(event, id, sessionId, 'SESSION_EXPIRED', 'This iframe belongs to another tool session');
+                return;
+            }
+            this._embed = { source:event.source, origin:event.origin };
+            this._embedNamespace = 'tool';
+            this._toolSessionId = sessionId;
+            this._toolPhase = this._toolPhase === 'idle' ? 'ready' : this._toolPhase;
+            this._toolReply(id, sessionId, {
+                type:'openshop:tool:ready',
+                capabilities:{
+                    commands:['canvas.crop','canvas.rotate','canvas.flip','canvas.flatten'],
+                    maxCommands:5,
+                    inputMimeTypes:['image/png','image/jpeg','image/webp'],
+                    outputFormats:['png']
+                }
+            });
+            return;
+        }
+
+        if (this._embedNamespace !== 'tool' || this._toolSessionId !== sessionId) {
+            this._postToolError(event, id, sessionId, 'SESSION_EXPIRED', 'Tool session is not active');
+            return;
+        }
+        if (this._toolBusy) {
+            this._postToolError(event, id, sessionId, 'BUSY', 'Another tool request is still running', { retryable:true });
+            return;
+        }
+
+        this._toolBusy = true;
+        this._toolInFlightIds.add(id);
+        try {
+            switch (data.type) {
+                case 'openshop:tool:configure': {
+                    if (this._toolPhase !== 'ready') {
+                        throw this._toolBatchFailure('INVALID_REQUEST', 'Tool configure is out of sequence');
+                    }
+                    const descriptor = await this._applyToolDocument(data.document);
+                    this._toolPhase = 'configured';
+                    this._toolReply(id, sessionId, { type:'openshop:tool:configured', document:descriptor });
+                    return;
+                }
+                case 'openshop:tool:execute': {
+                    if (this._toolPhase !== 'configured') {
+                        throw this._toolBatchFailure('INVALID_REQUEST', 'Tool execute is out of sequence');
+                    }
+                    const result = await this._executeToolBatch(data.commands);
+                    this._toolPhase = 'executed';
+                    this._toolReply(id, sessionId, {
+                        type:'openshop:tool:executed',
+                        appliedCommands:result.appliedCommands,
+                        changed:result.changed,
+                        document:this._toolDocumentDescriptor()
+                    });
+                    return;
+                }
+                case 'openshop:tool:export': {
+                    if (this._toolPhase !== 'executed') {
+                        throw this._toolBatchFailure('INVALID_REQUEST', 'Tool export is out of sequence');
+                    }
+                    const captured = this._captureEmbedExport(data.format);
+                    this._toolPhase = 'exported';
+                    this._toolReply(id, sessionId, {
+                        type:'openshop:tool:exported',
+                        format:'png',
+                        filename:captured.filename,
+                        blob:captured.blob,
+                        document:this._toolDocumentDescriptor()
+                    });
+                    return;
+                }
+                default:
+                    throw this._toolBatchFailure('INVALID_REQUEST', 'Unknown tool message type ' + data.type);
+            }
+        } catch (error) {
+            const fallback = data.type === 'openshop:tool:configure'
+                ? 'IMPORT_FAILED'
+                : data.type === 'openshop:tool:export'
+                    ? 'EXPORT_FAILED'
+                    : data.type === 'openshop:tool:execute'
+                        ? 'EXECUTION_FAILED'
+                        : 'INVALID_REQUEST';
+            const response = this._postToolError(
+                event,
+                id,
+                sessionId,
+                error?.openShopToolCode || fallback,
+                String(error?.message || error),
+                {
+                    retryable:Boolean(error?.openShopToolRetryable),
+                    commandIndex:error?.openShopToolCommandIndex
+                }
+            );
+            this._toolResponses.set(id, response);
+        } finally {
+            this._toolInFlightIds.delete(id);
+            this._toolBusy = false;
         }
     },
     _readEmbedFileAsDataUrl(file) {
@@ -17713,18 +18271,31 @@ self.onmessage = async function(e) {
 
         const bound = this._embed;
         if (bound && (event.source !== bound.source || event.origin !== bound.origin)) return;
-        if (!bound && data.type !== 'openshop:hello') return;
+        if (!bound && data.type !== 'openshop:hello' && data.type !== 'openshop:tool:hello') return;
 
         const id = typeof data.id === 'string' ? data.id : null;
-        if (Number(data.version) !== this._embedProtocolVersion) {
+        if (typeof data.version !== 'number' || data.version !== this._embedProtocolVersion) {
+            if (data.type.startsWith('openshop:tool:')) {
+                this._postToolError(event, id, data.sessionId, 'INVALID_REQUEST', 'Unsupported protocol version ' + data.version);
+                return;
+            }
             this._postEmbedError(event, id, 'Unsupported protocol version ' + data.version);
+            return;
+        }
+
+        if (data.type.startsWith('openshop:tool:')) {
+            await this._onToolEmbedMessage(event, data);
             return;
         }
 
         try {
             switch (data.type) {
                 case 'openshop:hello':
+                    if (this._embedNamespace && this._embedNamespace !== 'manual') {
+                        throw new Error('This iframe is already bound to the tool bridge');
+                    }
                     this._embed = { source:event.source, origin:event.origin };
+                    this._embedNamespace = 'manual';
                     this._postEmbed({
                         type:'openshop:ready',
                         id,

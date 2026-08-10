@@ -191,6 +191,198 @@ export async function hashDataUrl(dataUrl: string): Promise<string> {
     .join('')
 }
 
+export interface SaveTaskWithImageAtomicOptions {
+  dataUrl: string
+  source: NonNullable<StoredImage['source']>
+  createTask: (imageId: string) => TaskRecord
+  signal?: AbortSignal
+  timeoutMs?: number
+  onCommit?: () => void
+}
+
+export interface SaveTaskWithImageAtomicResult {
+  imageId: string
+  task: TaskRecord
+}
+
+function createAbortError(message: string, name: 'AbortError' | 'TimeoutError') {
+  return new DOMException(message, name)
+}
+
+function remainingTimeout(deadlineAt: number | null) {
+  if (deadlineAt === null) return null
+  const remaining = deadlineAt - Date.now()
+  if (remaining <= 0) throw createAbortError('OpenShop 原子保存超时', 'TimeoutError')
+  return Math.max(1, remaining)
+}
+
+function waitForAtomicPreparation<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  deadlineAt: number | null,
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(createAbortError('OpenShop 原子保存已取消', 'AbortError'))
+  const timeoutMs = remainingTimeout(deadlineAt)
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return false
+      settled = true
+      if (timer !== null) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      return true
+    }
+    const onAbort = () => {
+      if (finish()) reject(createAbortError('OpenShop 原子保存已取消', 'AbortError'))
+    }
+    const timer = timeoutMs === null
+      ? null
+      : globalThis.setTimeout(() => {
+        if (finish()) reject(createAbortError('OpenShop 原子保存超时', 'TimeoutError'))
+      }, timeoutMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => { if (finish()) resolve(value) },
+      (error) => { if (finish()) reject(error) },
+    )
+  })
+}
+
+/**
+ * 将 OpenShop 输出图片、缩略图和完成态 Task 放在同一个 IndexedDB transaction。
+ * hash 与缩略图在 transaction 前生成；任何准备、request、abort 或 timeout 失败都不会留下部分写入。
+ */
+export async function saveTaskWithImageAtomic(
+  options: SaveTaskWithImageAtomicOptions,
+): Promise<SaveTaskWithImageAtomicResult> {
+  const deadlineAt = options.timeoutMs === undefined
+    ? null
+    : Date.now() + Math.max(0, options.timeoutMs)
+  if (options.signal?.aborted) throw createAbortError('OpenShop 原子保存已取消', 'AbortError')
+
+  const imageId = await waitForAtomicPreparation(hashDataUrl(options.dataUrl), options.signal, deadlineAt)
+  const thumbnail = await waitForAtomicPreparation(createImageThumbnail(options.dataUrl), options.signal, deadlineAt)
+  const task = options.createTask(imageId)
+  if (!task || typeof task !== 'object' || !task.id) throw new Error('OpenShop 原子保存未生成有效 Task')
+  if (!task.outputImages.includes(imageId)) throw new Error('OpenShop Task 未引用原子保存的图片')
+
+  const db = await waitForAtomicPreparation(openDB(), options.signal, deadlineAt)
+  const transactionTimeoutMs = remainingTimeout(deadlineAt)
+
+  return new Promise<SaveTaskWithImageAtomicResult>((resolve, reject) => {
+    let tx: IDBTransaction
+    try {
+      tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS, STORE_TASKS], 'readwrite')
+    } catch (error) {
+      reject(error)
+      return
+    }
+
+    let settled = false
+    let committed = false
+    let imageRequest: IDBRequest<StoredImage | undefined> | null = null
+    let thumbnailRequest: IDBRequest<StoredImageThumbnail | undefined> | null = null
+    let imageRead = false
+    let thumbnailRead = false
+    let writesStarted = false
+
+    const cleanup = () => {
+      if (timer !== null) clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onAbort)
+    }
+    const fail = (error: unknown) => {
+      if (settled || committed) return
+      settled = true
+      cleanup()
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
+    const abortTransaction = (error: Error) => {
+      if (settled || committed) return
+      try {
+        tx.abort()
+      } catch {
+        fail(error)
+        return
+      }
+      fail(error)
+    }
+    const onAbort = () => abortTransaction(createAbortError('OpenShop 原子保存已取消', 'AbortError'))
+    const timer = transactionTimeoutMs === null
+      ? null
+      : globalThis.setTimeout(
+        () => abortTransaction(createAbortError('OpenShop 原子保存超时', 'TimeoutError')),
+        transactionTimeoutMs,
+      )
+
+    const abortOnRequestError = (request: IDBRequest) => {
+      abortTransaction(request.error ?? new Error('OpenShop 原子保存 request 失败'))
+    }
+    const startWrites = () => {
+      if (writesStarted || !imageRead || !thumbnailRead || settled || committed) return
+      writesStarted = true
+      const images = tx.objectStore(STORE_IMAGES)
+      const thumbnails = tx.objectStore(STORE_THUMBNAILS)
+      const tasks = tx.objectStore(STORE_TASKS)
+      if (!imageRequest?.result) {
+        const request = images.put({
+          id: imageId,
+          dataUrl: options.dataUrl,
+          createdAt: Date.now(),
+          source: options.source,
+          width: thumbnail.width,
+          height: thumbnail.height,
+        } satisfies StoredImage)
+        request.onerror = () => abortOnRequestError(request)
+      }
+      if (thumbnailRequest?.result?.thumbnailVersion !== THUMBNAIL_VERSION) {
+        const request = thumbnails.put({
+          id: imageId,
+          thumbnailDataUrl: thumbnail.thumbnailDataUrl,
+          width: thumbnail.width,
+          height: thumbnail.height,
+          thumbnailVersion: THUMBNAIL_VERSION,
+        } satisfies StoredImageThumbnail)
+        request.onerror = () => abortOnRequestError(request)
+      }
+      const taskRequest = tasks.put(task)
+      taskRequest.onerror = () => abortOnRequestError(taskRequest)
+    }
+
+    try {
+      const images = tx.objectStore(STORE_IMAGES)
+      const thumbnails = tx.objectStore(STORE_THUMBNAILS)
+      imageRequest = images.get(imageId)
+      thumbnailRequest = thumbnails.get(imageId)
+      imageRequest.onsuccess = () => {
+        imageRead = true
+        startWrites()
+      }
+      thumbnailRequest.onsuccess = () => {
+        thumbnailRead = true
+        startWrites()
+      }
+      imageRequest.onerror = () => abortOnRequestError(imageRequest as IDBRequest)
+      thumbnailRequest.onerror = () => abortOnRequestError(thumbnailRequest as IDBRequest)
+    } catch (error) {
+      abortTransaction(error instanceof Error ? error : new Error(String(error)))
+      return
+    }
+
+    tx.oncomplete = () => {
+      if (settled) return
+      committed = true
+      settled = true
+      cleanup()
+      options.onCommit?.()
+      resolve({ imageId, task })
+    }
+    tx.onerror = () => fail(tx.error ?? new Error('OpenShop 原子保存 transaction 失败'))
+    tx.onabort = () => fail(tx.error ?? new Error('OpenShop 原子保存 transaction 已中止'))
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
+  })
+}
+
 function hashDataUrlFallback(dataUrl: string): string {
   let h1 = 0x811c9dc5
   let h2 = 0x01000193

@@ -29,6 +29,7 @@ import {
   putImageThumbnail,
   deleteImage,
   clearImages,
+  saveTaskWithImageAtomic,
   storeImage,
 } from './lib/db'
 import { callImageApi, type CallApiOptions, type CallApiResult } from './lib/api'
@@ -2084,13 +2085,26 @@ export interface SaveOpenShopEditOptions {
   inputImageIds?: string[]
   /** OpenShop 导出的图片。 */
   outputImage: Blob | string
+  /** Runner 的统一取消信号；手工编辑保存可不传。 */
+  signal?: AbortSignal
+  /** Runner 总 deadline 的当前剩余时间。 */
+  timeoutMs?: number
+  /** IndexedDB transaction oncomplete 时同步通知 Runner。 */
+  onCommit?: () => void
 }
 
 /**
  * 保存 OpenShop 编辑结果，并创建一条关联源任务的完成态历史记录。
  * 源任务及其输出图片不会被修改或覆盖。
  */
-export async function saveOpenShopEdit({ sourceTaskId, inputImageIds, outputImage }: SaveOpenShopEditOptions): Promise<TaskRecord> {
+export async function saveOpenShopEdit({
+  sourceTaskId,
+  inputImageIds,
+  outputImage,
+  signal,
+  timeoutMs,
+  onCommit,
+}: SaveOpenShopEditOptions): Promise<TaskRecord> {
   const sourceTask = useStore.getState().tasks.find((task) => task.id === sourceTaskId)
   if (!sourceTask) throw new Error('原始任务不存在，无法保存高级编辑结果')
 
@@ -2102,33 +2116,38 @@ export async function saveOpenShopEdit({ sourceTaskId, inputImageIds, outputImag
   }
 
   const outputDataUrl = await openShopImageToDataUrl(outputImage)
-  const outputImageId = await storeImage(outputDataUrl, 'openshop')
-  cacheImage(outputImageId, outputDataUrl)
-
-  const now = Date.now()
-  const task: TaskRecord = {
-    id: genId(),
-    prompt: sourceTask.prompt,
-    params: { ...sourceTask.params },
-    apiProvider: 'openshop',
-    apiProfileName: 'OpenShop',
-    apiModel: 'OpenShop',
-    origin: 'openshop',
-    sourceTaskId,
-    inputImageIds: uniqueSourceImageIds,
-    maskTargetImageId: null,
-    maskImageId: null,
-    outputImages: [outputImageId],
-    status: 'done',
-    error: null,
-    createdAt: now,
-    finishedAt: now,
-    elapsed: 0,
-  }
-
-  await putTask(task)
-  useStore.getState().setTasks([task, ...useStore.getState().tasks])
-  return task
+  const result = await saveTaskWithImageAtomic({
+    dataUrl: outputDataUrl,
+    source: 'openshop',
+    signal,
+    timeoutMs,
+    onCommit,
+    createTask: (outputImageId) => {
+      const now = Date.now()
+      return {
+        id: genId(),
+        prompt: sourceTask.prompt,
+        params: { ...sourceTask.params },
+        apiProvider: 'openshop',
+        apiProfileName: 'OpenShop',
+        apiModel: 'OpenShop',
+        origin: 'openshop',
+        sourceTaskId,
+        inputImageIds: uniqueSourceImageIds,
+        maskTargetImageId: null,
+        maskImageId: null,
+        outputImages: [outputImageId],
+        status: 'done',
+        error: null,
+        createdAt: now,
+        finishedAt: now,
+        elapsed: 0,
+      } satisfies TaskRecord
+    },
+  })
+  cacheImage(result.imageId, outputDataUrl)
+  useStore.getState().setTasks([result.task, ...useStore.getState().tasks])
+  return result.task
 }
 
 async function openShopImageToDataUrl(image: Blob | string): Promise<string> {
