@@ -123,6 +123,44 @@ test('Chat Agent 使用固定 SSE fixture 完成 Chromium 最小流程', async (
   expect(requestBody).toEqual(LEGACY_AGENT_REQUEST_BODY_FIXTURE)
 })
 
+test('Chat Agent 失败终态出现后立即刷新仍保留 partial 与错误', async ({ page }) => {
+  await page.route('**/mock/v1/responses', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache' },
+      body: [
+        'data: {"type":"response.output_text.delta","delta":"刷新后仍应保留的 partial"}\n\n',
+        'data: {"type":"response.failed","response":{"error":{"message":"E2E 模型执行失败"}}}\n\n',
+      ].join(''),
+    })
+  })
+
+  const query = new URLSearchParams({
+    apiUrl: 'http://127.0.0.1:4173/mock/v1',
+    apiKey: 'e2e-key',
+    apiMode: 'responses',
+    model: 'gpt-5.5',
+  })
+  await gotoGallery(page, `/?${query.toString()}`)
+  await page.getByRole('tab', { name: 'Agent' }).click()
+  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]').fill('测试失败后立即刷新')
+  await page.getByTitle('生成 (Ctrl+Enter)').click()
+
+  let latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-latest-response]')
+  await expect(latestResponse).toContainText('刷新后仍应保留的 partial')
+  await expect(latestResponse).toContainText('E2E 模型执行失败')
+  await expect(latestResponse).toContainText('执行失败')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('tablist', { name: '工作区模式' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Agent' }).click()
+  latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-latest-response]')
+  await expect(latestResponse).toContainText('刷新后仍应保留的 partial')
+  await expect(latestResponse).toContainText('E2E 模型执行失败')
+  await expect(latestResponse).toContainText('执行失败')
+})
+
 test('OpenShop 宿主拒绝错误消息来源并持久化像素等价的新历史', async ({ page }) => {
   const sourceDataUrl = await seedOpenShopHistory(page)
   await page.route('**/openshop/', async (route) => {

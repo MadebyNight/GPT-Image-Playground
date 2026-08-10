@@ -43,6 +43,27 @@ export type RuntimeConfigState =
   | { status: 'ready'; config: PublicRuntimeConfig }
   | { status: 'error'; error: string }
 
+export type ChatCapabilitySource = 'direct' | 'proxy' | 'none'
+export type ChatCapabilityStatus =
+  | 'usable'
+  | 'images_only'
+  | 'missing_credentials'
+  | 'loading'
+  | 'error'
+
+export interface ChatCapabilities {
+  /** 当前部署是否允许配置 Chat（Responses）能力。 */
+  chatAllowed: boolean
+  /** 当前选中的 API Profile 是否为 OpenAI-compatible Responses。 */
+  chatConfigured: boolean
+  /** 当前配置是否已经具备实际提交 Chat 请求所需的凭据或服务端代理。 */
+  chatUsable: boolean
+  /** Chat 请求实际使用浏览器直连、同源代理，或当前尚无可判断来源。 */
+  source: ChatCapabilitySource
+  /** 用于 UI 精确区分不可用原因。 */
+  status: ChatCapabilityStatus
+}
+
 const TOP_LEVEL_KEYS = new Set(['version', 'serverApi', 'restrictedAgent'])
 const RESTRICTED_AGENT_KEYS = new Set(['enabled', 'basePath', 'agentOnly'])
 const SERVER_API_KEYS = new Set([
@@ -253,6 +274,51 @@ export function isServerApiConfigEnabled(): boolean {
 
 export function isServerApiConfigUsable(): boolean {
   return isServerApiConfigEnabled()
+}
+
+export function getChatCapabilities(settings: AppSettings): ChatCapabilities {
+  if (runtimeState.status === 'loading') {
+    return {
+      chatAllowed: false,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'none',
+      status: 'loading',
+    }
+  }
+  if (runtimeState.status === 'error') {
+    return {
+      chatAllowed: false,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'none',
+      status: 'error',
+    }
+  }
+
+  if (runtimeState.config.serverApi.enabled) {
+    const chatAllowed = runtimeState.config.serverApi.apiModeOptions.includes('responses')
+    const profile = getServerManagedApiProfile(settings)
+    const chatConfigured = Boolean(chatAllowed && profile?.provider === 'openai' && profile.apiMode === 'responses')
+    return {
+      chatAllowed,
+      chatConfigured,
+      chatUsable: chatConfigured,
+      source: 'proxy',
+      status: chatConfigured ? 'usable' : 'images_only',
+    }
+  }
+
+  const profile = getActiveApiProfile(settings)
+  const chatConfigured = profile.provider === 'openai' && profile.apiMode === 'responses'
+  const chatUsable = chatConfigured && Boolean(profile.apiKey.trim())
+  return {
+    chatAllowed: true,
+    chatConfigured,
+    chatUsable,
+    source: 'direct',
+    status: chatUsable ? 'usable' : chatConfigured ? 'missing_credentials' : 'images_only',
+  }
 }
 
 export function isRestrictedAgentEnabled(): boolean {

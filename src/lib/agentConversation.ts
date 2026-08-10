@@ -68,7 +68,9 @@ export function getConversationTasks(tasks: TaskRecord[], anchor: TaskRecord | s
  */
 export function buildAgentConversationContext(tasks: TaskRecord[], conversationId: string): string | null {
   const completedTurns = getConversationTasks(tasks, conversationId)
-    .filter((task) => task.status === 'done' || Boolean(task.agentAssistantText?.trim()))
+    // error 任务可以持久化流式 partial，供刷新后展示；但它不是完整回复，
+    // 不能进入后续请求上下文，也不能被重试误认为成功轮次。
+    .filter((task) => task.status === 'done')
     .slice(-AGENT_CONTEXT_MAX_TURNS)
 
   if (!completedTurns.length) return null

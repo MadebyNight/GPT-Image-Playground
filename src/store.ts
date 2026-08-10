@@ -63,9 +63,51 @@ const CUSTOM_RECOVERY_POLL_MS = 10_000
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const submittedComposerVersions = new Map<string, number>()
+interface TaskPersistenceQueueEntry {
+  snapshot: TaskRecord
+  tail: Promise<void>
+}
+const taskPersistenceQueues = new Map<string, TaskPersistenceQueueEntry>()
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
 const MANAGED_API_RECOVERY_ERROR = '服务端统一 API 配置已启用，无法恢复原 API 任务'
 const RUNTIME_API_RECOVERY_ERROR = '服务端 API 配置不可用，无法恢复原 API 任务'
+
+function mergeTaskRecord(base: TaskRecord, patch: Partial<TaskRecord>): TaskRecord {
+  const merged = { ...base, ...patch }
+  if (base.status !== 'running' && patch.status === 'running') {
+    return {
+      ...merged,
+      status: base.status,
+      error: base.error,
+      finishedAt: base.finishedAt,
+      elapsed: base.elapsed,
+      agentAssistantText: base.agentAssistantText,
+      falRecoverable: base.falRecoverable,
+      customRecoverable: base.customRecoverable,
+    }
+  }
+  return merged
+}
+
+function enqueueTaskPersistence(task: TaskRecord): Promise<void> {
+  const previous = taskPersistenceQueues.get(task.id)?.tail ?? Promise.resolve()
+  const tail = previous
+    .catch(() => undefined)
+    .then(async () => {
+      await putTask(task)
+    })
+  const entry = { snapshot: task, tail }
+  taskPersistenceQueues.set(task.id, entry)
+  void tail.finally(() => {
+    if (taskPersistenceQueues.get(task.id) === entry) taskPersistenceQueues.delete(task.id)
+  }).catch(() => undefined)
+  return tail
+}
+
+export function getPendingTaskPersistenceCountForTests(): number {
+  return taskPersistenceQueues.size
+}
 
 function getApiRecoveryRestrictionError(): string | null {
   const runtimeState = getRuntimeConfigState()
@@ -309,6 +351,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     ...currentState,
     ...(sanitizedPersisted as Partial<AppState>),
     settings,
+    composerVersion: currentState.composerVersion,
     prompt: settings.persistInputOnRestart && typeof persisted.prompt === 'string' ? persisted.prompt : '',
     inputImages: settings.persistInputOnRestart && Array.isArray(persisted.inputImages) ? persisted.inputImages : [],
   }
@@ -324,6 +367,7 @@ interface AppState {
   dismissCodexCliPrompt: (key: string) => void
 
   // 输入
+  composerVersion: number
   prompt: string
   setPrompt: (p: string) => void
   inputImages: InputImage[]
@@ -432,7 +476,12 @@ export const useStore = create<AppState>()(
         return {
           settings,
           ...(shouldClearReusedProfile
-            ? { reusedTaskApiProfileId: null, reusedTaskApiProfileName: null, reusedTaskApiProfileMissing: false }
+            ? {
+                reusedTaskApiProfileId: null,
+                reusedTaskApiProfileName: null,
+                reusedTaskApiProfileMissing: false,
+                composerVersion: st.composerVersion + 1,
+              }
             : {}),
         }
       }),
@@ -444,13 +493,16 @@ export const useStore = create<AppState>()(
       })),
 
       // Input
+      composerVersion: 0,
       prompt: '',
-      setPrompt: (prompt) => set({ prompt }),
+      setPrompt: (prompt) => set((state) => state.prompt === prompt
+        ? state
+        : { prompt, composerVersion: state.composerVersion + 1 }),
       inputImages: [],
       addInputImage: (img) =>
         set((s) => {
           if (s.inputImages.find((i) => i.id === img.id)) return s
-          return { inputImages: [...s.inputImages, img] }
+          return { inputImages: [...s.inputImages, img], composerVersion: s.composerVersion + 1 }
         }),
       removeInputImage: (idx) =>
         set((s) => {
@@ -460,6 +512,7 @@ export const useStore = create<AppState>()(
           return {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
+            composerVersion: s.composerVersion + 1,
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           }
         }),
@@ -471,6 +524,7 @@ export const useStore = create<AppState>()(
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, []),
             maskDraft: null,
             maskEditorImageId: null,
+            composerVersion: s.composerVersion + 1,
           }
         }),
       setInputImages: (imgs, options) =>
@@ -481,6 +535,7 @@ export const useStore = create<AppState>()(
           return {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages, options?.equivalentImageIds),
+            composerVersion: s.composerVersion + 1,
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           }
         }),
@@ -499,6 +554,7 @@ export const useStore = create<AppState>()(
           return {
             inputImages: images,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, images),
+            composerVersion: s.composerVersion + 1,
           }
         }),
       maskDraft: null,
@@ -509,9 +565,12 @@ export const useStore = create<AppState>()(
             maskDraft,
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
+            composerVersion: s.composerVersion + 1,
           }
         }),
-      clearMaskDraft: () => set({ maskDraft: null }),
+      clearMaskDraft: () => set((state) => state.maskDraft
+        ? { maskDraft: null, composerVersion: state.composerVersion + 1 }
+        : state),
       maskEditorImageId: null,
       setMaskEditorImageId: (maskEditorImageId) => {
         if (maskEditorImageId) dismissAllTooltips()
@@ -520,14 +579,26 @@ export const useStore = create<AppState>()(
 
       // Params
       params: { ...DEFAULT_PARAMS },
-      setParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
+      setParams: (p) => set((s) => {
+        const params = { ...s.params, ...p }
+        const changed = Object.keys(p).some((key) => s.params[key as keyof TaskParams] !== params[key as keyof TaskParams])
+        return changed ? { params, composerVersion: s.composerVersion + 1 } : s
+      }),
       reusedTaskApiProfileId: null,
       reusedTaskApiProfileName: null,
       reusedTaskApiProfileMissing: false,
-      setReusedTaskApiProfile: (profileId, missing = false, profileName = null) => set({
-        reusedTaskApiProfileId: profileId,
-        reusedTaskApiProfileName: profileName,
-        reusedTaskApiProfileMissing: missing,
+      setReusedTaskApiProfile: (profileId, missing = false, profileName = null) => set((state) => {
+        if (
+          state.reusedTaskApiProfileId === profileId
+          && state.reusedTaskApiProfileName === profileName
+          && state.reusedTaskApiProfileMissing === missing
+        ) return state
+        return {
+          reusedTaskApiProfileId: profileId,
+          reusedTaskApiProfileName: profileName,
+          reusedTaskApiProfileMissing: missing,
+          composerVersion: state.composerVersion + 1,
+        }
       }),
 
       // Tasks
@@ -1097,10 +1168,41 @@ export async function initStore() {
 
 type TaskApiCaller = (opts: CallApiOptions) => Promise<CallApiResult>
 
-interface AgentTaskMetadata {
+export interface AgentTaskMetadata {
   origin: 'agent'
   agentConversationId: string
   agentTurn: number
+}
+
+function getAgentAssistantTextFromError(err: unknown): string | undefined {
+  if (!err || typeof err !== 'object') return undefined
+  const value = (err as { agentAssistantText?: unknown }).agentAssistantText
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+export interface ComposerDraftSnapshot {
+  prompt: string
+  inputImages: InputImage[]
+  maskDraft: MaskDraft | null
+  params: TaskParams
+  reusedTaskApiProfileId: string | null
+  reusedTaskApiProfileName: string | null
+  reusedTaskApiProfileMissing: boolean
+  composerVersion: number
+}
+
+export function getComposerDraftSnapshot(): ComposerDraftSnapshot {
+  const state = useStore.getState()
+  return {
+    prompt: state.prompt,
+    inputImages: state.inputImages.map((image) => ({ ...image })),
+    maskDraft: state.maskDraft ? { ...state.maskDraft } : null,
+    params: { ...state.params },
+    reusedTaskApiProfileId: state.reusedTaskApiProfileId,
+    reusedTaskApiProfileName: state.reusedTaskApiProfileName,
+    reusedTaskApiProfileMissing: state.reusedTaskApiProfileMissing,
+    composerVersion: state.composerVersion,
+  }
 }
 
 interface SubmitTaskOptions {
@@ -1110,16 +1212,62 @@ interface SubmitTaskOptions {
   onTaskCreated?: (taskId: string) => void
   /** 仅默认 Agent 在任务落库时写入的会话元数据。 */
   taskMetadata?: AgentTaskMetadata
+  /** 提交入口冻结的完整 Composer 草稿；异步创建完成后只清理同一版本。 */
+  draftSnapshot?: ComposerDraftSnapshot
 }
 
 interface ExecuteTaskOptions {
   callApi?: TaskApiCaller
 }
 
+function clearSubmittedComposer(expectedVersion: number, clearInputAfterSubmit: boolean): number | null {
+  let matched = false
+  useStore.setState((state) => {
+    if (state.composerVersion !== expectedVersion) return state
+    matched = true
+
+    const shouldClearReuse = Boolean(
+      state.reusedTaskApiProfileId
+      || state.reusedTaskApiProfileName
+      || state.reusedTaskApiProfileMissing,
+    )
+    if (!clearInputAfterSubmit && !shouldClearReuse) return state
+
+    if (clearInputAfterSubmit) {
+      for (const image of state.inputImages) imageCache.delete(image.id)
+    }
+    return {
+      ...(clearInputAfterSubmit
+        ? {
+            prompt: '',
+            inputImages: [],
+            maskDraft: null,
+            maskEditorImageId: null,
+          }
+        : {}),
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      composerVersion: state.composerVersion + 1,
+    }
+  })
+  return matched ? useStore.getState().composerVersion : null
+}
+
 /** 提交新任务 */
 export async function submitTask(options: SubmitTaskOptions = {}): Promise<string | null> {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
-    useStore.getState()
+  const initialState = useStore.getState()
+  const draftSnapshot = options.draftSnapshot ?? getComposerDraftSnapshot()
+  const { settings, showToast, setConfirmDialog } = initialState
+  const {
+    prompt,
+    inputImages,
+    maskDraft,
+    params,
+    reusedTaskApiProfileId,
+    reusedTaskApiProfileName,
+    reusedTaskApiProfileMissing,
+  } = draftSnapshot
 
   if (getRuntimeConfigState().status !== 'ready') {
     showToast('服务端 API 配置不可用，请联系部署管理员', 'error')
@@ -1134,7 +1282,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
-        useStore.getState().setReusedTaskApiProfile(null)
+        // 使用冻结草稿继续提交；仅在任务创建后按 composerVersion 清理来源草稿。
       } else {
         setConfirmDialog({
           title: '找不到 API 配置',
@@ -1142,7 +1290,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
       confirmText: '使用当前配置提交',
       cancelText: '放弃提交',
       action: () => {
-        void submitTask({ ...options, useCurrentApiProfileWhenReusedMissing: true })
+        void submitTask({ ...options, draftSnapshot, useCurrentApiProfileWhenReusedMissing: true })
       },
         })
         return null
@@ -1180,7 +1328,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
           confirmText: '继续提交',
           tone: 'warning',
           action: () => {
-            void submitTask({ allowFullMask: true })
+            void submitTask({ ...options, draftSnapshot, allowFullMask: true })
           },
         })
         return null
@@ -1189,7 +1337,12 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
       cacheImage(maskImageId, maskDraft.maskDataUrl)
       maskTargetImageId = maskDraft.targetImageId
     } catch (err) {
-      if (!inputImages.some((img) => img.id === maskDraft.targetImageId)) {
+      const currentState = useStore.getState()
+      if (
+        currentState.composerVersion === draftSnapshot.composerVersion
+        && currentState.maskDraft?.targetImageId === maskDraft.targetImageId
+        && !inputImages.some((img) => img.id === maskDraft.targetImageId)
+      ) {
         useStore.getState().clearMaskDraft()
       }
       showToast(err instanceof Error ? err.message : String(err), 'error')
@@ -1204,8 +1357,12 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
 
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
+  let cleanupVersion = draftSnapshot.composerVersion
   if (Object.keys(normalizedParamPatch).length) {
-    useStore.getState().setParams(normalizedParamPatch)
+    if (useStore.getState().composerVersion === cleanupVersion) {
+      useStore.getState().setParams(normalizedParamPatch)
+      cleanupVersion = useStore.getState().composerVersion
+    }
   }
 
   const taskId = genId()
@@ -1233,11 +1390,8 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   useStore.getState().setTasks([task, ...latestTasks])
   await putTask(task)
 
-  if (settings.clearInputAfterSubmit) {
-    useStore.getState().setPrompt('')
-    useStore.getState().clearInputImages()
-  }
-  useStore.getState().setReusedTaskApiProfile(null)
+  const composerVersionAfterSubmit = clearSubmittedComposer(cleanupVersion, settings.clearInputAfterSubmit)
+  if (composerVersionAfterSubmit !== null) submittedComposerVersions.set(taskId, composerVersionAfterSubmit)
 
   // 异步调用 API
   options.onTaskCreated?.(taskId)
@@ -1248,9 +1402,12 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
 async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
-  if (!task) return
+  if (!task) {
+    submittedComposerVersions.delete(taskId)
+    return
+  }
   if (getRuntimeConfigState().status !== 'ready') {
-    updateTaskInStore(taskId, {
+    await updateTerminalTaskInStore(taskId, {
       status: 'error',
       error: '服务端 API 配置不可用，请联系部署管理员',
       falRecoverable: false,
@@ -1258,12 +1415,13 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
+    submittedComposerVersions.delete(taskId)
     return
   }
   const effectiveSettings = getEffectiveSettings(settings)
   const taskProfile = getTaskApiProfile(effectiveSettings, task)
   if (!taskProfile && task.apiProfileId) {
-    updateTaskInStore(taskId, {
+    await updateTerminalTaskInStore(taskId, {
       status: 'error',
       error: '找不到此任务所使用的 API 配置。',
       falRecoverable: false,
@@ -1271,6 +1429,7 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
+    submittedComposerVersions.delete(taskId)
     return
   }
   const activeProfile = taskProfile ?? getEffectiveApiProfile(effectiveSettings)
@@ -1283,7 +1442,11 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
     ? { taskId: task.customTaskId }
     : null
 
-  if (taskProvider !== 'fal' && !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0)) {
+  if (
+    task.origin !== 'agent'
+    && taskProvider !== 'fal'
+    && !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0)
+  ) {
     scheduleOpenAIWatchdog(taskId, activeProfile.timeout)
   }
 
@@ -1372,7 +1535,7 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       ? result.assistantText.trim()
       : undefined
     clearOpenAIWatchdogTimer(taskId)
-    updateTaskInStore(taskId, {
+    const terminalPublished = await updateTerminalTaskInStore(taskId, {
       outputImages: outputIds,
       rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
       actualParams,
@@ -1385,12 +1548,16 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       customRecoverable: false,
       ...(agentAssistantText ? { agentAssistantText } : {}),
     })
+    if (!terminalPublished) return
 
     useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
-    const currentMask = useStore.getState().maskDraft
+    const currentState = useStore.getState()
+    const currentMask = currentState.maskDraft
+    const submittedComposerVersion = submittedComposerVersions.get(taskId)
     if (
       maskDataUrl &&
       currentMask &&
+      submittedComposerVersion === currentState.composerVersion &&
       currentMask.targetImageId === task.maskTargetImageId &&
       currentMask.maskDataUrl === maskDataUrl
     ) {
@@ -1405,7 +1572,7 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       : null)
     const latestCustomTaskInfo = customTaskInfo ?? (latestTask.customTaskId ? { taskId: latestTask.customTaskId } : null)
     if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      await updateTerminalTaskInStore(taskId, {
         status: 'error',
         error: '与 fal.ai 的连接已断开，之后会继续查询任务结果。',
         falRequestId: latestFalRequestInfo.requestId,
@@ -1416,7 +1583,7 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       })
       scheduleFalRecovery(taskId)
     } else if (latestCustomTaskInfo && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      await updateTerminalTaskInStore(taskId, {
         status: 'error',
         error: '与自定义异步任务的连接已断开，之后会继续查询任务结果。',
         customTaskId: latestCustomTaskInfo.taskId,
@@ -1427,11 +1594,12 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
       scheduleCustomRecovery(taskId)
     } else {
       let errorMessage = err instanceof Error ? err.message : String(err)
+      const agentAssistantText = latestTask.origin === 'agent' ? getAgentAssistantTextFromError(err) : undefined
       const networkErrorHint = getApiRequestNetworkErrorHint(err, latestTask, useStore.getState().settings)
       if (networkErrorHint && !errorMessage.includes(IMAGE_FETCH_CORS_HINT)) {
         errorMessage += `\n${networkErrorHint}`
       }
-      updateTaskInStore(taskId, {
+      const terminalPublished = await updateTerminalTaskInStore(taskId, {
         status: 'error',
         error: errorMessage,
         ...getRawErrorPayload(err),
@@ -1439,10 +1607,12 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
         customRecoverable: false,
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
+        ...(agentAssistantText ? { agentAssistantText } : {}),
       })
-      useStore.getState().setDetailTaskId(taskId)
+      if (terminalPublished) useStore.getState().setDetailTaskId(taskId)
     }
   } finally {
+    submittedComposerVersions.delete(taskId)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
       imageCache.delete(imgId)
@@ -1452,28 +1622,59 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
 
 export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   const { tasks, setTasks } = useStore.getState()
-  const updated = tasks.map((t) =>
-    t.id === taskId ? { ...t, ...patch } : t,
-  )
+  const updated = tasks.map((task) => task.id === taskId ? mergeTaskRecord(task, patch) : task)
   setTasks(updated)
-  const task = updated.find((t) => t.id === taskId)
-  if (task) putTask(task)
+  const visibleTask = updated.find((task) => task.id === taskId)
+  if (!visibleTask) return
+
+  const pendingTask = taskPersistenceQueues.get(taskId)?.snapshot
+  const persistedTask = mergeTaskRecord(pendingTask ?? visibleTask, patch)
+  void enqueueTaskPersistence(persistedTask).catch(() => undefined)
 }
 
-/** 重试失败的任务：创建新任务并执行 */
-export async function retryTask(task: TaskRecord) {
+async function updateTerminalTaskInStore(
+  taskId: string,
+  patch: Partial<TaskRecord> & { status: 'done' | 'error' },
+): Promise<boolean> {
+  const visibleTask = useStore.getState().tasks.find((task) => task.id === taskId)
+  if (!visibleTask || visibleTask.status !== 'running') return false
+
+  const pendingTask = taskPersistenceQueues.get(taskId)?.snapshot
+  const baseTask = pendingTask ?? visibleTask
+  if (baseTask.status !== 'running') return false
+  const terminalTask = mergeTaskRecord(baseTask, patch)
+  try {
+    await enqueueTaskPersistence(terminalTask)
+  } catch {
+    return false
+  }
+
+  const { tasks, setTasks } = useStore.getState()
+  const latestTask = tasks.find((task) => task.id === taskId)
+  if (!latestTask || latestTask.status !== 'running') return false
+  setTasks(tasks.map((task) => task.id === taskId ? mergeTaskRecord(task, patch) : task))
+  return true
+}
+
+export interface RetryTaskExecutionOptions extends ExecuteTaskOptions {
+  onTaskCreated?: (taskId: string) => void
+  taskMetadata?: AgentTaskMetadata
+}
+
+/** 使用指定执行器重建任务；Legacy Chat 通过该入口保持 Responses 与会话元数据。 */
+export async function retryTaskWithExecution(task: TaskRecord, options: RetryTaskExecutionOptions = {}): Promise<string | null> {
   if (task.origin === 'restricted-agent') {
     useStore.getState().showToast('受限 Agent 任务不能直接重试，请重新生成计划并确认', 'info')
-    return
+    return null
   }
   if (task.origin === 'openshop') {
     useStore.getState().showToast('OpenShop 编辑记录不能重试，可继续使用高级编辑', 'info')
-    return
+    return null
   }
   const { settings } = useStore.getState()
   if (getRuntimeConfigState().status !== 'ready') {
     useStore.getState().showToast('服务端 API 配置不可用，请联系部署管理员', 'error')
-    return
+    return null
   }
   const effectiveSettings = getEffectiveSettings(settings)
   const activeProfile = getEffectiveApiProfile(effectiveSettings)
@@ -1496,13 +1697,25 @@ export async function retryTask(task: TaskRecord) {
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
+    ...(options.taskMetadata ?? {}),
   }
 
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([newTask, ...latestTasks])
   await putTask(newTask)
 
-  executeTask(taskId)
+  options.onTaskCreated?.(taskId)
+  void executeTask(taskId, { callApi: options.callApi })
+  return taskId
+}
+
+/** 重试失败的任务：Legacy Chat 动态路由到专用 Responses 重试，其余沿用图片路径。 */
+export async function retryTask(task: TaskRecord): Promise<string | null> {
+  if (task.origin === 'agent') {
+    const { retryAgentTask } = await import('./lib/legacyAgentExecutor')
+    return retryAgentTask(task)
+  }
+  return retryTaskWithExecution(task)
 }
 
 /** 复用配置 */

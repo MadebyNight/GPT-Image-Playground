@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TaskRecord } from '../types'
-import { subscribeAgentProgress, type AgentProgressEvent, type AgentToolStatus } from '../lib/agentExecutor'
+import { cancelAgentTask, subscribeAgentProgress, type AgentProgressEvent, type AgentToolStatus } from '../lib/agentExecutor'
 import AgentImagePreview from './AgentImagePreview'
 import TaskDetailContent from './TaskDetailContent'
 import { ChevronDownIcon } from './icons'
@@ -183,6 +183,8 @@ function DeferredTaskDetail({ task }: { task: TaskRecord }) {
 
 export default function LegacyAgentMainWorkspace({ task, conversationTasks }: AgentMainWorkspaceProps) {
   const [sessions, setSessions] = useState<Record<string, AgentSessionView>>({})
+  const fallbackTaskIdRef = useRef(task?.id ?? null)
+  fallbackTaskIdRef.current = task?.id ?? null
   const activeSession = useMemo(
     () => task ? mergeSessionWithTask(task, sessions[task.id]) : null,
     [sessions, task],
@@ -196,13 +198,13 @@ export default function LegacyAgentMainWorkspace({ task, conversationTasks }: Ag
     return subscribeAgentProgress((event) => {
       const explicitTaskId = event.type === 'task_created' ? event.taskId : event.taskId
       setSessions((current) => {
-        const taskId = explicitTaskId ?? task?.id
+        const taskId = explicitTaskId ?? fallbackTaskIdRef.current
         if (!taskId) return current
         const next = applyAgentEvent(current[taskId], event, taskId)
         return next ? { ...current, [taskId]: next } : current
       })
     })
-  }, [task?.id])
+  }, [])
 
   if (!task) {
     return (
@@ -227,6 +229,8 @@ export default function LegacyAgentMainWorkspace({ task, conversationTasks }: Ag
     extraOutputImageIds.length ||
     activeSession?.partialImages.length,
   )
+  const assistantResponseText = getAssistantText(task, activeSession ?? undefined)
+  const executionError = activeSession?.error || task.error
 
   return (
     <section className="h-full min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 dark:border-white/[0.08] dark:bg-gray-900" aria-labelledby="agent-workspace-title">
@@ -239,8 +243,18 @@ export default function LegacyAgentMainWorkspace({ task, conversationTasks }: Ag
             <span className="text-gray-400 dark:text-gray-500">· {getTaskStatusLabel(task)}</span>
           </div>
           <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-200">
-            {getAssistantText(task, activeSession ?? undefined)}
+            {assistantResponseText}
           </p>
+          {task.status === 'running' && (
+            <button
+              type="button"
+              data-agent-cancel-task={task.id}
+              className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
+              onClick={() => { cancelAgentTask(task.id) }}
+            >
+              取消生成
+            </button>
+          )}
           {(previewImageId || previewFallbackSrc || task.status === 'running') && (
             <AgentImagePreview
               imageId={previewImageId}
@@ -249,9 +263,9 @@ export default function LegacyAgentMainWorkspace({ task, conversationTasks }: Ag
               className="mx-auto mt-4 h-56 w-full max-w-md sm:h-64"
             />
           )}
-          {(activeSession?.error || task.error) && task.status !== 'error' && (
+          {executionError && executionError !== assistantResponseText && (
             <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
-              {activeSession?.error || task.error}
+              {executionError}
             </p>
           )}
         </article>

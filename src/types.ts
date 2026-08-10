@@ -180,7 +180,7 @@ export interface TaskRecord {
   agentConversationId?: string
   /** 默认 Agent 对话中的轮次，从 1 开始。 */
   agentTurn?: number
-  /** 默认 Agent 返回的最终文本，用于刷新后恢复会话摘要与上下文。 */
+  /** 默认 Agent 返回的文本；done 时是最终文本，error 时可保存非空流式 partial，仅用于恢复展示。 */
   agentAssistantText?: string
   /** OpenShop 编辑结果对应的源任务 ID。 */
   sourceTaskId?: string

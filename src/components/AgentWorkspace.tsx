@@ -17,9 +17,11 @@ interface AgentWorkspaceProps {
   activeTaskId: string | null
   onActiveTaskChange: (taskId: string | null) => void
   onNewConversation?: () => void
+  /** 隐藏时仍保持挂载和流订阅，但不因后台任务列表变化改写当前选中项。 */
+  active?: boolean
 }
 
-export default function AgentWorkspace({ activeTaskId, onActiveTaskChange, onNewConversation }: AgentWorkspaceProps) {
+export default function AgentWorkspace({ activeTaskId, onActiveTaskChange, onNewConversation, active = true }: AgentWorkspaceProps) {
   const tasks = useStore((s) => s.tasks)
   const [mobilePanel, setMobilePanel] = useState<AgentMobilePanel>('workspace')
   const [isStartingNewConversation, setIsStartingNewConversation] = useState(false)
@@ -43,6 +45,8 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange, onNew
     const previousTaskIds = previousTaskIdsRef.current
     previousTaskIdsRef.current = currentTaskIds
 
+    if (!active) return
+
     if (!previousTaskIds) {
       if (!activeTaskId && currentTaskIds[0] && !isStartingNewConversation) onActiveTaskChange(currentTaskIds[0])
       return
@@ -65,7 +69,7 @@ export default function AgentWorkspace({ activeTaskId, onActiveTaskChange, onNew
     }
 
     if (!activeTaskId && latestTaskId && !isStartingNewConversation) onActiveTaskChange(latestTaskId)
-  }, [activeTaskId, isStartingNewConversation, onActiveTaskChange, sortedTasks])
+  }, [active, activeTaskId, isStartingNewConversation, onActiveTaskChange, sortedTasks])
 
   const handleSelectTask = (taskId: string) => {
     setIsStartingNewConversation(false)

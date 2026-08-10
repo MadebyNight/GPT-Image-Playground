@@ -41,9 +41,17 @@ function dbTransaction<T>(
       new Promise((resolve, reject) => {
         const tx = db.transaction(storeName, mode)
         const store = tx.objectStore(storeName)
-        const req = fn(store)
-        req.onsuccess = () => resolve(req.result)
-        req.onerror = () => reject(req.error)
+        let req: IDBRequest<T>
+        const rejectTransaction = () => reject(tx.error ?? req?.error ?? new Error('IndexedDB transaction failed'))
+        tx.oncomplete = () => resolve(req.result)
+        tx.onerror = rejectTransaction
+        tx.onabort = rejectTransaction
+        try {
+          req = fn(store)
+          req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'))
+        } catch (error) {
+          reject(error)
+        }
       }),
   )
 }

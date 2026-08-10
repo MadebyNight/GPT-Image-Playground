@@ -5,8 +5,11 @@ import type { StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { getEffectiveApiProfile, initializeRuntimeConfig, loadRuntimeConfig } from './lib/serverApiConfig'
 import * as falAiImageApi from './lib/falAiImageApi'
+const dbMockState = vi.hoisted(() => ({
+  tasks: new Map<string, TaskRecord>(),
+}))
 vi.mock('./lib/db', () => {
-  const tasks = new Map<string, TaskRecord>()
+  const tasks = dbMockState.tasks
   const images = new Map<string, StoredImage>()
   const thumbnails = new Map<string, StoredImageThumbnail>()
   let imageSeq = 0
@@ -14,10 +17,10 @@ vi.mock('./lib/db', () => {
   return {
     CURRENT_THUMBNAIL_VERSION: 2,
     getAllTasks: async () => [...tasks.values()],
-    putTask: async (task: TaskRecord) => {
+    putTask: vi.fn(async (task: TaskRecord) => {
       tasks.set(task.id, task)
       return task.id
-    },
+    }),
     deleteTask: async (id: string) => {
       tasks.delete(id)
     },
@@ -53,7 +56,7 @@ vi.mock('./lib/db', () => {
   }
 })
 import { clearImages, clearTasks, getAllTasks, getImage, putImage, putTask } from './lib/db'
-import { editOutputs, getCodexCliPromptKey, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, reuseConfig, saveOpenShopEdit, submitTask, useStore } from './store'
+import { editOutputs, getCodexCliPromptKey, getPendingTaskPersistenceCountForTests, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, reuseConfig, saveOpenShopEdit, submitTask, updateTaskInStore, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -249,6 +252,27 @@ describe('interrupted OpenAI running tasks', () => {
     expect(result.tasks.find((item) => item.id === 'custom-running')).toEqual(customAsyncRunning)
     expect(result.tasks.find((item) => item.id === 'agent-running')).toEqual(restrictedAgentRunning)
     expect(result.tasks.find((item) => item.id === 'done-task')).toEqual(doneTask)
+  })
+
+  it('keeps persisted Agent partial text when a refresh marks the running task interrupted', () => {
+    const runningAgent = task({
+      id: 'agent-partial-refresh',
+      origin: 'agent',
+      status: 'running',
+      createdAt: 1_000,
+      finishedAt: null,
+      elapsed: null,
+      agentAssistantText: '刷新前已持久化 partial',
+    })
+
+    const result = markInterruptedOpenAIRunningTasks([runningAgent], 5_000)
+
+    expect(result.tasks[0]).toMatchObject({
+      status: 'error',
+      error: '请求中断',
+      agentAssistantText: '刷新前已持久化 partial',
+      finishedAt: 5_000,
+    })
   })
 
   it('marks incompatible recoverable tasks as interrupted in managed mode', () => {
@@ -523,6 +547,231 @@ describe('input persistence setting', () => {
 
     expect(persisted.prompt).toBe('')
     expect(persisted.inputImages).toEqual([])
+  })
+})
+
+describe('submitted composer snapshot', () => {
+  beforeEach(() => {
+    vi.mocked(putTask).mockClear()
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        clearInputAfterSubmit: true,
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+      prompt: '旧草稿',
+      inputImages: [imageA],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      composerVersion: 0,
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      tasks: [],
+      showToast: vi.fn(),
+      setConfirmDialog: vi.fn(),
+    })
+  })
+
+  it('does not clear a newer draft after asynchronous task creation', async () => {
+    const result = { images: ['data:image/png;base64,aW1hZ2U='], actualParams: {} }
+    const submitting = submitTask({ callApi: vi.fn().mockResolvedValue(result) })
+    useStore.getState().setPrompt('用户刚输入的新草稿')
+    useStore.getState().setParams({ size: '1536x1024' })
+    useStore.getState().setInputImages([imageB])
+
+    const taskId = await submitting
+    const created = useStore.getState().tasks.find((item) => item.id === taskId)
+
+    expect(taskId).not.toBeNull()
+    expect(created).toMatchObject({
+      prompt: '旧草稿',
+      inputImageIds: [imageA.id],
+      params: expect.objectContaining({ size: DEFAULT_PARAMS.size }),
+    })
+    expect(useStore.getState().prompt).toBe('用户刚输入的新草稿')
+    expect(useStore.getState().inputImages).toEqual([imageB])
+    expect(useStore.getState().params.size).toBe('1536x1024')
+  })
+
+  it('does not clear a newer composer version when the new draft differs only by whitespace', async () => {
+    useStore.setState({ prompt: '尾部空白测试' })
+    const submitting = submitTask({
+      draftSnapshot: {
+        prompt: '尾部空白测试',
+        inputImages: [],
+        maskDraft: null,
+        params: { ...DEFAULT_PARAMS },
+        reusedTaskApiProfileId: null,
+        reusedTaskApiProfileName: null,
+        reusedTaskApiProfileMissing: false,
+        composerVersion: useStore.getState().composerVersion,
+      },
+      callApi: vi.fn().mockResolvedValue({ images: [], actualParams: {} }),
+    })
+    useStore.getState().setPrompt('尾部空白测试  \n')
+
+    await submitting
+
+    expect(useStore.getState().prompt).toBe('尾部空白测试  \n')
+  })
+
+  it('persists assistant partial text on failure while keeping the task in error', async () => {
+    useStore.setState({ prompt: '会失败的 Agent 请求', inputImages: [] })
+    const streamError = Object.assign(new Error('流式响应中断'), {
+      agentAssistantText: '已返回但未完成的 partial 文本',
+    })
+    const taskId = await submitTask({
+      callApi: vi.fn().mockRejectedValue(streamError),
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: 'conversation-partial',
+        agentTurn: 1,
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        status: 'error',
+        error: '流式响应中断',
+        agentAssistantText: '已返回但未完成的 partial 文本',
+      })
+    })
+    expect((await getAllTasks()).find((item) => item.id === taskId)).toMatchObject({
+      status: 'error',
+      error: '流式响应中断',
+      agentAssistantText: '已返回但未完成的 partial 文本',
+    })
+  })
+
+  it('publishes an Agent error terminal only after its partial text is persisted', async () => {
+    let releaseTerminal!: () => void
+    const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve })
+    vi.mocked(putTask)
+      .mockImplementationOnce(async (record) => {
+        dbMockState.tasks.set(record.id, record)
+        return record.id
+      })
+      .mockImplementationOnce(async (record) => {
+        await terminalGate
+        dbMockState.tasks.set(record.id, record)
+        return record.id
+      })
+    useStore.setState({ prompt: '持久化后发布终态', inputImages: [] })
+    const streamError = Object.assign(new Error('流式响应中断'), {
+      agentAssistantText: '先落库的 partial 文本',
+    })
+
+    const taskId = await submitTask({
+      callApi: vi.fn().mockRejectedValue(streamError),
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: 'conversation-terminal-order',
+        agentTurn: 1,
+      },
+    })
+    await vi.waitFor(() => expect(putTask).toHaveBeenCalledTimes(2))
+
+    expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+      status: 'running',
+      error: null,
+    })
+    expect(getPendingTaskPersistenceCountForTests()).toBe(1)
+
+    releaseTerminal()
+    await vi.waitFor(() => {
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        status: 'error',
+        error: '流式响应中断',
+        agentAssistantText: '先落库的 partial 文本',
+      })
+    })
+    expect(dbMockState.tasks.get(String(taskId))).toMatchObject({
+      status: 'error',
+      agentAssistantText: '先落库的 partial 文本',
+    })
+    await vi.waitFor(() => expect(getPendingTaskPersistenceCountForTests()).toBe(0))
+  })
+
+  it('does not publish a terminal state when its IndexedDB transaction rejects', async () => {
+    vi.mocked(putTask)
+      .mockImplementationOnce(async (record) => {
+        dbMockState.tasks.set(record.id, record)
+        return record.id
+      })
+      .mockRejectedValueOnce(new Error('IndexedDB transaction aborted'))
+    useStore.setState({ prompt: '终态事务失败', inputImages: [] })
+
+    const taskId = await submitTask({
+      callApi: vi.fn().mockRejectedValue(Object.assign(new Error('上游失败'), {
+        agentAssistantText: '不应伪发布的 partial',
+      })),
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: 'conversation-terminal-abort',
+        agentTurn: 1,
+      },
+    })
+    await vi.waitFor(() => expect(putTask).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(getPendingTaskPersistenceCountForTests()).toBe(0))
+
+    expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+      status: 'running',
+      error: null,
+    })
+    expect(dbMockState.tasks.get(String(taskId))).toMatchObject({ status: 'running', error: null })
+  })
+
+  it('keeps a queued terminal snapshot when a late running patch arrives', async () => {
+    let releaseTerminal!: () => void
+    const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve })
+    vi.mocked(putTask)
+      .mockImplementationOnce(async (record) => {
+        dbMockState.tasks.set(record.id, record)
+        return record.id
+      })
+      .mockImplementationOnce(async (record) => {
+        await terminalGate
+        dbMockState.tasks.set(record.id, record)
+        return record.id
+      })
+    useStore.setState({ prompt: '晚到 running patch', inputImages: [] })
+
+    const taskId = await submitTask({
+      callApi: vi.fn().mockRejectedValue(new Error('最终失败')),
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: 'conversation-late-running',
+        agentTurn: 1,
+      },
+    })
+    await vi.waitFor(() => expect(putTask).toHaveBeenCalledTimes(2))
+    updateTaskInStore(String(taskId), {
+      status: 'running',
+      error: null,
+      customTaskId: 'late-progress-id',
+      finishedAt: null,
+      elapsed: null,
+    })
+    expect(putTask).toHaveBeenCalledTimes(2)
+
+    releaseTerminal()
+    await vi.waitFor(() => {
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        status: 'error',
+        error: '最终失败',
+        customTaskId: 'late-progress-id',
+      })
+    })
+    await vi.waitFor(() => expect(putTask).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(getPendingTaskPersistenceCountForTests()).toBe(0))
+    expect(dbMockState.tasks.get(String(taskId))).toMatchObject({
+      status: 'error',
+      error: '最终失败',
+      customTaskId: 'late-progress-id',
+    })
   })
 })
 

@@ -181,20 +181,25 @@ export default function App() {
               </button>
             </div>
           </div>}
-          {workspaceMode === 'gallery' ? (
-            <>
+          {!restrictedAgentOnly && (
+            <div data-gallery-workspace-mounted className={workspaceMode === 'gallery' ? 'block' : 'hidden'} aria-hidden={workspaceMode !== 'gallery'}>
               <SearchBar />
               <TaskGrid />
-            </>
-          ) : (
-            <div className="mt-4">
-              <AgentWorkspace
-                activeTaskId={activeAgentTaskId}
-                onActiveTaskChange={setActiveAgentTaskId}
-                onNewConversation={() => setActiveAgentTaskId(null)}
-              />
             </div>
           )}
+          {/* Chat Workspace 保持挂载，避免视图切换丢失长流快照。 */}
+          <div
+            data-agent-workspace-mounted
+            className={workspaceMode === 'agent' ? 'mt-4 block' : 'hidden'}
+            aria-hidden={workspaceMode !== 'agent'}
+          >
+            <AgentWorkspace
+              active={workspaceMode === 'agent'}
+              activeTaskId={activeAgentTaskId}
+              onActiveTaskChange={setActiveAgentTaskId}
+              onNewConversation={() => setActiveAgentTaskId(null)}
+            />
+          </div>
         </div>
       </main>
       <InputBar

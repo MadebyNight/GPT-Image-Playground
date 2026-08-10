@@ -96,4 +96,21 @@ describe('agentConversation', () => {
     expect(context).toContain('最新请求')
     expect(context).toContain('最新回复')
   })
+
+  it('持久化失败轮次的 partial 文本，但不把它当作已完成上下文', () => {
+    const conversationId = 'conversation-partial-error'
+    const completed = task('done-1', conversationId, 1, '已完成请求', '已完成回复')
+    const failedPartial = {
+      ...task('error-2', conversationId, 2, '失败请求', '未完成的 partial 回复'),
+      status: 'error' as const,
+      error: '流式响应中断',
+    }
+
+    const context = buildAgentConversationContext([completed, failedPartial], conversationId)
+
+    expect(context).toContain('已完成请求')
+    expect(context).toContain('已完成回复')
+    expect(context).not.toContain('失败请求')
+    expect(context).not.toContain('未完成的 partial 回复')
+  })
 })

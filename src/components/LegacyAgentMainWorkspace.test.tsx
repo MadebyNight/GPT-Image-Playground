@@ -49,4 +49,33 @@ describe('LegacyAgentMainWorkspace', () => {
     expect(markup).not.toMatch(/<details[^>]*data-testid="agent-execution-details"[^>]*\sopen(?:[=>\s])/)
     expect(markup).not.toMatch(/<details[^>]*data-testid="agent-task-detail"[^>]*\sopen(?:[=>\s])/)
   })
+
+  it('为运行中的 Chat 任务提供取消入口', () => {
+    const running = {
+      ...task('turn-running', 1, '生成中', ''),
+      outputImages: [],
+      status: 'running' as const,
+      finishedAt: null,
+      elapsed: null,
+    }
+
+    const markup = renderToStaticMarkup(<LegacyAgentMainWorkspace task={running} conversationTasks={[running]} />)
+
+    expect(markup).toContain('data-agent-cancel-task="turn-running"')
+    expect(markup).toContain('取消生成')
+  })
+
+  it('失败任务同时展示已持久化 partial 与终止错误', () => {
+    const failed = {
+      ...task('turn-error', 1, '失败请求', '未完成 partial'),
+      outputImages: [],
+      status: 'error' as const,
+      error: '流式响应中断',
+    }
+
+    const markup = renderToStaticMarkup(<LegacyAgentMainWorkspace task={failed} conversationTasks={[failed]} />)
+
+    expect(markup).toContain('未完成 partial')
+    expect(markup).toContain('流式响应中断')
+  })
 })

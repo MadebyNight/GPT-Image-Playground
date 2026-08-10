@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings } from '../types'
-import { DEFAULT_SETTINGS } from './apiProfiles'
+import { createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import {
+  getChatCapabilities,
   getEffectiveApiProfile,
   getEffectiveSettings,
   getRestrictedAgentBasePath,
@@ -78,6 +79,149 @@ describe('initializeRuntimeConfig', () => {
     expect(getEffectiveApiProfile(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS.profiles[0])
     expect(getEffectiveSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS)
     expect(sanitizeSettingsPatchForServerMode(patch)).toEqual(patch)
+    expect(getChatCapabilities({
+      ...DEFAULT_SETTINGS,
+      apiMode: 'responses',
+      apiKey: 'client-key',
+      profiles: [{
+        ...DEFAULT_SETTINGS.profiles[0],
+        apiMode: 'responses',
+        apiKey: 'client-key',
+      }],
+    })).toEqual({
+      chatAllowed: true,
+      chatConfigured: true,
+      chatUsable: true,
+      source: 'direct',
+      status: 'usable',
+    })
+  })
+
+  it('distinguishes local Chat permission, Responses configuration, and credentials', () => {
+    const localResponses = {
+      ...DEFAULT_SETTINGS,
+      apiMode: 'responses' as const,
+      apiKey: '',
+      profiles: [{
+        ...DEFAULT_SETTINGS.profiles[0],
+        apiMode: 'responses' as const,
+        apiKey: '',
+      }],
+    }
+
+    expect(getChatCapabilities(localResponses)).toEqual({
+      chatAllowed: true,
+      chatConfigured: true,
+      chatUsable: false,
+      source: 'direct',
+      status: 'missing_credentials',
+    })
+    expect(getChatCapabilities({
+      ...localResponses,
+      apiMode: 'images',
+      profiles: [{ ...localResponses.profiles[0], apiMode: 'images' }],
+    })).toEqual({
+      chatAllowed: true,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'direct',
+      status: 'images_only',
+    })
+  })
+
+  it('uses the final active profile when a task profile is reused temporarily', () => {
+    const responsesProfile = createDefaultOpenAIProfile({
+      id: 'responses-profile',
+      apiMode: 'responses',
+      apiKey: 'responses-key',
+    })
+    const imagesProfile = createDefaultOpenAIProfile({
+      id: 'images-profile',
+      apiMode: 'images',
+      apiKey: 'images-key',
+    })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      reuseTaskApiProfileTemporarily: true,
+      profiles: [responsesProfile, imagesProfile],
+      activeProfileId: responsesProfile.id,
+    })
+
+    const reusedImagesSettings = normalizeSettings({ ...settings, activeProfileId: imagesProfile.id })
+    expect(getChatCapabilities(reusedImagesSettings)).toMatchObject({
+      chatAllowed: true,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'direct',
+      status: 'images_only',
+    })
+
+    const globallyImages = normalizeSettings({ ...settings, activeProfileId: imagesProfile.id })
+    const reusedResponsesSettings = normalizeSettings({ ...globallyImages, activeProfileId: responsesProfile.id })
+    expect(getChatCapabilities(reusedResponsesSettings)).toMatchObject({
+      chatAllowed: true,
+      chatConfigured: true,
+      chatUsable: true,
+      source: 'direct',
+      status: 'usable',
+    })
+  })
+
+  it('uses managed Responses options to determine whether Chat is allowed and usable', () => {
+    initializeRuntimeConfig({
+      ...enabledRuntimeConfig,
+      serverApi: {
+        ...enabledRuntimeConfig.serverApi,
+        apiMode: 'images',
+        apiModeOptions: ['images', 'responses'],
+      },
+    })
+
+    expect(getChatCapabilities(DEFAULT_SETTINGS)).toEqual({
+      chatAllowed: true,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'proxy',
+      status: 'images_only',
+    })
+    expect(getChatCapabilities({ ...DEFAULT_SETTINGS, apiMode: 'responses' })).toEqual({
+      chatAllowed: true,
+      chatConfigured: true,
+      chatUsable: true,
+      source: 'proxy',
+      status: 'usable',
+    })
+
+    initializeRuntimeConfig(enabledRuntimeConfig)
+    expect(getChatCapabilities(DEFAULT_SETTINGS)).toEqual({
+      chatAllowed: false,
+      chatConfigured: false,
+      chatUsable: false,
+      source: 'proxy',
+      status: 'images_only',
+    })
+  })
+
+  it('distinguishes runtime loading from runtime errors', async () => {
+    let release!: () => void
+    const pending = new Promise<Response>((resolve) => {
+      release = () => resolve(new Response('', { status: 500 }))
+    })
+    vi.stubGlobal('fetch', vi.fn(() => pending))
+
+    const loading = loadRuntimeConfig(true)
+    expect(getChatCapabilities(DEFAULT_SETTINGS)).toMatchObject({
+      source: 'none',
+      status: 'loading',
+      chatUsable: false,
+    })
+    release()
+    await loading
+    expect(getChatCapabilities(DEFAULT_SETTINGS)).toMatchObject({
+      source: 'none',
+      status: 'error',
+      chatUsable: false,
+    })
   })
 
   it('builds a fixed managed profile without a browser credential', () => {

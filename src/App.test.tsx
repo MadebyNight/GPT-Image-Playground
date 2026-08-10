@@ -66,7 +66,8 @@ describe('App workspace entry', () => {
     expect(markup).toContain('role="tablist"')
     expect(markup).toContain('画廊')
     expect(markup).toContain('Agent')
-    expect(markup).not.toContain('data-component="agent-workspace"')
+    expect(markup).toContain('data-component="agent-workspace"')
+    expect(markup).toContain('data-agent-workspace-mounted')
   })
 
   it('keeps both workspace entries when restricted Agent is enabled but not agent-only', () => {
@@ -79,7 +80,8 @@ describe('App workspace entry', () => {
     expect(markup).toContain('画廊')
     expect(markup).toContain('Agent')
     expect(markup).toContain('data-component="task-grid"')
-    expect(markup).not.toContain('data-component="agent-workspace"')
+    expect(markup).toContain('data-component="agent-workspace"')
+    expect(markup).toContain('data-agent-workspace-mounted')
   })
 
   it('opens the Agent workspace directly in agent-only mode', () => {

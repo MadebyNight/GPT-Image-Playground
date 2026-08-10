@@ -4,6 +4,7 @@ import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultip
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import {
+  getChatCapabilities,
   getEffectiveApiProfile,
   getRuntimeConfigState,
   isRestrictedAgentEnabled,
@@ -480,7 +481,12 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
   }, [activeProfile, currentActiveProfile.id, serverManaged, settings])
   const isAgentLayout = layout === 'agent'
   const isRestrictedAgentLayout = isAgentLayout && isRestrictedAgentEnabled()
-  const hasSubmitApiConfig = isRestrictedAgentLayout ? true : (serverManaged ? serverConfigUsable : Boolean(activeProfile.apiKey))
+  const chatCapabilities = useMemo(() => getChatCapabilities(effectiveSettings), [effectiveSettings])
+  const hasSubmitApiConfig = isRestrictedAgentLayout
+    ? true
+    : isAgentLayout
+      ? chatCapabilities.chatUsable
+      : (serverManaged ? serverConfigUsable : Boolean(activeProfile.apiKey))
   const agentBusy = isRestrictedAgentLayout && (agentFlowPhase === 'planning' || agentFlowPhase === 'confirming' || agentFlowPhase === 'executing')
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !agentBusy)
   const handleSubmit = useCallback(async () => {
@@ -489,10 +495,21 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
       return
     }
 
-    if (isAgentLayout && (activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses')) {
-      showToast('Agent 模式需要使用 OpenAI 兼容的 Responses API 配置', 'error')
-      if (!serverManaged) setShowSettings(true)
-      return
+    if (isAgentLayout) {
+      if (!chatCapabilities.chatUsable) {
+        const message = chatCapabilities.status === 'loading'
+          ? '运行时配置加载中'
+          : chatCapabilities.status === 'error'
+            ? '服务端 API 配置不可用，请联系部署管理员'
+            : chatCapabilities.status === 'images_only'
+              ? chatCapabilities.chatAllowed
+                ? '当前 API 配置仅启用 Images，请切换到 Responses'
+                : '当前部署仅启用 Images，未启用 Chat Responses 能力'
+              : '当前 Responses API 配置缺少 API Key'
+        showToast(message, 'error')
+        if (chatCapabilities.source === 'direct') setShowSettings(true)
+        return
+      }
     }
 
     const taskId = isAgentLayout
@@ -506,11 +523,22 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
       })
       : await submitTask()
     if (taskId) onTaskSubmitted?.(taskId)
-  }, [activeProfile.apiMode, activeProfile.provider, agentConversationId, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, serverManaged, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
-  const missingApiConfigMessage = serverManaged
-    ? '服务端 API 配置不可用，请联系部署管理员'
-    : '尚未完成 API 配置，请在右上角设置中进行'
-  const missingApiConfigTitle = serverManaged ? missingApiConfigMessage : '请先配置 API'
+  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, serverManaged, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
+  const chatUnavailableMessage = chatCapabilities.status === 'loading'
+    ? '运行时配置加载中'
+    : chatCapabilities.status === 'error'
+      ? '服务端 API 配置不可用，请联系部署管理员'
+      : chatCapabilities.status === 'images_only'
+        ? chatCapabilities.chatAllowed
+          ? '当前 API 配置仅启用 Images，请切换到 Responses'
+          : '当前部署仅启用 Images，未启用 Chat Responses 能力'
+        : '当前 Responses API 配置缺少 API Key'
+  const missingApiConfigMessage = isAgentLayout && !isRestrictedAgentLayout
+    ? chatUnavailableMessage
+    : serverManaged
+      ? '服务端 API 配置不可用，请联系部署管理员'
+      : '尚未完成 API 配置，请在右上角设置中进行'
+  const missingApiConfigTitle = isAgentLayout || serverManaged ? missingApiConfigMessage : '请先配置 API'
   const activeProvider = activeProfile.provider
   const isFalProvider = !isAgentLayout && activeProvider === 'fal'
   const moderationDisabled = isAgentLayout || activeProfile.apiMode === 'responses' || isFalProvider

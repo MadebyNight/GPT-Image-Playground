@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AppSettings, type TaskRecord } from '../types'
+import { DEFAULT_SETTINGS } from './apiProfiles'
+import { getEffectiveSettings, initializeRuntimeConfig } from './serverApiConfig'
 import {
   LEGACY_AGENT_ASSISTANT_TEXT,
   LEGACY_AGENT_COMPLETED_RESPONSE,
@@ -18,44 +20,71 @@ type SubmitTaskMockOptions = {
     agentConversationId: string
     agentTurn: number
   }
+  draftSnapshot?: unknown
 }
 
 const storeMock = vi.hoisted(() => {
   const state = {
+    prompt: '',
     inputImages: [] as Array<{ id: string; dataUrl: string }>,
     tasks: [] as TaskRecord[],
     setPrompt: vi.fn(),
     setParams: vi.fn(),
     showToast: vi.fn(),
+    setShowSettings: vi.fn(),
+    settings: undefined as unknown as AppSettings,
+    composerVersion: 0,
+    maskDraft: null,
+    reusedTaskApiProfileId: null,
+    reusedTaskApiProfileName: null,
+    reusedTaskApiProfileMissing: false,
   }
   return {
     state,
     submitTask: vi.fn<(options?: SubmitTaskMockOptions) => Promise<string | null>>(),
+    retryTaskWithExecution: vi.fn(),
   }
 })
 
 vi.mock('../store', () => ({
   submitTask: storeMock.submitTask,
+  retryTaskWithExecution: storeMock.retryTaskWithExecution,
   useStore: {
     getState: () => storeMock.state,
   },
 }))
 
-import { callAgentResponsesImageApi, storeBackedAgentExecutor, subscribeAgentProgress } from './legacyAgentExecutor'
+import { callAgentResponsesImageApi, cancelAgentTask, retryAgentTask, storeBackedAgentExecutor, subscribeAgentProgress } from './legacyAgentExecutor'
 
 describe('storeBackedAgentExecutor', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     storeMock.state.inputImages = []
+    storeMock.state.prompt = ''
     storeMock.state.tasks = []
     storeMock.state.setPrompt.mockClear()
     storeMock.state.setParams.mockClear()
     storeMock.state.showToast.mockClear()
+    storeMock.state.setShowSettings.mockClear()
+    storeMock.state.composerVersion = 0
+    storeMock.state.maskDraft = null
+    storeMock.state.reusedTaskApiProfileId = null
+    storeMock.state.reusedTaskApiProfileName = null
+    storeMock.state.reusedTaskApiProfileMissing = false
+    storeMock.state.settings = {
+      ...DEFAULT_SETTINGS,
+      apiMode: 'responses',
+      apiKey: 'test-key',
+      profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+    }
     storeMock.submitTask.mockReset()
+    storeMock.retryTaskWithExecution.mockReset()
+    initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
   })
 
   it('delegates to submitTask and returns the created task id', async () => {
     storeMock.state.inputImages = [{ id: 'image-a', dataUrl: 'data:image/png;base64,a' }]
+    storeMock.state.prompt = '生成海报'
     storeMock.submitTask.mockImplementation(async (options) => {
       options?.onTaskCreated?.('task-1')
       return 'task-1'
@@ -70,8 +99,8 @@ describe('storeBackedAgentExecutor', () => {
     })
 
     expect(result).toBe('task-1')
-    expect(storeMock.state.setPrompt).toHaveBeenCalledWith('生成海报')
-    expect(storeMock.state.setParams).toHaveBeenCalledWith({ ...DEFAULT_PARAMS, size: '1024x1024', n: 2 })
+    expect(storeMock.state.setPrompt).not.toHaveBeenCalled()
+    expect(storeMock.state.setParams).not.toHaveBeenCalled()
     expect(storeMock.submitTask).toHaveBeenCalledTimes(1)
     expect(storeMock.submitTask.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       callApi: expect.any(Function),
@@ -80,6 +109,12 @@ describe('storeBackedAgentExecutor', () => {
         origin: 'agent',
         agentConversationId: expect.stringMatching(/^agent-/),
         agentTurn: 1,
+      }),
+      draftSnapshot: expect.objectContaining({
+        prompt: '生成海报',
+        inputImages: storeMock.state.inputImages,
+        params: { ...DEFAULT_PARAMS, size: '1024x1024', n: 2 },
+        composerVersion: 0,
       }),
     }))
   })
@@ -98,6 +133,25 @@ describe('storeBackedAgentExecutor', () => {
     expect(result).toBeNull()
     expect(storeMock.submitTask).not.toHaveBeenCalled()
     expect(storeMock.state.showToast).toHaveBeenCalledWith('Agent 请求与当前输入图片不一致，未提交任务', 'error')
+  })
+
+  it('matches the submitted draft after prompt whitespace normalization', async () => {
+    storeMock.state.prompt = '生成海报  \n'
+    storeMock.state.composerVersion = 7
+    storeMock.submitTask.mockResolvedValue('task-normalized-prompt')
+
+    await storeBackedAgentExecutor.submit({
+      prompt: '生成海报',
+      inputImageIds: [],
+      params: { ...DEFAULT_PARAMS },
+      stream: true,
+      imageCount: 1,
+    })
+
+    expect(storeMock.submitTask.mock.calls[0]?.[0]?.draftSnapshot).toEqual(expect.objectContaining({
+      prompt: '生成海报',
+      composerVersion: 7,
+    }))
   })
 
   it('calls Responses API without the prompt rewrite guard in agent mode', async () => {
@@ -151,6 +205,43 @@ describe('storeBackedAgentExecutor', () => {
     expect(body.tools[0]).toMatchObject({ type: 'image_generation', action: 'generate' })
     expect(body.tool_choice).toBe('required')
     expect(body.stream).toBeUndefined()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.com/v1/responses')
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer test-key',
+      'Content-Type': 'application/json',
+    })
+  })
+
+  it('uses the same-origin Gateway proxy contract without browser credentials', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callAgentResponsesImageApi({
+      settings: getEffectiveSettings(DEFAULT_SETTINGS),
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/gateway-proxy/responses')
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ 'Content-Type': 'application/json' })
   })
 
   it('固定 Chat Responses 请求体与流事件契约', async () => {
@@ -336,5 +427,341 @@ describe('storeBackedAgentExecutor', () => {
       agentTurn: 2,
     })
     expect(events).toContainEqual(expect.objectContaining({ type: 'done', assistantText: '已完成标题更新。' }))
+  })
+
+  it('serializes rapid submissions in one conversation and allocates distinct turns', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    storeMock.submitTask.mockImplementation(async (options) => {
+      if (options?.taskMetadata?.agentTurn === 1) await firstGate
+      const taskId = `turn-${options?.taskMetadata?.agentTurn}`
+      const metadata = options?.taskMetadata
+      if (metadata) {
+        storeMock.state.tasks = [{
+          id: taskId,
+          prompt: '并发请求',
+          params: { ...DEFAULT_PARAMS },
+          inputImageIds: [],
+          outputImages: [],
+          status: 'running',
+          error: null,
+          createdAt: metadata.agentTurn,
+          finishedAt: null,
+          elapsed: null,
+          ...metadata,
+        }, ...storeMock.state.tasks]
+      }
+      options?.onTaskCreated?.(taskId)
+      return taskId
+    })
+
+    const first = storeBackedAgentExecutor.submit({
+      prompt: '第一条', inputImageIds: [], params: { ...DEFAULT_PARAMS }, stream: true, imageCount: 1, conversationId: 'conversation-lock',
+    })
+    const second = storeBackedAgentExecutor.submit({
+      prompt: '第二条', inputImageIds: [], params: { ...DEFAULT_PARAMS }, stream: true, imageCount: 1, conversationId: 'conversation-lock',
+    })
+    await vi.waitFor(() => expect(storeMock.submitTask).toHaveBeenCalledTimes(1))
+    releaseFirst()
+    await Promise.all([first, second])
+
+    expect(storeMock.submitTask.mock.calls.map((call) => call[0]?.taskMetadata?.agentTurn)).toEqual([1, 2])
+  })
+
+  it('preserves non-empty assistant partial text when an SSE stream fails', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"已生成一部分"}\n\n'))
+        setTimeout(() => controller.error(new Error('流连接中断')), 0)
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试失败 partial',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'partial-error-task' })).rejects.toMatchObject({
+      message: '流连接中断',
+      agentAssistantText: '已生成一部分',
+    })
+  })
+
+  it('rejects HTTP errors without manufacturing assistant partial text', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { message: '上游拒绝请求' },
+    }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试 HTTP 错误',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'http-error-task' })).rejects.toMatchObject({
+      message: '上游拒绝请求',
+    })
+  })
+
+  it('uses response.failed terminal details and persists preceding partial text', async () => {
+    const body = [
+      'data: {"type":"response.output_text.delta","delta":"失败前 partial"}\n\n',
+      'data: {"type":"response.failed","response":{"error":{"message":"模型执行失败"}}}\n\n',
+      'data: [DONE]\n\n',
+    ].join('')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试 response.failed',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'response-failed-task' })).rejects.toMatchObject({
+      message: '模型执行失败',
+      agentAssistantText: '失败前 partial',
+    })
+  })
+
+  it('cancels an open SSE reader immediately after response.failed', async () => {
+    let readerCancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode([
+          'data: {"type":"response.output_text.delta","delta":"失败前 partial"}\n\n',
+          'data: {"type":"response.failed","response":{"error":{"message":"保持连接时失败"}}}\n\n',
+        ].join('')))
+      },
+      cancel() {
+        readerCancelled = true
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    const request = callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试保持连接的 response.failed',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'open-response-failed-task' })
+
+    await expect(Promise.race([
+      request,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('请求仍在等待 EOF')), 100)),
+    ])).rejects.toMatchObject({
+      message: '保持连接时失败',
+      agentAssistantText: '失败前 partial',
+    })
+    expect(readerCancelled).toBe(true)
+  })
+
+  it('cancels an open SSE reader immediately after an error event', async () => {
+    let readerCancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"error","message":"流事件错误"}\n\n'))
+      },
+      cancel() {
+        readerCancelled = true
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试 error event',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'open-error-event-task' })).rejects.toThrow('流事件错误')
+    expect(readerCancelled).toBe(true)
+  })
+
+  it('persists partial text when the SSE stream reaches EOF without response.completed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      'data: {"type":"response.output_text.delta","delta":"EOF 前 partial"}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试 EOF',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 1, taskId: 'eof-task' })).rejects.toMatchObject({
+      message: '流式响应结束但没有返回完整结果',
+      agentAssistantText: 'EOF 前 partial',
+    })
+  })
+
+  it('retains completed earlier text plus the failing image partial in a multi-image request', async () => {
+    const secondBody = [
+      'data: {"type":"response.output_text.delta","delta":"第二张 partial"}\n\n',
+      'data: {"type":"response.failed","response":{"error":{"message":"第二张失败"}}}\n\n',
+    ].join('')
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(createLegacyAgentSseFixture(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }))
+      .mockResolvedValueOnce(new Response(secondBody, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        apiKey: 'test-key',
+        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+      },
+      prompt: '测试多图部分失败',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: true, imageCount: 2, taskId: 'multi-partial-task' })).rejects.toMatchObject({
+      message: '第二张失败',
+      agentAssistantText: `${LEGACY_AGENT_ASSISTANT_TEXT}\n第二张 partial`,
+    })
+  })
+
+  it('cancels an active stream and retains the emitted assistant partial', async () => {
+    let partialSeen!: () => void
+    const sawPartial = new Promise<void>((resolve) => { partialSeen = resolve })
+    const unsubscribe = subscribeAgentProgress((event) => {
+      if (event.type === 'assistant_delta') partialSeen()
+    })
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"取消前 partial"}\n\n'))
+          init?.signal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')))
+        },
+      })
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    })
+
+    try {
+      const request = callAgentResponsesImageApi({
+        settings: {
+          ...DEFAULT_SETTINGS,
+          apiMode: 'responses',
+          apiKey: 'test-key',
+          profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+        },
+        prompt: '测试取消',
+        params: { ...DEFAULT_PARAMS },
+        inputImageDataUrls: [],
+      }, { stream: true, imageCount: 1, taskId: 'cancel-task' })
+      await sawPartial
+
+      expect(cancelAgentTask('cancel-task')).toBe(true)
+      await expect(request).rejects.toMatchObject({
+        message: 'Agent 请求已取消',
+        agentAssistantText: '取消前 partial',
+      })
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('retries through the Responses Agent path while preserving the conversation', async () => {
+    const failedTask: TaskRecord = {
+      id: 'failed-agent-task',
+      prompt: '重试这一轮',
+      params: { ...DEFAULT_PARAMS },
+      inputImageIds: [],
+      outputImages: [],
+      status: 'error',
+      error: '失败',
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      origin: 'agent',
+      agentConversationId: 'conversation-retry',
+      agentTurn: 1,
+      agentAssistantText: '未完成 partial',
+    }
+    storeMock.state.tasks = [failedTask]
+    storeMock.state.inputImages = []
+    storeMock.state.tasks = [failedTask]
+    storeMock.state.settings = { ...storeMock.state.settings, agentStreaming: false }
+    storeMock.retryTaskWithExecution.mockImplementation(async (_task, options) => {
+      options.onTaskCreated?.('retry-task')
+      await options.callApi({
+        settings: {
+          ...DEFAULT_SETTINGS,
+          apiMode: 'responses',
+          apiKey: 'test-key',
+          profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+        },
+        prompt: failedTask.prompt,
+        params: { ...DEFAULT_PARAMS },
+        inputImageDataUrls: [],
+      })
+      return 'retry-task'
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    expect(await retryAgentTask(failedTask)).toBe('retry-task')
+    expect(storeMock.retryTaskWithExecution).toHaveBeenCalledWith(failedTask, expect.objectContaining({
+      callApi: expect.any(Function),
+      onTaskCreated: expect.any(Function),
+      taskMetadata: {
+        origin: 'agent',
+        agentConversationId: 'conversation-retry',
+        agentTurn: 2,
+      },
+    }))
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body))
+    expect(body.tool_choice).toBe('required')
+    expect(body.tools).toEqual([expect.objectContaining({ type: 'image_generation' })])
+    expect(String(body.input)).not.toContain('未完成 partial')
   })
 })
