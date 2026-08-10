@@ -14,6 +14,7 @@ const task: TaskRecord = {
   createdAt: 1,
   finishedAt: 2,
   elapsed: 1,
+  origin: 'agent',
 }
 
 let visibleTasks: TaskRecord[] = [task]
@@ -71,12 +72,47 @@ afterEach(() => {
 describe('AgentHistoryPanel', () => {
   it('在传入新会话操作时展示新对话入口', () => {
     const markup = renderToStaticMarkup(
-      <AgentHistoryPanel activeTaskId="task-a" onSelectTask={vi.fn()} onNewConversation={vi.fn()} />,
+      <AgentHistoryPanel mode="chat" activeTaskId="task-a" onSelectTask={vi.fn()} onNewConversation={vi.fn()} />,
     )
 
     expect(markup).toContain('data-agent-new-conversation')
     expect(markup).toContain('新对话')
     expect(markup).toContain('data-agent-conversation-id="legacy-agent:task-a"')
+  })
+
+  it('Tool 模式只展示 restricted-agent Run，不聚合为 Chat 会话', () => {
+    visibleTasks = [
+      task,
+      { ...task, id: 'tool-a', origin: 'restricted-agent', createdAt: 3 },
+      { ...task, id: 'tool-b', origin: 'restricted-agent', createdAt: 2 },
+      { ...task, id: 'gallery-a', origin: 'gallery', createdAt: 4 },
+      { ...task, id: 'openshop-a', origin: 'openshop', createdAt: 5 },
+    ]
+
+    const markup = renderToStaticMarkup(
+      <AgentHistoryPanel mode="tool" activeTaskId="tool-a" onSelectTask={vi.fn()} onNewConversation={vi.fn()} />,
+    )
+
+    expect(markup).not.toContain('data-agent-new-conversation')
+    expect(markup).toContain('data-agent-run-id="tool-a"')
+    expect(markup).toContain('data-agent-run-id="tool-b"')
+    expect(markup).not.toContain('data-agent-conversation-id')
+    expect(capturedTaskCards).toHaveLength(2)
+  })
+
+  it('Chat 模式排除 Tool、Gallery 和手工 OpenShop 记录', () => {
+    visibleTasks = [
+      task,
+      { ...task, id: 'tool-a', origin: 'restricted-agent' },
+      { ...task, id: 'gallery-a', origin: 'gallery' },
+      { ...task, id: 'openshop-a', origin: 'openshop' },
+    ]
+
+    renderToStaticMarkup(
+      <AgentHistoryPanel mode="chat" activeTaskId="task-a" onSelectTask={vi.fn()} />,
+    )
+
+    expect(capturedTaskCards).toHaveLength(1)
   })
 
   it('将同一会话聚合为一张历史卡片，并继续到最新一轮', () => {
@@ -100,7 +136,7 @@ describe('AgentHistoryPanel', () => {
     const onSelectTask = vi.fn()
 
     const markup = renderToStaticMarkup(
-      <AgentHistoryPanel activeTaskId={first.id} onSelectTask={onSelectTask} />,
+      <AgentHistoryPanel mode="chat" activeTaskId={first.id} onSelectTask={onSelectTask} />,
     )
 
     expect(markup).toContain('data-agent-conversation-id="conversation-a"')
@@ -114,7 +150,7 @@ describe('AgentHistoryPanel', () => {
   it('selects Agent task without opening the detail modal', () => {
     const onSelectTask = vi.fn()
     const markup = renderToStaticMarkup(
-      <AgentHistoryPanel activeTaskId="task-a" onSelectTask={onSelectTask} />,
+      <AgentHistoryPanel mode="chat" activeTaskId="task-a" onSelectTask={onSelectTask} />,
     )
 
     expect(markup).toContain('data-component="search-bar"')

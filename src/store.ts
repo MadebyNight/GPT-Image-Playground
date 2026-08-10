@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
+  AgentMode,
   ApiProfile,
   AppSettings,
   TaskParams,
@@ -63,7 +64,21 @@ const CUSTOM_RECOVERY_POLL_MS = 10_000
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const submittedComposerVersions = new Map<string, number>()
+export type ComposerScope = 'gallery' | AgentMode
+
+export interface ComposerDraftSnapshot {
+  composerScope?: ComposerScope
+  prompt: string
+  inputImages: InputImage[]
+  maskDraft: MaskDraft | null
+  params: TaskParams
+  reusedTaskApiProfileId: string | null
+  reusedTaskApiProfileName: string | null
+  reusedTaskApiProfileMissing: boolean
+  composerVersion: number
+}
+
+const submittedComposerVersions = new Map<string, { scope: ComposerScope; version: number }>()
 interface TaskPersistenceQueueEntry {
   snapshot: TaskRecord
   tail: Promise<void>
@@ -319,22 +334,106 @@ function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: strin
   return next
 }
 
+const COMPOSER_SCOPES: ComposerScope[] = ['gallery', 'chat', 'tool']
+
+function createEmptyComposerDraft(scope: ComposerScope, params: TaskParams = DEFAULT_PARAMS): ComposerDraftSnapshot {
+  return {
+    composerScope: scope,
+    prompt: '',
+    inputImages: [],
+    maskDraft: null,
+    params: { ...params },
+    reusedTaskApiProfileId: null,
+    reusedTaskApiProfileName: null,
+    reusedTaskApiProfileMissing: false,
+    composerVersion: 0,
+  }
+}
+
+function cloneComposerDraft(draft: ComposerDraftSnapshot, scope: ComposerScope = draft.composerScope ?? 'gallery'): ComposerDraftSnapshot {
+  return {
+    ...draft,
+    composerScope: scope,
+    inputImages: draft.inputImages.map((image) => ({ ...image })),
+    maskDraft: draft.maskDraft ? { ...draft.maskDraft } : null,
+    params: { ...draft.params },
+  }
+}
+
+function getLiveComposerDraft(state: AppState): ComposerDraftSnapshot {
+  return {
+    composerScope: state.composerScope,
+    prompt: state.prompt,
+    inputImages: state.inputImages.map((image) => ({ ...image })),
+    maskDraft: state.maskDraft ? { ...state.maskDraft } : null,
+    params: { ...state.params },
+    reusedTaskApiProfileId: state.reusedTaskApiProfileId,
+    reusedTaskApiProfileName: state.reusedTaskApiProfileName,
+    reusedTaskApiProfileMissing: state.reusedTaskApiProfileMissing,
+    composerVersion: state.composerVersion,
+  }
+}
+
+function getComposerDraftsWithLiveState(state: AppState): Record<ComposerScope, ComposerDraftSnapshot> {
+  return {
+    gallery: cloneComposerDraft(state.composerDrafts.gallery, 'gallery'),
+    chat: cloneComposerDraft(state.composerDrafts.chat, 'chat'),
+    tool: cloneComposerDraft(state.composerDrafts.tool, 'tool'),
+    [state.composerScope]: getLiveComposerDraft(state),
+  }
+}
+
+function parsePersistedComposerDraft(value: unknown, scope: ComposerScope, fallbackParams: TaskParams): ComposerDraftSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return createEmptyComposerDraft(scope, fallbackParams)
+  const draft = value as Partial<ComposerDraftSnapshot>
+  return {
+    composerScope: scope,
+    prompt: typeof draft.prompt === 'string' ? draft.prompt : '',
+    inputImages: Array.isArray(draft.inputImages)
+      ? draft.inputImages.filter((image): image is InputImage => Boolean(image && typeof image.id === 'string' && typeof image.dataUrl === 'string'))
+      : [],
+    maskDraft: null,
+    params: draft.params && typeof draft.params === 'object' ? { ...fallbackParams, ...draft.params } : { ...fallbackParams },
+    reusedTaskApiProfileId: null,
+    reusedTaskApiProfileName: null,
+    reusedTaskApiProfileMissing: false,
+    composerVersion: typeof draft.composerVersion === 'number' && Number.isFinite(draft.composerVersion)
+      ? Math.max(0, Math.floor(draft.composerVersion))
+      : 0,
+  }
+}
+
 export function getPersistedState(state: AppState) {
   const settings = normalizeSettings(state.settings)
+  const drafts = getComposerDraftsWithLiveState(state)
+  const persistedDrafts = Object.fromEntries(COMPOSER_SCOPES.map((scope) => {
+    const draft = drafts[scope]
+    return [scope, {
+      ...draft,
+      prompt: settings.persistInputOnRestart ? draft.prompt : '',
+      inputImages: settings.persistInputOnRestart ? draft.inputImages.map((image) => ({ id: image.id, dataUrl: '' })) : [],
+      maskDraft: null,
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+    }]
+  })) as Record<ComposerScope, ComposerDraftSnapshot>
+  const legacyChatDraft = persistedDrafts.chat
   return {
     settings,
-    params: state.params,
+    params: legacyChatDraft.params,
+    composerDrafts: persistedDrafts,
     ...(settings.persistInputOnRestart
       ? {
           prompt: state.prompt,
-          inputImages: state.inputImages.map((img) => ({ id: img.id, dataUrl: '' })),
+          inputImages: state.inputImages.map((image) => ({ id: image.id, dataUrl: '' })),
         }
       : {}),
     dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
   }
 }
 
-function mergePersistedState(persistedState: unknown, currentState: AppState): AppState {
+export function mergePersistedState(persistedState: unknown, currentState: AppState): AppState {
   if (!persistedState || typeof persistedState !== 'object') return currentState
 
   const persisted = persistedState as Partial<AppState>
@@ -346,14 +445,74 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
   ]) {
     delete sanitizedPersisted[key]
   }
+  for (const key of ['composerDrafts', 'composerScope', 'composerVersion', 'prompt', 'inputImages', 'maskDraft', 'params']) {
+    delete sanitizedPersisted[key]
+  }
   const settings = normalizeSettings(persisted.settings ?? currentState.settings)
+  const persistedDraftRecord = persisted.composerDrafts && typeof persisted.composerDrafts === 'object'
+    ? persisted.composerDrafts as Partial<Record<ComposerScope, ComposerDraftSnapshot>>
+    : null
+  const legacyParams = persisted.params && typeof persisted.params === 'object'
+    ? { ...DEFAULT_PARAMS, ...persisted.params }
+    : { ...DEFAULT_PARAMS }
+  const composerDrafts: Record<ComposerScope, ComposerDraftSnapshot> = persistedDraftRecord
+    ? {
+        gallery: parsePersistedComposerDraft(persistedDraftRecord.gallery, 'gallery', DEFAULT_PARAMS),
+        chat: parsePersistedComposerDraft(persistedDraftRecord.chat, 'chat', legacyParams),
+        tool: parsePersistedComposerDraft(persistedDraftRecord.tool, 'tool', DEFAULT_PARAMS),
+      }
+    : {
+        gallery: createEmptyComposerDraft('gallery'),
+        chat: parsePersistedComposerDraft({
+          prompt: settings.persistInputOnRestart && typeof persisted.prompt === 'string' ? persisted.prompt : '',
+          inputImages: settings.persistInputOnRestart && Array.isArray(persisted.inputImages) ? persisted.inputImages : [],
+          params: legacyParams,
+        }, 'chat', legacyParams),
+        tool: createEmptyComposerDraft('tool'),
+      }
+  const composerScope = currentState.composerScope
+  const activeDraft = composerDrafts[composerScope]
   return {
     ...currentState,
     ...(sanitizedPersisted as Partial<AppState>),
     settings,
-    composerVersion: currentState.composerVersion,
-    prompt: settings.persistInputOnRestart && typeof persisted.prompt === 'string' ? persisted.prompt : '',
-    inputImages: settings.persistInputOnRestart && Array.isArray(persisted.inputImages) ? persisted.inputImages : [],
+    composerScope,
+    composerDrafts,
+    composerVersion: activeDraft.composerVersion,
+    prompt: activeDraft.prompt,
+    inputImages: activeDraft.inputImages,
+    maskDraft: activeDraft.maskDraft,
+    params: activeDraft.params,
+    reusedTaskApiProfileId: activeDraft.reusedTaskApiProfileId,
+    reusedTaskApiProfileName: activeDraft.reusedTaskApiProfileName,
+    reusedTaskApiProfileMissing: activeDraft.reusedTaskApiProfileMissing,
+  }
+}
+
+type ActiveComposerPatch = Partial<Pick<ComposerDraftSnapshot,
+  | 'prompt'
+  | 'inputImages'
+  | 'maskDraft'
+  | 'params'
+  | 'reusedTaskApiProfileId'
+  | 'reusedTaskApiProfileName'
+  | 'reusedTaskApiProfileMissing'
+>>
+
+function updateActiveComposer(state: AppState, patch: ActiveComposerPatch): Partial<AppState> {
+  const composerVersion = state.composerVersion + 1
+  const draft = {
+    ...getLiveComposerDraft(state),
+    ...patch,
+    composerVersion,
+  }
+  return {
+    ...patch,
+    composerVersion,
+    composerDrafts: {
+      ...state.composerDrafts,
+      [state.composerScope]: draft,
+    },
   }
 }
 
@@ -367,6 +526,9 @@ interface AppState {
   dismissCodexCliPrompt: (key: string) => void
 
   // 输入
+  composerScope: ComposerScope
+  composerDrafts: Record<ComposerScope, ComposerDraftSnapshot>
+  setComposerScope: (scope: ComposerScope) => void
   composerVersion: number
   prompt: string
   setPrompt: (p: string) => void
@@ -476,12 +638,11 @@ export const useStore = create<AppState>()(
         return {
           settings,
           ...(shouldClearReusedProfile
-            ? {
+            ? updateActiveComposer(st, {
                 reusedTaskApiProfileId: null,
                 reusedTaskApiProfileName: null,
                 reusedTaskApiProfileMissing: false,
-                composerVersion: st.composerVersion + 1,
-              }
+              })
             : {}),
         }
       }),
@@ -493,16 +654,43 @@ export const useStore = create<AppState>()(
       })),
 
       // Input
+      composerScope: 'gallery',
+      composerDrafts: {
+        gallery: createEmptyComposerDraft('gallery'),
+        chat: createEmptyComposerDraft('chat'),
+        tool: createEmptyComposerDraft('tool'),
+      },
+      setComposerScope: (composerScope) => set((state) => {
+        if (state.composerScope === composerScope) return state
+        const composerDrafts = {
+          ...state.composerDrafts,
+          [state.composerScope]: getLiveComposerDraft(state),
+        }
+        const draft = cloneComposerDraft(composerDrafts[composerScope], composerScope)
+        return {
+          composerScope,
+          composerDrafts,
+          composerVersion: draft.composerVersion,
+          prompt: draft.prompt,
+          inputImages: draft.inputImages,
+          maskDraft: draft.maskDraft,
+          params: draft.params,
+          reusedTaskApiProfileId: draft.reusedTaskApiProfileId,
+          reusedTaskApiProfileName: draft.reusedTaskApiProfileName,
+          reusedTaskApiProfileMissing: draft.reusedTaskApiProfileMissing,
+          maskEditorImageId: null,
+        }
+      }),
       composerVersion: 0,
       prompt: '',
       setPrompt: (prompt) => set((state) => state.prompt === prompt
         ? state
-        : { prompt, composerVersion: state.composerVersion + 1 }),
+        : updateActiveComposer(state, { prompt })),
       inputImages: [],
       addInputImage: (img) =>
         set((s) => {
           if (s.inputImages.find((i) => i.id === img.id)) return s
-          return { inputImages: [...s.inputImages, img], composerVersion: s.composerVersion + 1 }
+          return updateActiveComposer(s, { inputImages: [...s.inputImages, img] })
         }),
       removeInputImage: (idx) =>
         set((s) => {
@@ -510,21 +698,24 @@ export const useStore = create<AppState>()(
           const inputImages = s.inputImages.filter((_, i) => i !== idx)
           const shouldClearMask = removed?.id === s.maskDraft?.targetImageId
           return {
+            ...updateActiveComposer(s, {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
-            composerVersion: s.composerVersion + 1,
-            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+            ...(shouldClearMask ? { maskDraft: null } : {}),
+            }),
+            ...(shouldClearMask ? { maskEditorImageId: null } : {}),
           }
         }),
       clearInputImages: () =>
         set((s) => {
           for (const img of s.inputImages) imageCache.delete(img.id)
           return {
+            ...updateActiveComposer(s, {
             inputImages: [],
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, []),
             maskDraft: null,
+            }),
             maskEditorImageId: null,
-            composerVersion: s.composerVersion + 1,
           }
         }),
       setInputImages: (imgs, options) =>
@@ -533,10 +724,12 @@ export const useStore = create<AppState>()(
           const shouldClearMask =
             Boolean(s.maskDraft) && !inputImages.some((img) => img.id === s.maskDraft?.targetImageId)
           return {
+            ...updateActiveComposer(s, {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages, options?.equivalentImageIds),
-            composerVersion: s.composerVersion + 1,
-            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+            ...(shouldClearMask ? { maskDraft: null } : {}),
+            }),
+            ...(shouldClearMask ? { maskEditorImageId: null } : {}),
           }
         }),
       moveInputImage: (fromIdx, toIdx) =>
@@ -551,25 +744,23 @@ export const useStore = create<AppState>()(
           if (insertIdx === fromIdx) return s
           const [moved] = images.splice(fromIdx, 1)
           images.splice(insertIdx, 0, moved)
-          return {
+          return updateActiveComposer(s, {
             inputImages: images,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, images),
-            composerVersion: s.composerVersion + 1,
-          }
+          })
         }),
       maskDraft: null,
       setMaskDraft: (maskDraft) =>
         set((s) => {
           const inputImages = orderImagesWithMaskFirst(s.inputImages, maskDraft?.targetImageId)
-          return {
+          return updateActiveComposer(s, {
             maskDraft,
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
-            composerVersion: s.composerVersion + 1,
-          }
+          })
         }),
       clearMaskDraft: () => set((state) => state.maskDraft
-        ? { maskDraft: null, composerVersion: state.composerVersion + 1 }
+        ? updateActiveComposer(state, { maskDraft: null })
         : state),
       maskEditorImageId: null,
       setMaskEditorImageId: (maskEditorImageId) => {
@@ -582,7 +773,7 @@ export const useStore = create<AppState>()(
       setParams: (p) => set((s) => {
         const params = { ...s.params, ...p }
         const changed = Object.keys(p).some((key) => s.params[key as keyof TaskParams] !== params[key as keyof TaskParams])
-        return changed ? { params, composerVersion: s.composerVersion + 1 } : s
+        return changed ? updateActiveComposer(s, { params }) : s
       }),
       reusedTaskApiProfileId: null,
       reusedTaskApiProfileName: null,
@@ -593,12 +784,11 @@ export const useStore = create<AppState>()(
           && state.reusedTaskApiProfileName === profileName
           && state.reusedTaskApiProfileMissing === missing
         ) return state
-        return {
+        return updateActiveComposer(state, {
           reusedTaskApiProfileId: profileId,
           reusedTaskApiProfileName: profileName,
           reusedTaskApiProfileMissing: missing,
-          composerVersion: state.composerVersion + 1,
-        }
+        })
       }),
 
       // Tasks
@@ -1103,10 +1293,18 @@ async function recoverFalTask(taskId: string) {
 
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
+  const initialComposerDrafts = getComposerDraftsWithLiveState(useStore.getState())
+  const initialComposerVersions = Object.fromEntries(COMPOSER_SCOPES.map((scope) => [
+    scope,
+    initialComposerDrafts[scope].composerVersion,
+  ])) as Record<ComposerScope, number>
   const storedTasks = await getAllTasks()
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
-  useStore.getState().setTasks(tasks)
+  useStore.setState((state) => {
+    const liveTaskIds = new Set(state.tasks.map((task) => task.id))
+    return { tasks: [...state.tasks, ...tasks.filter((task) => !liveTaskIds.has(task.id))] }
+  })
   for (const task of tasks) {
     if (
       task.apiProvider === 'fal' &&
@@ -1124,20 +1322,29 @@ export async function initStore() {
     }
   }
 
-  // 收集所有任务引用的图片 id
-  const referencedIds = new Set<string>()
-  const persistedInputImages = useStore.getState().inputImages
-  for (const img of persistedInputImages) referencedIds.add(img.id)
-  for (const t of tasks) {
-    for (const id of t.inputImageIds || []) referencedIds.add(id)
-    if (t.maskImageId) referencedIds.add(t.maskImageId)
-    for (const id of t.outputImages || []) {
-      referencedIds.add(id)
+  const collectReferencedIds = () => {
+    const referencedIds = new Set<string>()
+    const currentState = useStore.getState()
+    const currentDrafts = getComposerDraftsWithLiveState(currentState)
+    for (const scope of COMPOSER_SCOPES) {
+      for (const image of currentDrafts[scope].inputImages) referencedIds.add(image.id)
     }
+    const referencedTasks = [
+      ...tasks,
+      ...currentState.tasks,
+      ...Array.from(taskPersistenceQueues.values(), (entry) => entry.snapshot),
+    ]
+    for (const task of referencedTasks) {
+      for (const id of task.inputImageIds || []) referencedIds.add(id)
+      if (task.maskImageId) referencedIds.add(task.maskImageId)
+      for (const id of task.outputImages || []) referencedIds.add(id)
+    }
+    return referencedIds
   }
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
   const imageIds = await getAllImageIds()
+  const referencedIds = collectReferencedIds()
   const referencedImageIds: string[] = []
   for (const imgId of imageIds) {
     if (referencedIds.has(imgId)) {
@@ -1148,22 +1355,44 @@ export async function initStore() {
   }
   scheduleThumbnailBackfill(referencedImageIds)
 
-  const restoredInputImages: InputImage[] = []
-  for (const img of persistedInputImages) {
-    if (img.dataUrl) {
-      restoredInputImages.push(img)
-      cacheImage(img.id, img.dataUrl)
-      continue
+  const restoredDrafts = { ...initialComposerDrafts }
+  for (const scope of COMPOSER_SCOPES) {
+    const restoredInputImages: InputImage[] = []
+    for (const image of initialComposerDrafts[scope].inputImages) {
+      if (image.dataUrl) {
+        restoredInputImages.push(image)
+        cacheImage(image.id, image.dataUrl)
+        continue
+      }
+      const storedImage = await getImage(image.id)
+      if (storedImage?.dataUrl) {
+        restoredInputImages.push({ ...image, dataUrl: storedImage.dataUrl })
+        cacheImage(image.id, storedImage.dataUrl)
+      }
     }
-    const storedImage = await getImage(img.id)
-    if (storedImage?.dataUrl) {
-      restoredInputImages.push({ ...img, dataUrl: storedImage.dataUrl })
-      cacheImage(img.id, storedImage.dataUrl)
+    restoredDrafts[scope] = { ...initialComposerDrafts[scope], inputImages: restoredInputImages }
+  }
+  useStore.setState((state) => {
+    const currentDrafts = getComposerDraftsWithLiveState(state)
+    const mergedDrafts = Object.fromEntries(COMPOSER_SCOPES.map((scope) => [
+      scope,
+      currentDrafts[scope].composerVersion === initialComposerVersions[scope]
+        ? restoredDrafts[scope]
+        : currentDrafts[scope],
+    ])) as Record<ComposerScope, ComposerDraftSnapshot>
+    const activeDraft = mergedDrafts[state.composerScope]
+    return {
+      composerDrafts: mergedDrafts,
+      composerVersion: activeDraft.composerVersion,
+      prompt: activeDraft.prompt,
+      inputImages: activeDraft.inputImages,
+      maskDraft: activeDraft.maskDraft,
+      params: activeDraft.params,
+      reusedTaskApiProfileId: activeDraft.reusedTaskApiProfileId,
+      reusedTaskApiProfileName: activeDraft.reusedTaskApiProfileName,
+      reusedTaskApiProfileMissing: activeDraft.reusedTaskApiProfileMissing,
     }
-  }
-  if (restoredInputImages.length !== persistedInputImages.length || restoredInputImages.some((img, index) => img.dataUrl !== persistedInputImages[index]?.dataUrl)) {
-    useStore.getState().setInputImages(restoredInputImages)
-  }
+  })
 }
 
 type TaskApiCaller = (opts: CallApiOptions) => Promise<CallApiResult>
@@ -1180,29 +1409,12 @@ function getAgentAssistantTextFromError(err: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-export interface ComposerDraftSnapshot {
-  prompt: string
-  inputImages: InputImage[]
-  maskDraft: MaskDraft | null
-  params: TaskParams
-  reusedTaskApiProfileId: string | null
-  reusedTaskApiProfileName: string | null
-  reusedTaskApiProfileMissing: boolean
-  composerVersion: number
-}
-
-export function getComposerDraftSnapshot(): ComposerDraftSnapshot {
+export function getComposerDraftSnapshot(scope?: ComposerScope): ComposerDraftSnapshot {
   const state = useStore.getState()
-  return {
-    prompt: state.prompt,
-    inputImages: state.inputImages.map((image) => ({ ...image })),
-    maskDraft: state.maskDraft ? { ...state.maskDraft } : null,
-    params: { ...state.params },
-    reusedTaskApiProfileId: state.reusedTaskApiProfileId,
-    reusedTaskApiProfileName: state.reusedTaskApiProfileName,
-    reusedTaskApiProfileMissing: state.reusedTaskApiProfileMissing,
-    composerVersion: state.composerVersion,
-  }
+  const targetScope = scope ?? state.composerScope
+  return targetScope === state.composerScope
+    ? getLiveComposerDraft(state)
+    : cloneComposerDraft(state.composerDrafts[targetScope], targetScope)
 }
 
 interface SubmitTaskOptions {
@@ -1220,23 +1432,50 @@ interface ExecuteTaskOptions {
   callApi?: TaskApiCaller
 }
 
-function clearSubmittedComposer(expectedVersion: number, clearInputAfterSubmit: boolean): number | null {
-  let matched = false
+export function clearComposerDraft(
+  scope: ComposerScope,
+  expectedVersion: number,
+  clearInputAfterSubmit: boolean,
+): number | null {
+  let nextVersion: number | null = null
   useStore.setState((state) => {
-    if (state.composerVersion !== expectedVersion) return state
-    matched = true
+    const currentDraft = scope === state.composerScope
+      ? getLiveComposerDraft(state)
+      : cloneComposerDraft(state.composerDrafts[scope], scope)
+    if (currentDraft.composerVersion !== expectedVersion) return state
 
     const shouldClearReuse = Boolean(
-      state.reusedTaskApiProfileId
-      || state.reusedTaskApiProfileName
-      || state.reusedTaskApiProfileMissing,
+      currentDraft.reusedTaskApiProfileId
+      || currentDraft.reusedTaskApiProfileName
+      || currentDraft.reusedTaskApiProfileMissing,
     )
-    if (!clearInputAfterSubmit && !shouldClearReuse) return state
+    if (!clearInputAfterSubmit && !shouldClearReuse) {
+      nextVersion = currentDraft.composerVersion
+      return state
+    }
 
     if (clearInputAfterSubmit) {
-      for (const image of state.inputImages) imageCache.delete(image.id)
+      for (const image of currentDraft.inputImages) imageCache.delete(image.id)
     }
+    nextVersion = currentDraft.composerVersion + 1
+    const nextDraft: ComposerDraftSnapshot = {
+      ...currentDraft,
+      ...(clearInputAfterSubmit
+        ? {
+            prompt: '',
+            inputImages: [],
+            maskDraft: null,
+          }
+        : {}),
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      composerVersion: nextVersion,
+    }
+    const composerDrafts = { ...state.composerDrafts, [scope]: nextDraft }
+    if (scope !== state.composerScope) return { composerDrafts }
     return {
+      composerDrafts,
       ...(clearInputAfterSubmit
         ? {
             prompt: '',
@@ -1248,16 +1487,43 @@ function clearSubmittedComposer(expectedVersion: number, clearInputAfterSubmit: 
       reusedTaskApiProfileId: null,
       reusedTaskApiProfileName: null,
       reusedTaskApiProfileMissing: false,
-      composerVersion: state.composerVersion + 1,
+      composerVersion: nextVersion,
     }
   })
-  return matched ? useStore.getState().composerVersion : null
+  return nextVersion
+}
+
+function clearComposerMaskDraft(
+  scope: ComposerScope,
+  expectedVersion: number,
+  targetImageId: string,
+  maskDataUrl?: string,
+): boolean {
+  let cleared = false
+  useStore.setState((state) => {
+    const draft = scope === state.composerScope
+      ? getLiveComposerDraft(state)
+      : cloneComposerDraft(state.composerDrafts[scope], scope)
+    if (
+      draft.composerVersion !== expectedVersion
+      || draft.maskDraft?.targetImageId !== targetImageId
+      || (maskDataUrl !== undefined && draft.maskDraft.maskDataUrl !== maskDataUrl)
+    ) return state
+    cleared = true
+    const nextDraft = { ...draft, maskDraft: null, composerVersion: draft.composerVersion + 1 }
+    const composerDrafts = { ...state.composerDrafts, [scope]: nextDraft }
+    return scope === state.composerScope
+      ? { composerDrafts, maskDraft: null, composerVersion: nextDraft.composerVersion }
+      : { composerDrafts }
+  })
+  return cleared
 }
 
 /** 提交新任务 */
 export async function submitTask(options: SubmitTaskOptions = {}): Promise<string | null> {
   const initialState = useStore.getState()
   const draftSnapshot = options.draftSnapshot ?? getComposerDraftSnapshot()
+  const draftScope = draftSnapshot.composerScope ?? initialState.composerScope
   const { settings, showToast, setConfirmDialog } = initialState
   const {
     prompt,
@@ -1337,13 +1603,10 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
       cacheImage(maskImageId, maskDraft.maskDataUrl)
       maskTargetImageId = maskDraft.targetImageId
     } catch (err) {
-      const currentState = useStore.getState()
       if (
-        currentState.composerVersion === draftSnapshot.composerVersion
-        && currentState.maskDraft?.targetImageId === maskDraft.targetImageId
-        && !inputImages.some((img) => img.id === maskDraft.targetImageId)
+        !inputImages.some((img) => img.id === maskDraft.targetImageId)
       ) {
-        useStore.getState().clearMaskDraft()
+        clearComposerMaskDraft(draftScope, draftSnapshot.composerVersion, maskDraft.targetImageId, maskDraft.maskDataUrl)
       }
       showToast(err instanceof Error ? err.message : String(err), 'error')
       return null
@@ -1359,7 +1622,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
   let cleanupVersion = draftSnapshot.composerVersion
   if (Object.keys(normalizedParamPatch).length) {
-    if (useStore.getState().composerVersion === cleanupVersion) {
+    if (useStore.getState().composerScope === draftScope && useStore.getState().composerVersion === cleanupVersion) {
       useStore.getState().setParams(normalizedParamPatch)
       cleanupVersion = useStore.getState().composerVersion
     }
@@ -1390,8 +1653,10 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   useStore.getState().setTasks([task, ...latestTasks])
   await putTask(task)
 
-  const composerVersionAfterSubmit = clearSubmittedComposer(cleanupVersion, settings.clearInputAfterSubmit)
-  if (composerVersionAfterSubmit !== null) submittedComposerVersions.set(taskId, composerVersionAfterSubmit)
+  const composerVersionAfterSubmit = clearComposerDraft(draftScope, cleanupVersion, settings.clearInputAfterSubmit)
+  if (composerVersionAfterSubmit !== null) {
+    submittedComposerVersions.set(taskId, { scope: draftScope, version: composerVersionAfterSubmit })
+  }
 
   // 异步调用 API
   options.onTaskCreated?.(taskId)
@@ -1551,17 +1816,18 @@ async function executeTask(taskId: string, options: ExecuteTaskOptions = {}) {
     if (!terminalPublished) return
 
     useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
-    const currentState = useStore.getState()
-    const currentMask = currentState.maskDraft
-    const submittedComposerVersion = submittedComposerVersions.get(taskId)
+    const submittedComposer = submittedComposerVersions.get(taskId)
     if (
       maskDataUrl &&
-      currentMask &&
-      submittedComposerVersion === currentState.composerVersion &&
-      currentMask.targetImageId === task.maskTargetImageId &&
-      currentMask.maskDataUrl === maskDataUrl
+      submittedComposer &&
+      task.maskTargetImageId
     ) {
-      useStore.getState().clearMaskDraft()
+      clearComposerMaskDraft(
+        submittedComposer.scope,
+        submittedComposer.version,
+        task.maskTargetImageId,
+        maskDataUrl,
+      )
     }
   } catch (err) {
     clearOpenAIWatchdogTimer(taskId)

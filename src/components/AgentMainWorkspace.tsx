@@ -1,14 +1,15 @@
 import { useMemo } from 'react'
 import { useRestrictedAgentStore } from '../restrictedAgentStore'
-import { isRestrictedAgentEnabled } from '../lib/serverApiConfig'
-import type { RestrictedAgentExecutionStatus, TaskRecord } from '../types'
+import type { AgentMode, RestrictedAgentExecutionStatus, TaskRecord } from '../types'
 import AgentPlanCard from './AgentPlanCard'
 import LegacyAgentMainWorkspace from './LegacyAgentMainWorkspace'
 import TaskDetailContent from './TaskDetailContent'
 
 interface AgentMainWorkspaceProps {
-  task: TaskRecord | null
-  conversationTasks?: TaskRecord[]
+  mode: AgentMode
+  chatTask: TaskRecord | null
+  chatConversationTasks?: TaskRecord[]
+  toolTask: TaskRecord | null
 }
 
 const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
@@ -20,7 +21,7 @@ const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
   failed_unknown: '执行状态不确定，不会自动重试',
 }
 
-function RestrictedAgentMainWorkspace({ task }: AgentMainWorkspaceProps) {
+function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const phase = useRestrictedAgentStore((state) => state.phase)
   const plan = useRestrictedAgentStore((state) => state.plan)
   const execution = useRestrictedAgentStore((state) => state.execution)
@@ -37,9 +38,9 @@ function RestrictedAgentMainWorkspace({ task }: AgentMainWorkspaceProps) {
 
   if (!task && !showPlanningFlow && !showExecutionFlow) {
     return (
-      <section className="flex h-full min-h-[28rem] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white/70 p-6 text-center dark:border-white/[0.08] dark:bg-gray-900/70" aria-labelledby="agent-workspace-title">
+      <section className="flex h-full min-h-[28rem] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white/70 p-6 text-center dark:border-white/[0.08] dark:bg-gray-900/70" aria-labelledby="tool-agent-workspace-title">
         <div>
-          <h2 id="agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">受限 Agent 工作区</h2>
+          <h2 id="tool-agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">Tool Agent 工作区</h2>
           <p className="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
             输入图片需求后先生成执行计划。你确认 Prompt、参数和步骤后，Gateway 才会调用图片接口。
           </p>
@@ -49,8 +50,8 @@ function RestrictedAgentMainWorkspace({ task }: AgentMainWorkspaceProps) {
   }
 
   return (
-    <section className="h-full min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900" aria-labelledby="agent-workspace-title">
-      <h2 id="agent-workspace-title" className="sr-only">当前 Agent 工作区</h2>
+    <section className="h-full min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900" aria-labelledby="tool-agent-workspace-title">
+      <h2 id="tool-agent-workspace-title" className="sr-only">当前 Tool Agent 工作区</h2>
       <div className="mx-auto max-w-4xl space-y-4">
         {(showPlanningFlow || showExecutionFlow) && requestText && (
           <div className="flex justify-end">
@@ -138,7 +139,23 @@ function RestrictedAgentMainWorkspace({ task }: AgentMainWorkspaceProps) {
 }
 
 export default function AgentMainWorkspace(props: AgentMainWorkspaceProps) {
-  return isRestrictedAgentEnabled()
-    ? <RestrictedAgentMainWorkspace {...props} />
-    : <LegacyAgentMainWorkspace {...props} />
+  const { mode, chatTask, chatConversationTasks, toolTask } = props
+  return (
+    <>
+      <div
+        data-agent-main-mode="chat"
+        className={mode === 'chat' ? 'h-full min-h-0' : 'hidden'}
+        aria-hidden={mode !== 'chat'}
+      >
+        <LegacyAgentMainWorkspace task={chatTask} conversationTasks={chatConversationTasks} />
+      </div>
+      <div
+        data-agent-main-mode="tool"
+        className={mode === 'tool' ? 'h-full min-h-0' : 'hidden'}
+        aria-hidden={mode !== 'tool'}
+      >
+        <RestrictedAgentMainWorkspace task={toolTask} />
+      </div>
+    </>
+  )
 }

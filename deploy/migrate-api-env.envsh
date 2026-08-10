@@ -113,13 +113,9 @@ validate_agent_integer() {
 }
 
 if [ "$RESTRICTED_AGENT_ENABLED" = "true" ]; then
-    if [ "$SERVER_API_CONFIG_ENABLED" = "true" ]; then
-        server_api_config_error 'SERVER_API_CONFIG_ENABLED and RESTRICTED_AGENT_ENABLED cannot both be true'
-    fi
-
     validate_agent_integer "$AGENT_REQUEST_TIMEOUT_SECONDS" 'AGENT_REQUEST_TIMEOUT_SECONDS' 10 600
 
-    # restricted 模式始终关闭旧同源直通代理，防止绕过两阶段确认。
+    # 未启用 serverApi 时继续关闭旧同源直通代理；双能力部署由 serverApi 分支重新启用受控代理。
     ENABLE_API_PROXY=false
     LOCK_API_PROXY=false
 fi

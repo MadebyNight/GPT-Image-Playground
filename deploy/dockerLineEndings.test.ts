@@ -77,7 +77,7 @@ describe('Restricted Agent deployment boundary', () => {
 
     const entrypoint = readFileSync('deploy/inject-api-url.sh', 'utf8')
     expect(entrypoint).toContain('if [ "$RESTRICTED_AGENT_ENABLED" != "true" ]')
-    expect(entrypoint).toContain('if [ "$ENABLE_API_PROXY" != "true" ] || [ "$RESTRICTED_AGENT_ENABLED" = "true" ]')
+    expect(entrypoint).toContain('if [ "$ENABLE_API_PROXY" != "true" ]')
   })
 
   it('normalizes agent-only independently without hiding Legacy when Agent is disabled', () => {
@@ -98,16 +98,18 @@ describe('Restricted Agent deployment boundary', () => {
     expect(runtimeConfigText).not.toMatch(/apiKey|sessionSecret|upstream/i)
   })
 
-  it('emits minimal mutually exclusive runtime schemas for each capability mode', () => {
+  it('emits independent runtime capability fields including the dual-capability case', () => {
     const injector = readFileSync('deploy/inject-api-url.sh', 'utf8')
-    expect(injector).toContain('if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ]; then')
-    expect(injector).toContain('elif [ "$RUNTIME_RESTRICTED_AGENT_ENABLED" = "true" ]; then')
+    expect(injector).toContain('if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ] && [ "$RUNTIME_RESTRICTED_AGENT_ENABLED" = "true" ]; then')
     expect(injector).toContain('"serverApi": { "enabled": false }')
     expect(injector).toContain('"restrictedAgent": {')
     expect(injector).toContain('"provider": "openai"')
     expect(injector).toContain('"proxyPath": "/api-proxy"')
     expect(injector).toContain('RUNTIME_CONFIG_TMP=${RUNTIME_CONFIG_PATH}.tmp')
     expect(injector).toContain('mv "$RUNTIME_CONFIG_TMP" "$RUNTIME_CONFIG_PATH"')
+
+    const migrate = readFileSync('deploy/migrate-api-env.envsh', 'utf8')
+    expect(migrate).not.toContain('SERVER_API_CONFIG_ENABLED and RESTRICTED_AGENT_ENABLED cannot both be true')
   })
 
   it('defines an internal-only, persistent and health-checked Gateway service', () => {

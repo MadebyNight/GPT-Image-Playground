@@ -1,4 +1,4 @@
-import type { ApiMode, ApiProfile, AppSettings } from '../types'
+import type { AgentCapabilities, AgentMode, ApiMode, ApiProfile, AppSettings } from '../types'
 import { getActiveApiProfile } from './apiProfiles'
 
 declare const __RUNTIME_CONFIG_REQUIRED__: boolean
@@ -7,6 +7,7 @@ export const SERVER_MANAGED_PROFILE_ID = 'server-managed-openai'
 export const DEFAULT_SERVER_API_PROXY_PATH = '/api-proxy'
 export const DEFAULT_RESTRICTED_AGENT_BASE_PATH = '/agent-api/v1'
 export const SERVER_API_CONFIG_UNAVAILABLE_MESSAGE = '服务端 API 配置不可用，请联系部署管理员'
+export const AGENT_MODE_PREFERENCE_KEY = 'agent-mode-v1'
 
 interface DisabledServerApiConfig {
   enabled: false
@@ -187,9 +188,6 @@ function parsePublicRuntimeConfig(raw: unknown): PublicRuntimeConfig {
   const serverApi = raw.serverApi
   assertAllowedKeys(serverApi, SERVER_API_KEYS, 'serverApi')
   if (typeof serverApi.enabled !== 'boolean') throw new Error('serverApi.enabled 必须是布尔值')
-  if (serverApi.enabled && restrictedAgent?.enabled) {
-    throw new Error('serverApi 与 restrictedAgent 不能同时启用')
-  }
   if (!serverApi.enabled) {
     return { version: 1, serverApi: { enabled: false }, ...(restrictedAgent ? { restrictedAgent } : {}) }
   }
@@ -319,6 +317,73 @@ export function getChatCapabilities(settings: AppSettings): ChatCapabilities {
     source: 'direct',
     status: chatUsable ? 'usable' : chatConfigured ? 'missing_credentials' : 'images_only',
   }
+}
+
+export function getAgentCapabilities(settings: AppSettings): AgentCapabilities {
+  const chat = getChatCapabilities(settings)
+  const tool = isRestrictedAgentEnabled()
+  const defaultMode: AgentMode | null = chat.chatUsable ? 'chat' : tool ? 'tool' : null
+  return {
+    chatAllowed: chat.chatAllowed,
+    chatConfigured: chat.chatConfigured,
+    chatUsable: chat.chatUsable,
+    tool,
+    openShopTool: false,
+    defaultMode,
+    modeSwitching: chat.chatUsable && tool,
+  }
+}
+
+export function resolveAgentMode(capabilities: AgentCapabilities, preferredMode: unknown): AgentMode | null {
+  if (preferredMode === 'chat' && capabilities.chatUsable) return 'chat'
+  if (preferredMode === 'tool' && capabilities.tool) return 'tool'
+  return capabilities.defaultMode
+}
+
+type AgentModeStorage = Pick<Storage, 'getItem' | 'setItem'>
+
+function getDefaultModeStorage(): AgentModeStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage
+  } catch {
+    return null
+  }
+}
+
+export function getAgentModePreference(storage?: AgentModeStorage | null): AgentMode | null {
+  if (runtimeState.status !== 'ready') return null
+  try {
+    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
+    if (!targetStorage) return null
+    const value = targetStorage.getItem(AGENT_MODE_PREFERENCE_KEY)
+    return value === 'chat' || value === 'tool' ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function setAgentModePreference(mode: AgentMode, storage?: AgentModeStorage | null): void {
+  if (runtimeState.status !== 'ready') return
+  try {
+    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
+    if (!targetStorage) return
+    targetStorage.setItem(AGENT_MODE_PREFERENCE_KEY, mode)
+  } catch {
+    // 隐私模式或禁用存储时保持当前会话内选择即可。
+  }
+}
+
+export function getChatUnavailableMessage(settings: AppSettings): string {
+  const chat = getChatCapabilities(settings)
+  if (chat.status === 'loading') return '运行时配置加载中'
+  if (chat.status === 'error') return SERVER_API_CONFIG_UNAVAILABLE_MESSAGE
+  if (chat.status === 'missing_credentials') return '当前 Responses API 配置缺少 API Key'
+  if (chat.status === 'images_only') {
+    return chat.chatAllowed
+      ? '当前 API 配置仅启用 Images，请切换到 Responses'
+      : '当前部署未启用 Chat Responses 能力'
+  }
+  return 'Chat Agent 当前不可用'
 }
 
 export function isRestrictedAgentEnabled(): boolean {

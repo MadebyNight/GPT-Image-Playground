@@ -28,12 +28,25 @@ const mocks = vi.hoisted(() => {
     executePlan: vi.fn(),
     putTask: vi.fn(),
     updateTask: vi.fn(),
+    clearComposerDraft: vi.fn(),
   }
 })
 
 vi.mock('./store', () => ({
   useStore: { getState: () => mocks.appState },
   updateTaskInStore: mocks.updateTask,
+  getComposerDraftSnapshot: vi.fn(() => ({
+    composerScope: 'tool',
+    prompt: mocks.appState.prompt,
+    inputImages: mocks.appState.inputImages,
+    maskDraft: mocks.appState.maskDraft,
+    params: mocks.appState.params,
+    reusedTaskApiProfileId: null,
+    reusedTaskApiProfileName: null,
+    reusedTaskApiProfileMissing: false,
+    composerVersion: 7,
+  })),
+  clearComposerDraft: mocks.clearComposerDraft,
 }))
 vi.mock('./lib/db', () => ({
   putTask: mocks.putTask,
@@ -95,18 +108,21 @@ describe('restricted Agent flow store', () => {
     mocks.appState.prompt = '生成一张海报'
     mocks.appState.inputImages = []
     mocks.appState.maskDraft = null
+    mocks.appState.settings.clearInputAfterSubmit = false
     mocks.appState.showToast.mockClear()
     mocks.appState.setTasks.mockClear()
     mocks.createPlan.mockReset().mockResolvedValue(plan)
     mocks.executePlan.mockReset().mockResolvedValue(execution)
     mocks.putTask.mockReset().mockResolvedValue('agent-execution-1')
     mocks.updateTask.mockClear()
+    mocks.clearComposerDraft.mockClear()
     useRestrictedAgentStore.setState({
       phase: 'idle',
       plan: null,
       execution: null,
       taskId: null,
       error: null,
+      composerSnapshotVersion: null,
     })
   })
 
@@ -119,8 +135,32 @@ describe('restricted Agent flow store', () => {
     expect(mocks.putTask).not.toHaveBeenCalled()
   })
 
+  it('plans from the explicit Tool composer snapshot instead of the currently visible mode', async () => {
+    const snapshot = {
+      composerScope: 'tool' as const,
+      prompt: 'Tool 独立需求',
+      inputImages: [{ id: 'tool-image', dataUrl: 'data:image/png;base64,tool' }],
+      maskDraft: null,
+      params: { ...mocks.appState.params, quality: 'medium' as const },
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      composerVersion: 11,
+    }
+
+    await useRestrictedAgentStore.getState().createPlanFromCurrentInput(snapshot)
+
+    expect(mocks.createPlan).toHaveBeenCalledWith(expect.objectContaining({
+      request: 'Tool 独立需求',
+      quality: 'medium',
+      references: [{ dataUrl: 'data:image/png;base64,tool' }],
+    }))
+    expect(useRestrictedAgentStore.getState().composerSnapshotVersion).toBe(11)
+  })
+
   it('creates the standard task only after execute accepts the frozen plan', async () => {
-    useRestrictedAgentStore.setState({ phase: 'awaiting_confirmation', plan })
+    mocks.appState.settings.clearInputAfterSubmit = true
+    useRestrictedAgentStore.setState({ phase: 'awaiting_confirmation', plan, composerSnapshotVersion: 7 })
 
     const taskId = await useRestrictedAgentStore.getState().confirmAndExecute()
 
@@ -134,5 +174,6 @@ describe('restricted Agent flow store', () => {
       agentExecutionId: execution.id,
       prompt: plan.generation.exactPrompt,
     }))
+    expect(mocks.clearComposerDraft).toHaveBeenCalledWith('tool', 7, true)
   })
 })

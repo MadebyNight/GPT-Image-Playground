@@ -4,6 +4,8 @@ import {
   AGENT_CONTEXT_MAX_CHARACTERS,
   AGENT_CONTEXT_MAX_TURNS,
   buildAgentConversationContext,
+  filterAgentTasksByMode,
+  getAgentModeForTask,
   getAgentConversationId,
   getConversationTasks,
 } from './agentConversation'
@@ -112,5 +114,19 @@ describe('agentConversation', () => {
     expect(context).toContain('已完成回复')
     expect(context).not.toContain('失败请求')
     expect(context).not.toContain('未完成的 partial 回复')
+  })
+
+  it('按 origin 兼容映射 Chat、Tool，并排除 Gallery 与手工 OpenShop', () => {
+    const chat = task('chat', 'conversation-chat', 1, 'Chat', '回复')
+    const tool = { ...task('tool', undefined, 2, 'Tool', '完成'), origin: 'restricted-agent' as const }
+    const gallery = { ...task('gallery', undefined, 3, 'Gallery', '完成'), origin: 'gallery' as const }
+    const openShop = { ...task('openshop', undefined, 4, 'OpenShop', '完成'), origin: 'openshop' as const }
+
+    expect(getAgentModeForTask(chat)).toBe('chat')
+    expect(getAgentModeForTask(tool)).toBe('tool')
+    expect(getAgentModeForTask(gallery)).toBeNull()
+    expect(getAgentModeForTask(openShop)).toBeNull()
+    expect(filterAgentTasksByMode([chat, tool, gallery, openShop], 'chat').map((item) => item.id)).toEqual(['chat'])
+    expect(filterAgentTasksByMode([chat, tool, gallery, openShop], 'tool').map((item) => item.id)).toEqual(['tool'])
   })
 })

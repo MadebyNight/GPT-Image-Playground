@@ -29,7 +29,22 @@ fi
 # 布尔值、枚举和数字也经过严格校验。使用固定格式原子写入，避免任意 JSON 拼接。
 RUNTIME_CONFIG_PATH=/usr/share/nginx/html/runtime-config.json
 RUNTIME_CONFIG_TMP=${RUNTIME_CONFIG_PATH}.tmp
-if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ]; then
+if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ] && [ "$RUNTIME_RESTRICTED_AGENT_ENABLED" = "true" ]; then
+    if ! printf '{\n  "version": 1,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  },\n  "restrictedAgent": {\n    "enabled": true,\n    "basePath": "/agent-api/v1",\n    "agentOnly": %s\n  }\n}\n' \
+        "$RUNTIME_SERVER_API_MODEL" \
+        "$RUNTIME_SERVER_API_MODE" \
+        "$RUNTIME_SERVER_API_MODEL_OPTIONS" \
+        "$RUNTIME_SERVER_API_MODE_OPTIONS" \
+        "$RUNTIME_SERVER_API_ALLOW_CUSTOM_MODEL" \
+        "$RUNTIME_SERVER_API_CODEX_CLI" \
+        "$RUNTIME_SERVER_API_RESPONSE_FORMAT_B64_JSON" \
+        "$RUNTIME_SERVER_API_TIMEOUT_SECONDS" \
+        "$RUNTIME_RESTRICTED_AGENT_ONLY" \
+        2>/dev/null > "$RUNTIME_CONFIG_TMP"
+    then
+        container_config_error 'failed to write runtime configuration'
+    fi
+elif [ "$RUNTIME_SERVER_API_ENABLED" = "true" ]; then
     if ! printf '{\n  "version": 1,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  }\n}\n' \
         "$RUNTIME_SERVER_API_MODEL" \
         "$RUNTIME_SERVER_API_MODE" \
@@ -81,8 +96,8 @@ then
     fi
 fi
 
-# API proxy 仅在旧模式显式启用。restricted 模式始终删除整个旁路配置块。
-if [ "$ENABLE_API_PROXY" != "true" ] || [ "$RESTRICTED_AGENT_ENABLED" = "true" ]
+# API proxy 只由显式开关决定；双能力部署需要同时保留 Chat 的受控代理和 Tool Gateway。
+if [ "$ENABLE_API_PROXY" != "true" ]
 then
     if ! sed -i '/# BEGIN API PROXY/,/# END API PROXY/d' /etc/nginx/conf.d/default.conf >/dev/null 2>&1; then
         container_config_error 'failed to apply API proxy configuration'

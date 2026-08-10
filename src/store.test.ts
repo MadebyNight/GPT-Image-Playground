@@ -7,12 +7,17 @@ import { getEffectiveApiProfile, initializeRuntimeConfig, loadRuntimeConfig } fr
 import * as falAiImageApi from './lib/falAiImageApi'
 const dbMockState = vi.hoisted(() => ({
   tasks: new Map<string, TaskRecord>(),
+  images: new Map<string, StoredImage>(),
+  thumbnails: new Map<string, StoredImageThumbnail>(),
+  imageSeq: 0,
+  getImage: vi.fn<(id: string) => Promise<StoredImage | undefined>>(),
+  getAllImageIds: vi.fn<() => Promise<string[]>>(),
+  deleteImage: vi.fn<(id: string) => Promise<void>>(),
 }))
 vi.mock('./lib/db', () => {
   const tasks = dbMockState.tasks
-  const images = new Map<string, StoredImage>()
-  const thumbnails = new Map<string, StoredImageThumbnail>()
-  let imageSeq = 0
+  const images = dbMockState.images
+  const thumbnails = dbMockState.thumbnails
 
   return {
     CURRENT_THUMBNAIL_VERSION: 2,
@@ -27,10 +32,10 @@ vi.mock('./lib/db', () => {
     clearTasks: async () => {
       tasks.clear()
     },
-    getImage: async (id: string) => images.get(id),
+    getImage: dbMockState.getImage,
     getImageThumbnail: async (id: string) => thumbnails.get(id),
     getStoredFreshImageThumbnail: async (id: string) => thumbnails.get(id),
-    getAllImageIds: async () => [...images.keys()],
+    getAllImageIds: dbMockState.getAllImageIds,
     getAllImages: async () => [...images.values()],
     putImage: async (image: StoredImage) => {
       images.set(image.id, image)
@@ -40,23 +45,20 @@ vi.mock('./lib/db', () => {
       thumbnails.set(thumbnail.id, thumbnail)
       return thumbnail.id
     },
-    deleteImage: async (id: string) => {
-      images.delete(id)
-      thumbnails.delete(id)
-    },
+    deleteImage: dbMockState.deleteImage,
     clearImages: async () => {
       images.clear()
       thumbnails.clear()
     },
     storeImage: async (dataUrl: string, source: StoredImage['source'] = 'upload') => {
-      const id = `stored-image-${++imageSeq}`
+      const id = `stored-image-${++dbMockState.imageSeq}`
       images.set(id, { id, dataUrl, source, createdAt: Date.now() })
       return id
     },
   }
 })
 import { clearImages, clearTasks, getAllTasks, getImage, putImage, putTask } from './lib/db'
-import { editOutputs, getCodexCliPromptKey, getPendingTaskPersistenceCountForTests, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, reuseConfig, saveOpenShopEdit, submitTask, updateTaskInStore, useStore } from './store'
+import { editOutputs, getCodexCliPromptKey, getComposerDraftSnapshot, getPendingTaskPersistenceCountForTests, getPersistedState, getTaskApiProfile, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, reuseConfig, saveOpenShopEdit, submitTask, updateTaskInStore, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -69,6 +71,15 @@ afterEach(() => {
 
 beforeEach(() => {
   initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
+  dbMockState.getImage.mockClear()
+  dbMockState.getAllImageIds.mockClear()
+  dbMockState.deleteImage.mockClear()
+  dbMockState.getImage.mockImplementation(async (id) => dbMockState.images.get(id))
+  dbMockState.getAllImageIds.mockImplementation(async () => [...dbMockState.images.keys()])
+  dbMockState.deleteImage.mockImplementation(async (id) => {
+    dbMockState.images.delete(id)
+    dbMockState.thumbnails.delete(id)
+  })
 })
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -87,6 +98,14 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
     elapsed: 1,
     ...overrides,
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
 }
 
 describe('mask draft lifecycle in store actions', () => {
@@ -162,6 +181,7 @@ describe('mask draft lifecycle in store actions', () => {
 
 describe('OpenShop 编辑历史', () => {
   beforeEach(() => {
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
     useStore.setState({
       tasks: [],
       inputImages: [],
@@ -550,6 +570,144 @@ describe('input persistence setting', () => {
   })
 })
 
+describe('initStore composer concurrency', () => {
+  const emptyDraft = (scope: 'gallery' | 'chat' | 'tool') => ({
+    composerScope: scope,
+    prompt: '',
+    inputImages: [],
+    maskDraft: null,
+    params: { ...DEFAULT_PARAMS },
+    reusedTaskApiProfileId: null,
+    reusedTaskApiProfileName: null,
+    reusedTaskApiProfileMissing: false,
+    composerVersion: 0,
+  })
+
+  beforeEach(async () => {
+    vi.stubGlobal('window', { requestIdleCallback: vi.fn() })
+    await clearTasks()
+    await clearImages()
+    useStore.setState({
+      settings: { ...DEFAULT_SETTINGS },
+      composerScope: 'gallery',
+      composerDrafts: {
+        gallery: emptyDraft('gallery'),
+        chat: emptyDraft('chat'),
+        tool: emptyDraft('tool'),
+      },
+      composerVersion: 0,
+      prompt: '',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      tasks: [],
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps an image added after the initialization snapshot while image ids are loading', async () => {
+    const imageIds = deferred<string[]>()
+    dbMockState.getAllImageIds.mockImplementationOnce(() => imageIds.promise)
+    const initializing = initStore()
+    await vi.waitFor(() => expect(dbMockState.getAllImageIds).toHaveBeenCalledOnce())
+
+    const liveImage = {
+      id: 'image-added-during-id-scan',
+      dataUrl: 'data:image/png;base64,bGl2ZQ==',
+      source: 'upload' as const,
+      createdAt: Date.now(),
+    }
+    await putImage(liveImage)
+    useStore.getState().addInputImage({ id: liveImage.id, dataUrl: liveImage.dataUrl })
+    imageIds.resolve([liveImage.id])
+
+    await initializing
+
+    expect(getComposerDraftSnapshot('gallery').inputImages).toEqual([{ id: liveImage.id, dataUrl: liveImage.dataUrl }])
+    expect(useStore.getState().inputImages).toEqual([{ id: liveImage.id, dataUrl: liveImage.dataUrl }])
+    expect(await getImage(liveImage.id)).toEqual(liveImage)
+    expect(dbMockState.deleteImage).not.toHaveBeenCalledWith(liveImage.id)
+  })
+
+  it('does not overwrite a changed prompt, params or new image while a persisted image is restoring', async () => {
+    const persistedImage = {
+      id: 'persisted-chat-image',
+      dataUrl: 'data:image/png;base64,b2xk',
+      source: 'upload' as const,
+      createdAt: 1,
+    }
+    await putImage(persistedImage)
+    useStore.setState((state) => ({
+      composerDrafts: {
+        ...state.composerDrafts,
+        chat: {
+          ...emptyDraft('chat'),
+          inputImages: [{ id: persistedImage.id, dataUrl: '' }],
+        },
+      },
+    }))
+    const storedImage = deferred<StoredImage | undefined>()
+    dbMockState.getImage.mockImplementationOnce(() => storedImage.promise)
+    const initializing = initStore()
+    await vi.waitFor(() => expect(dbMockState.getImage).toHaveBeenCalledWith(persistedImage.id))
+
+    const liveImage = {
+      id: 'image-added-during-restore',
+      dataUrl: 'data:image/png;base64,bmV3',
+      source: 'upload' as const,
+      createdAt: Date.now(),
+    }
+    await putImage(liveImage)
+    useStore.getState().setPrompt('启动期间的新需求')
+    useStore.getState().setParams({ quality: 'high' })
+    useStore.getState().addInputImage({ id: liveImage.id, dataUrl: liveImage.dataUrl })
+    storedImage.resolve(persistedImage)
+
+    await initializing
+
+    expect(getComposerDraftSnapshot('gallery')).toMatchObject({
+      prompt: '启动期间的新需求',
+      params: { quality: 'high' },
+      inputImages: [{ id: liveImage.id, dataUrl: liveImage.dataUrl }],
+    })
+    expect(await getImage(liveImage.id)).toEqual(liveImage)
+    expect(dbMockState.deleteImage).not.toHaveBeenCalledWith(liveImage.id)
+  })
+
+  it('keeps images referenced only by a pending task persistence snapshot', async () => {
+    const pendingImage = {
+      id: 'pending-task-image',
+      dataUrl: 'data:image/png;base64,cGVuZGluZw==',
+      source: 'generated' as const,
+      createdAt: Date.now(),
+    }
+    await putImage(pendingImage)
+    useStore.getState().setTasks([task({ id: 'pending-task', outputImages: [] })])
+    const persistence = deferred<void>()
+    vi.mocked(putTask).mockImplementationOnce(async (record) => {
+      await persistence.promise
+      dbMockState.tasks.set(record.id, record)
+      return record.id
+    })
+    updateTaskInStore('pending-task', { outputImages: [pendingImage.id] })
+    await vi.waitFor(() => expect(getPendingTaskPersistenceCountForTests()).toBe(1))
+    useStore.getState().setTasks([])
+
+    await initStore()
+
+    expect(await getImage(pendingImage.id)).toEqual(pendingImage)
+    expect(dbMockState.deleteImage).not.toHaveBeenCalledWith(pendingImage.id)
+    persistence.resolve()
+    await vi.waitFor(() => expect(getPendingTaskPersistenceCountForTests()).toBe(0))
+  })
+})
+
 describe('submitted composer snapshot', () => {
   beforeEach(() => {
     vi.mocked(putTask).mockClear()
@@ -772,6 +930,114 @@ describe('submitted composer snapshot', () => {
       error: '最终失败',
       customTaskId: 'late-progress-id',
     })
+  })
+})
+
+describe('mode-scoped composer drafts', () => {
+  beforeEach(() => {
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
+    const emptyDraft = {
+      prompt: '',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      reusedTaskApiProfileId: null,
+      reusedTaskApiProfileName: null,
+      reusedTaskApiProfileMissing: false,
+      composerVersion: 0,
+    }
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        clearInputAfterSubmit: true,
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+      composerScope: 'chat',
+      composerDrafts: {
+        gallery: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
+        chat: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
+        tool: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
+      },
+      ...emptyDraft,
+      maskEditorImageId: null,
+      tasks: [],
+      showToast: vi.fn(),
+      setConfirmDialog: vi.fn(),
+    })
+  })
+
+  it('isolates prompt, images, mask, params, reused profile and version between Chat and Tool', () => {
+    useStore.getState().setPrompt('Chat 草稿')
+    useStore.getState().setInputImages([imageA])
+    useStore.getState().setMaskDraft({ targetImageId: imageA.id, maskDataUrl: 'data:image/png;base64,mask-chat', updatedAt: 1 })
+    useStore.getState().setParams({ size: '1536x1024' })
+    useStore.getState().setReusedTaskApiProfile('chat-profile', true, 'Chat Profile')
+    const chatVersion = useStore.getState().composerVersion
+
+    useStore.getState().setComposerScope('tool')
+    expect(getComposerDraftSnapshot()).toMatchObject({
+      composerScope: 'tool',
+      prompt: '',
+      inputImages: [],
+      maskDraft: null,
+      params: DEFAULT_PARAMS,
+      reusedTaskApiProfileId: null,
+      composerVersion: 0,
+    })
+
+    useStore.getState().setPrompt('Tool 草稿')
+    useStore.getState().setInputImages([imageB])
+    useStore.getState().setParams({ quality: 'high' })
+    const toolVersion = useStore.getState().composerVersion
+
+    useStore.getState().setComposerScope('chat')
+    expect(getComposerDraftSnapshot()).toMatchObject({
+      composerScope: 'chat',
+      prompt: 'Chat 草稿',
+      inputImages: [imageA],
+      maskDraft: { targetImageId: imageA.id },
+      params: { size: '1536x1024' },
+      reusedTaskApiProfileId: 'chat-profile',
+      reusedTaskApiProfileMissing: true,
+      composerVersion: chatVersion,
+    })
+    expect(toolVersion).toBeGreaterThan(0)
+  })
+
+  it('clears only the submitted source mode when another mode becomes active', async () => {
+    useStore.getState().setPrompt('Chat 待提交')
+    const chatSnapshot = getComposerDraftSnapshot()
+    useStore.getState().setComposerScope('tool')
+    useStore.getState().setPrompt('Tool 新草稿')
+
+    await submitTask({
+      draftSnapshot: chatSnapshot,
+      callApi: vi.fn().mockResolvedValue({ images: [], actualParams: {} }),
+    })
+
+    expect(useStore.getState().prompt).toBe('Tool 新草稿')
+    useStore.getState().setComposerScope('chat')
+    expect(useStore.getState().prompt).toBe('')
+    useStore.getState().setComposerScope('tool')
+    expect(useStore.getState().prompt).toBe('Tool 新草稿')
+  })
+
+  it('maps the legacy persisted single draft to Chat without leaking it into Tool', () => {
+    const merged = mergePersistedState({
+      settings: { ...DEFAULT_SETTINGS },
+      prompt: '旧版单草稿',
+      inputImages: [{ id: imageA.id, dataUrl: '' }],
+      params: { ...DEFAULT_PARAMS, quality: 'high' },
+    }, useStore.getState())
+
+    expect(merged.composerDrafts.chat).toMatchObject({
+      prompt: '旧版单草稿',
+      inputImages: [{ id: imageA.id, dataUrl: '' }],
+      params: { quality: 'high' },
+    })
+    expect(merged.composerDrafts.tool.prompt).toBe('')
+    expect(merged.composerDrafts.tool.inputImages).toEqual([])
   })
 })
 

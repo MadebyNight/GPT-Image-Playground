@@ -1,13 +1,14 @@
 import { useMemo } from 'react'
 import { editOutputs, removeTask, reuseConfig, useStore } from '../store'
-import { getAgentConversationId, getConversationTasks } from '../lib/agentConversation'
+import { filterAgentTasksByMode, getAgentConversationId, getConversationTasks } from '../lib/agentConversation'
 import { filterAndSortTasks } from '../lib/taskFilters'
-import type { TaskRecord } from '../types'
+import type { AgentMode, TaskRecord } from '../types'
 import SearchBar from './SearchBar'
 import TaskCard from './TaskCard'
 import { PlusIcon } from './icons'
 
 interface AgentHistoryPanelProps {
+  mode: AgentMode
   activeTaskId: string | null
   onSelectTask: (taskId: string) => void
   onNewConversation?: () => void
@@ -20,7 +21,7 @@ interface AgentConversationSummary {
   turnCount: number
 }
 
-export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewConversation }: AgentHistoryPanelProps) {
+export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, onNewConversation }: AgentHistoryPanelProps) {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
@@ -28,11 +29,19 @@ export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewCon
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
   const filteredTasks = useMemo(
-    () => filterAndSortTasks(tasks, { searchQuery, filterStatus, filterFavorite }),
-    [filterFavorite, filterStatus, searchQuery, tasks],
+    () => filterAndSortTasks(filterAgentTasksByMode(tasks, mode), { searchQuery, filterStatus, filterFavorite }),
+    [filterFavorite, filterStatus, mode, searchQuery, tasks],
   )
 
-  const conversations = useMemo(() => {
+  const historyItems = useMemo(() => {
+    if (mode === 'tool') {
+      return filteredTasks.map((task) => ({
+        id: task.id,
+        task,
+        latestTaskId: task.id,
+        turnCount: 1,
+      }))
+    }
     const seenConversationIds = new Set<string>()
 
     return filteredTasks.reduce<AgentConversationSummary[]>((items, task) => {
@@ -50,13 +59,14 @@ export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewCon
       })
       return items
     }, [])
-  }, [filteredTasks, tasks])
+  }, [filteredTasks, mode, tasks])
 
   const activeConversationId = useMemo(() => {
     if (!activeTaskId) return null
     const activeTask = tasks.find((task) => task.id === activeTaskId)
-    return activeTask ? getAgentConversationId(activeTask) : null
-  }, [activeTaskId, tasks])
+    if (!activeTask) return null
+    return mode === 'chat' ? getAgentConversationId(activeTask) : activeTask.id
+  }, [activeTaskId, mode, tasks])
 
   const handleDelete = (task: TaskRecord) => {
     setConfirmDialog({
@@ -73,7 +83,7 @@ export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewCon
       <div className="sticky top-0 z-10 border-b border-gray-100 bg-gray-50/95 p-4 backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/95">
         <div className="flex items-center justify-between gap-3">
           <h2 id="agent-history-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100">历史记录</h2>
-          {onNewConversation && (
+          {mode === 'chat' && onNewConversation && (
             <button
               type="button"
               data-agent-new-conversation
@@ -89,11 +99,16 @@ export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewCon
         <SearchBar variant="compact" className="mt-3" />
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        {conversations.length === 0 ? (
+        {historyItems.length === 0 ? (
           <p className="py-10 text-center text-sm text-gray-400 dark:text-gray-500">没有找到匹配的记录</p>
         ) : (
-          conversations.map((conversation) => (
-            <div key={conversation.id} data-agent-conversation-id={conversation.id} className="relative">
+          historyItems.map((conversation) => (
+            <div
+              key={conversation.id}
+              data-agent-conversation-id={mode === 'chat' ? conversation.id : undefined}
+              data-agent-run-id={mode === 'tool' ? conversation.id : undefined}
+              className="relative"
+            >
               <TaskCard
                 task={conversation.task}
                 variant="compact"
@@ -104,7 +119,7 @@ export default function AgentHistoryPanel({ activeTaskId, onSelectTask, onNewCon
                 onEditOutputs={() => void editOutputs(conversation.task)}
                 onDelete={() => handleDelete(conversation.task)}
               />
-              {conversation.turnCount > 1 && (
+              {mode === 'chat' && conversation.turnCount > 1 && (
                 <span className="pointer-events-none absolute right-2 top-2 rounded-full border border-white/70 bg-gray-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur dark:border-white/10">
                   {conversation.turnCount} 轮
                 </span>

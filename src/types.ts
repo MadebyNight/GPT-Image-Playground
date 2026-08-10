@@ -109,6 +109,18 @@ export const DEFAULT_PARAMS: TaskParams = {
   n: 1,
 }
 
+export type AgentMode = 'chat' | 'tool'
+
+export interface AgentCapabilities {
+  chatAllowed: boolean
+  chatConfigured: boolean
+  chatUsable: boolean
+  tool: boolean
+  openShopTool: boolean
+  defaultMode: AgentMode | null
+  modeSwitching: boolean
+}
+
 // ===== 输入图片（UI 层面） =====
 
 export interface InputImage {

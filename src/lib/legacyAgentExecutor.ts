@@ -486,6 +486,7 @@ export const storeBackedAgentExecutor: AgentExecutor = {
     const imageCount = getAgentImageCount(request.imageCount)
     const draftMatchesCurrentPrompt = normalizeSubmittedPrompt(state.prompt) === normalizeSubmittedPrompt(request.prompt)
     const draftSnapshot = {
+      composerScope: state.composerScope,
       prompt: request.prompt,
       inputImages: state.inputImages.map((image) => ({ ...image })),
       maskDraft: state.maskDraft ? { ...state.maskDraft } : null,

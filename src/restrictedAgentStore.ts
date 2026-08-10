@@ -8,7 +8,13 @@ import {
   getRestrictedAgentExecution,
   subscribeRestrictedAgentExecution,
 } from './lib/restrictedAgentApi'
-import { updateTaskInStore, useStore } from './store'
+import {
+  clearComposerDraft,
+  getComposerDraftSnapshot,
+  updateTaskInStore,
+  useStore,
+  type ComposerDraftSnapshot,
+} from './store'
 import { isRestrictedAgentEnabled } from './lib/serverApiConfig'
 import type {
   RestrictedAgentExecution,
@@ -32,10 +38,11 @@ interface PersistedAgentFlow {
   execution: RestrictedAgentExecution | null
   taskId: string | null
   error: string | null
+  composerSnapshotVersion: number | null
 }
 
 interface RestrictedAgentState extends PersistedAgentFlow {
-  createPlanFromCurrentInput: () => Promise<RestrictedAgentPlan | null>
+  createPlanFromCurrentInput: (draftSnapshot?: ComposerDraftSnapshot) => Promise<RestrictedAgentPlan | null>
   confirmAndExecute: () => Promise<string | null>
   returnToEditing: () => void
   cancelExecution: () => Promise<void>
@@ -57,6 +64,7 @@ function readPersistedState(): PersistedAgentFlow {
     execution: null,
     taskId: null,
     error: null,
+    composerSnapshotVersion: null,
   }
   if (typeof window === 'undefined') return fallback
   try {
@@ -70,6 +78,7 @@ function readPersistedState(): PersistedAgentFlow {
       execution: parsed.execution ?? null,
       taskId: parsed.taskId ?? null,
       error: parsed.error ?? null,
+      composerSnapshotVersion: typeof parsed.composerSnapshotVersion === 'number' ? parsed.composerSnapshotVersion : null,
     }
   } catch {
     return fallback
@@ -84,6 +93,7 @@ function persistState(state: RestrictedAgentState) {
     execution: state.execution,
     taskId: state.taskId,
     error: state.error,
+    composerSnapshotVersion: state.composerSnapshotVersion,
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted))
 }
@@ -191,10 +201,9 @@ async function createTaskForExecutionInternal(plan: RestrictedAgentPlan, executi
   await putTask(task)
 
   const settings = useStore.getState().settings
-  if (settings.clearInputAfterSubmit) {
-    useStore.getState().setPrompt('')
-    useStore.getState().clearInputImages()
-    useStore.getState().clearMaskDraft()
+  const composerSnapshotVersion = useRestrictedAgentStore.getState().composerSnapshotVersion
+  if (composerSnapshotVersion !== null) {
+    clearComposerDraft('tool', composerSnapshotVersion, settings.clearInputAfterSubmit)
   }
   return taskId
 }
@@ -310,37 +319,44 @@ function watchExecution(executionId: string, taskId: string | null) {
 export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) => ({
   ...readPersistedState(),
 
-  async createPlanFromCurrentInput() {
+  async createPlanFromCurrentInput(draftSnapshot = getComposerDraftSnapshot('tool')) {
     if (['planning', 'confirming', 'executing'].includes(get().phase)) return null
     const app = useStore.getState()
     if (!isRestrictedAgentEnabled()) {
       app.showToast('当前部署未启用受限 Agent', 'error')
       return null
     }
-    const request = app.prompt.trim()
+    const request = draftSnapshot.prompt.trim()
     if (!request) {
       app.showToast('请输入图片需求', 'error')
       return null
     }
-    set({ phase: 'planning', plan: null, execution: null, taskId: null, error: null })
+    set({
+      phase: 'planning',
+      plan: null,
+      execution: null,
+      taskId: null,
+      error: null,
+      composerSnapshotVersion: draftSnapshot.composerVersion,
+    })
     try {
-      const maskTarget = app.maskDraft
-        ? app.inputImages.find((image) => image.id === app.maskDraft?.targetImageId)
+      const maskTarget = draftSnapshot.maskDraft
+        ? draftSnapshot.inputImages.find((image) => image.id === draftSnapshot.maskDraft?.targetImageId)
         : undefined
-      if (app.maskDraft && !maskTarget) throw new Error('遮罩主图已不存在，请重新选择')
+      if (draftSnapshot.maskDraft && !maskTarget) throw new Error('遮罩主图已不存在，请重新选择')
 
       const plan = await createRestrictedAgentPlan({
         request,
-        size: app.params.size,
-        quality: app.params.quality,
-        outputFormat: app.params.output_format,
-        outputCompression: app.params.output_compression,
-        imageCount: Math.min(4, Math.max(1, Math.round(app.params.n))),
-        references: app.inputImages
+        size: draftSnapshot.params.size,
+        quality: draftSnapshot.params.quality,
+        outputFormat: draftSnapshot.params.output_format,
+        outputCompression: draftSnapshot.params.output_compression,
+        imageCount: Math.min(4, Math.max(1, Math.round(draftSnapshot.params.n))),
+        references: draftSnapshot.inputImages
           .filter((image) => image.id !== maskTarget?.id)
           .map((image) => ({ dataUrl: image.dataUrl })),
         maskTarget: maskTarget ? { dataUrl: maskTarget.dataUrl } : undefined,
-        mask: app.maskDraft ? { dataUrl: app.maskDraft.maskDataUrl } : undefined,
+        mask: draftSnapshot.maskDraft ? { dataUrl: draftSnapshot.maskDraft.maskDataUrl } : undefined,
       })
       set({ phase: 'awaiting_confirmation', plan, execution: null, taskId: null, error: null })
       return plan
@@ -370,7 +386,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       })
       if (!isTerminalExecution(execution)) watchExecution(execution.id, null)
       const taskId = await createTaskForExecution(plan, execution)
-      set({ taskId })
+      set({ taskId, composerSnapshotVersion: null })
       const latestExecution = get().execution?.id === execution.id ? get().execution! : execution
       await applyExecution(latestExecution, taskId)
       if (!isTerminalExecution(latestExecution)) watchExecution(latestExecution.id, taskId)
@@ -391,7 +407,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   },
 
   returnToEditing() {
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null })
+    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null })
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-bar] [contenteditable="true"]')?.focus())
   },
 
@@ -428,7 +444,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   reset() {
     const executionId = get().execution?.id
     if (executionId) stopExecutionWatch(executionId)
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null })
+    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null })
   },
 }))
 

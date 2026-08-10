@@ -161,6 +161,245 @@ test('Chat Agent 失败终态出现后立即刷新仍保留 partial 与错误', 
   await expect(latestResponse).toContainText('执行失败')
 })
 
+test('双能力部署可切换 Chat 与 Tool，并隔离完整输入草稿', async ({ page }) => {
+  await page.route('**/runtime-config.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: 1,
+        serverApi: {
+          enabled: true,
+          provider: 'openai',
+          model: 'gpt-5.5',
+          apiMode: 'responses',
+          modelOptions: ['gpt-5.5'],
+          apiModeOptions: ['responses'],
+          allowCustomModel: true,
+          codexCli: false,
+          responseFormatB64Json: false,
+          timeoutSeconds: 60,
+          proxyPath: '/api-proxy',
+        },
+        restrictedAgent: {
+          enabled: true,
+          basePath: '/agent-api/v1',
+          agentOnly: false,
+        },
+      }),
+    })
+  })
+
+  await gotoGallery(page)
+  await page.getByRole('tab', { name: 'Agent' }).click()
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
+  await editor.fill('Chat 独立草稿')
+
+  await page.getByRole('tab', { name: 'Tool' }).click()
+  await expect(editor).toHaveText('')
+  await editor.fill('Tool 独立草稿')
+
+  await page.getByRole('tab', { name: 'Chat' }).click()
+  await expect(editor).toHaveText('Chat 独立草稿')
+  await page.getByRole('tab', { name: 'Tool' }).click()
+  await expect(editor).toHaveText('Tool 独立草稿')
+})
+
+test('Tool-only agentOnly 刷新后从 Tool 草稿生成执行计划', async ({ page }) => {
+  const prompt = 'tool-scope-after-refresh'
+  let planRequestBody = ''
+  await page.route('**/runtime-config.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: 1,
+        serverApi: { enabled: false },
+        restrictedAgent: {
+          enabled: true,
+          basePath: '/agent-api/v1',
+          agentOnly: true,
+        },
+      }),
+    })
+  })
+  await page.route('**/agent-api/v1/capabilities', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }),
+    })
+  })
+  await page.route('**/agent-api/v1/plans', async (route) => {
+    planRequestBody = route.request().postData() ?? ''
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: 'e2e-plan',
+          version: 1,
+          status: 'awaiting_confirmation',
+          expiresAt: '2099-01-01T00:00:00.000Z',
+          originalRequest: prompt,
+          summary: 'Tool scope E2E plan',
+          steps: [{ title: '生成图片', operation: 'generate' }],
+          generation: {
+            exactPrompt: prompt,
+            action: 'generate',
+            size: '1024x1024',
+            quality: 'auto',
+            outputFormat: 'png',
+            outputCompression: null,
+            imageCount: 1,
+          },
+          inputs: [],
+          assumptions: [],
+          warnings: [],
+          policyVersion: 'restricted-image-v1',
+        },
+      }),
+    })
+  })
+
+  const response = await page.goto('/', { waitUntil: 'domcontentloaded' })
+  expect(response?.ok()).toBe(true)
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: '工作区模式' })).toHaveCount(0)
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  await editor.fill(prompt)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(editor).toHaveText(prompt)
+  await page.getByTitle('生成执行计划 (Ctrl+Enter)').click()
+
+  await expect(page.getByRole('heading', { name: 'Tool scope E2E plan' })).toBeVisible()
+  expect(planRequestBody).toContain(prompt)
+})
+
+test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由', async ({ page }) => {
+  let galleryRequests = 0
+  let galleryRequestUrl = ''
+  let galleryRequestBody: unknown = null
+  let toolCapabilityRequests = 0
+  let toolPlanRequests = 0
+  await page.route('**/runtime-config.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: 1,
+        serverApi: {
+          enabled: true,
+          provider: 'openai',
+          model: 'gpt-5.5',
+          apiMode: 'responses',
+          modelOptions: ['gpt-5.5'],
+          apiModeOptions: ['images', 'responses'],
+          allowCustomModel: true,
+          codexCli: false,
+          responseFormatB64Json: false,
+          timeoutSeconds: 60,
+          proxyPath: '/api-proxy',
+        },
+        restrictedAgent: {
+          enabled: true,
+          basePath: '/agent-api/v1',
+          agentOnly: false,
+        },
+      }),
+    })
+  })
+  await page.route('**/api-proxy/**', async (route) => {
+    galleryRequests += 1
+    galleryRequestUrl = route.request().url()
+    galleryRequestBody = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] }),
+    })
+  })
+  await page.route('**/agent-api/v1/capabilities', async (route) => {
+    toolCapabilityRequests += 1
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }),
+    })
+  })
+  await page.route('**/agent-api/v1/plans', async (route) => {
+    toolPlanRequests += 1
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'wrong route' }) })
+  })
+
+  await gotoGallery(page)
+  await page.getByRole('button', { name: '设置' }).click()
+  await page.getByRole('button', { name: 'API 配置' }).click()
+  await page.getByText('Images API (/v1/images)', { exact: true }).click()
+  await page.locator('[data-option-value="responses"]').click()
+  await page.getByRole('button', { name: '关闭' }).click()
+
+  await page.getByRole('tab', { name: 'Agent' }).click()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Chat' }).click()
+  await page.getByRole('tab', { name: '画廊' }).click()
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  await editor.fill('Gallery 独立草稿')
+
+  await page.getByRole('button', { name: '设置' }).click()
+  await page.getByRole('button', { name: 'API 配置' }).click()
+  await page.getByText('Responses API (/v1/responses)', { exact: true }).click()
+  await page.locator('[data-option-value="images"]').click()
+  await page.getByRole('button', { name: '关闭' }).click()
+
+  await expect(editor).toHaveText('Gallery 独立草稿')
+  await page.getByTitle('生成 (Ctrl+Enter)').click()
+  await expect.poll(() => galleryRequests).toBe(1)
+  expect(galleryRequestUrl).toContain('/images/generations')
+  expect(galleryRequestBody).toMatchObject({ prompt: 'Gallery 独立草稿' })
+  expect(toolCapabilityRequests).toBe(0)
+  expect(toolPlanRequests).toBe(0)
+  await expect.poll(() => page.evaluate(async () => {
+    const request = indexedDB.open('gpt-image-playground', 2)
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const tasks = await new Promise<Array<{ prompt?: string; origin?: string }>>((resolve, reject) => {
+      const operation = db.transaction('tasks', 'readonly').objectStore('tasks').getAll()
+      operation.onsuccess = () => resolve(operation.result)
+      operation.onerror = () => reject(operation.error)
+    })
+    db.close()
+    const task = tasks.find((candidate) => candidate.prompt === 'Gallery 独立草稿')
+    return task?.origin ?? (task ? 'gallery' : null)
+  })).toBe('gallery')
+  await page.getByRole('tab', { name: 'Agent' }).click()
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
+  await page.getByRole('tab', { name: '画廊' }).click()
+  await expect(editor).toHaveText('Gallery 独立草稿')
+})
+
+test('localStorage getter 抛出 SecurityError 时 App 仍可启动', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('blocked', 'SecurityError')
+      },
+    })
+  })
+
+  const response = await page.goto('/', { waitUntil: 'domcontentloaded' })
+  expect(response?.ok()).toBe(true)
+  await expect(page.getByRole('heading', { name: 'GPT Image Playground' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: '工作区模式' })).toBeVisible()
+})
+
 test('OpenShop 宿主拒绝错误消息来源并持久化像素等价的新历史', async ({ page }) => {
   const sourceDataUrl = await seedOpenShopHistory(page)
   await page.route('**/openshop/', async (route) => {

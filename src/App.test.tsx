@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-const runtimeConfigMock = vi.hoisted(() => ({ enabled: false, agentOnly: false }))
+const runtimeConfigMock = vi.hoisted(() => ({ chatUsable: true, tool: false, agentOnly: false }))
 
 vi.mock('./store', () => {
-  const state = { setSettings: vi.fn(), tasks: [] }
+  const state = { setSettings: vi.fn(), setComposerScope: vi.fn(), settings: { apiMode: 'responses' }, tasks: [] }
   return {
     initStore: vi.fn(),
     ensureImageCached: vi.fn(),
@@ -25,16 +25,29 @@ vi.mock('./restrictedAgentStore', () => ({
   useRestrictedAgentStore: <T,>(selector: (value: { recover: () => Promise<void> }) => T) => selector({ recover: vi.fn(async () => undefined) }),
 }))
 vi.mock('./lib/serverApiConfig', () => ({
-  isRestrictedAgentEnabled: () => runtimeConfigMock.enabled,
-  isRestrictedAgentOnly: () => runtimeConfigMock.enabled && runtimeConfigMock.agentOnly,
+  getAgentCapabilities: () => ({
+    chatAllowed: runtimeConfigMock.chatUsable,
+    chatConfigured: runtimeConfigMock.chatUsable,
+    chatUsable: runtimeConfigMock.chatUsable,
+    tool: runtimeConfigMock.tool,
+    openShopTool: false,
+    defaultMode: runtimeConfigMock.chatUsable ? 'chat' : runtimeConfigMock.tool ? 'tool' : null,
+    modeSwitching: runtimeConfigMock.chatUsable && runtimeConfigMock.tool,
+  }),
+  getAgentModePreference: () => null,
+  getRuntimeConfigState: () => ({ status: 'ready', config: { version: 1, serverApi: { enabled: false } } }),
+  resolveAgentMode: (capabilities: { defaultMode: 'chat' | 'tool' | null }, preferred: 'chat' | 'tool' | null) => preferred ?? capabilities.defaultMode,
+  setAgentModePreference: vi.fn(),
+  isRestrictedAgentEnabled: () => runtimeConfigMock.tool,
+  isRestrictedAgentOnly: () => runtimeConfigMock.tool && runtimeConfigMock.agentOnly,
 }))
 
 vi.mock('./components/Header', () => ({ default: () => <div data-component="header" /> }))
 vi.mock('./components/TemplateGallery', () => ({ default: () => <div data-component="template-gallery" /> }))
 vi.mock('./components/SearchBar', () => ({ default: () => <div data-component="search-bar" /> }))
 vi.mock('./components/TaskGrid', () => ({ default: () => <div data-component="task-grid" /> }))
-vi.mock('./components/AgentWorkspace', () => ({ default: () => <div data-component="agent-workspace" /> }))
-vi.mock('./components/InputBar', () => ({ default: () => <div data-component="input-bar" /> }))
+vi.mock('./components/AgentWorkspace', () => ({ default: ({ mode }: { mode: string }) => <div data-component="agent-workspace" data-mode={mode} /> }))
+vi.mock('./components/InputBar', () => ({ default: ({ agentMode }: { agentMode: string }) => <div data-component="input-bar" data-agent-mode={agentMode} /> }))
 vi.mock('./components/DetailModal', () => ({ default: () => <div data-component="detail-modal" /> }))
 vi.mock('./components/Lightbox', () => ({ default: () => <div data-component="lightbox" /> }))
 vi.mock('./components/SettingsModal', () => ({ default: () => <div data-component="settings-modal" /> }))
@@ -48,11 +61,17 @@ vi.mock('./components/OpenShopWorkspace', () => ({
   ),
 }))
 
-import App from './App'
+import App, { getWorkspaceComposerScope } from './App'
 
 describe('App workspace entry', () => {
+  beforeEach(() => {
+    runtimeConfigMock.chatUsable = true
+    runtimeConfigMock.tool = false
+    runtimeConfigMock.agentOnly = false
+  })
   it('keeps the legacy gallery and Agent entries when restricted Agent is disabled', () => {
-    runtimeConfigMock.enabled = false
+    runtimeConfigMock.chatUsable = true
+    runtimeConfigMock.tool = false
     runtimeConfigMock.agentOnly = false
     const markup = renderToStaticMarkup(<App />)
     const templateIndex = markup.indexOf('data-component="template-gallery"')
@@ -70,8 +89,16 @@ describe('App workspace entry', () => {
     expect(markup).toContain('data-agent-workspace-mounted')
   })
 
+  it('derives the active composer scope from both workspace and resolved Agent mode', () => {
+    expect(getWorkspaceComposerScope('gallery', 'chat')).toBe('gallery')
+    expect(getWorkspaceComposerScope('gallery', 'tool')).toBe('gallery')
+    expect(getWorkspaceComposerScope('agent', 'chat')).toBe('chat')
+    expect(getWorkspaceComposerScope('agent', 'tool')).toBe('tool')
+  })
+
   it('keeps both workspace entries when restricted Agent is enabled but not agent-only', () => {
-    runtimeConfigMock.enabled = true
+    runtimeConfigMock.chatUsable = true
+    runtimeConfigMock.tool = true
     runtimeConfigMock.agentOnly = false
 
     const markup = renderToStaticMarkup(<App />)
@@ -85,7 +112,8 @@ describe('App workspace entry', () => {
   })
 
   it('opens the Agent workspace directly in agent-only mode', () => {
-    runtimeConfigMock.enabled = true
+    runtimeConfigMock.chatUsable = false
+    runtimeConfigMock.tool = true
     runtimeConfigMock.agentOnly = true
 
     const markup = renderToStaticMarkup(<App />)
@@ -93,6 +121,17 @@ describe('App workspace entry', () => {
     expect(markup).toContain('data-component="agent-workspace"')
     expect(markup).not.toContain('data-component="task-grid"')
     expect(markup).not.toContain('role="tablist"')
+  })
+
+  it('disables the Agent entry when neither Chat nor Tool is usable', () => {
+    runtimeConfigMock.chatUsable = false
+    runtimeConfigMock.tool = false
+    runtimeConfigMock.agentOnly = false
+
+    const markup = renderToStaticMarkup(<App />)
+
+    expect(markup).toContain('Agent 尚不可用')
+    expect(markup).toContain('disabled=""')
   })
 
   it('renders the full-page OpenShop workspace for an advanced-edit hash route', () => {

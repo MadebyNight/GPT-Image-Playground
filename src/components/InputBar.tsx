@@ -1,13 +1,14 @@
 import { useRef, useEffect, useCallback, useState, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached } from '../store'
-import { DEFAULT_PARAMS } from '../types'
+import { getComposerDraftSnapshot, useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached } from '../store'
+import { DEFAULT_PARAMS, type AgentCapabilities, type AgentMode } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import {
+  getAgentCapabilities,
   getChatCapabilities,
+  getChatUnavailableMessage,
   getEffectiveApiProfile,
   getRuntimeConfigState,
-  isRestrictedAgentEnabled,
   isServerApiConfigEnabled,
   isServerApiConfigUsable,
 } from '../lib/serverApiConfig'
@@ -283,11 +284,23 @@ function useIsMobile() {
 interface InputBarProps {
   onTaskSubmitted?: (taskId: string) => void
   layout?: 'default' | 'agent'
+  agentMode?: AgentMode
+  agentCapabilities?: AgentCapabilities
   /** 当前默认 Agent 会话；为空时下一次提交会创建新会话。 */
   agentConversationId?: string | null
 }
 
-export default function InputBar({ onTaskSubmitted, layout = 'default', agentConversationId = null }: InputBarProps) {
+export function getInputBarSubmitRoute(layout: 'default' | 'agent', agentMode: AgentMode): 'gallery' | AgentMode {
+  return layout === 'agent' ? agentMode : 'gallery'
+}
+
+export default function InputBar({
+  onTaskSubmitted,
+  layout = 'default',
+  agentMode = 'chat',
+  agentCapabilities,
+  agentConversationId = null,
+}: InputBarProps) {
   const prompt = useStore((s) => s.prompt)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
@@ -480,10 +493,15 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
     return normalizeSettings({ ...settings, profiles, activeProfileId: activeProfile.id })
   }, [activeProfile, currentActiveProfile.id, serverManaged, settings])
   const isAgentLayout = layout === 'agent'
-  const isRestrictedAgentLayout = isAgentLayout && isRestrictedAgentEnabled()
+  const submitRoute = getInputBarSubmitRoute(layout, agentMode)
+  const isRestrictedAgentLayout = submitRoute === 'tool'
   const chatCapabilities = useMemo(() => getChatCapabilities(effectiveSettings), [effectiveSettings])
+  const resolvedAgentCapabilities = useMemo(
+    () => agentCapabilities ?? getAgentCapabilities(effectiveSettings),
+    [agentCapabilities, effectiveSettings],
+  )
   const hasSubmitApiConfig = isRestrictedAgentLayout
-    ? true
+    ? resolvedAgentCapabilities.tool
     : isAgentLayout
       ? chatCapabilities.chatUsable
       : (serverManaged ? serverConfigUsable : Boolean(activeProfile.apiKey))
@@ -491,7 +509,7 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !agentBusy)
   const handleSubmit = useCallback(async () => {
     if (isRestrictedAgentLayout) {
-      await createAgentPlan()
+      await createAgentPlan(getComposerDraftSnapshot('tool'))
       return
     }
 
@@ -523,18 +541,12 @@ export default function InputBar({ onTaskSubmitted, layout = 'default', agentCon
       })
       : await submitTask()
     if (taskId) onTaskSubmitted?.(taskId)
-  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, serverManaged, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
-  const chatUnavailableMessage = chatCapabilities.status === 'loading'
-    ? '运行时配置加载中'
-    : chatCapabilities.status === 'error'
-      ? '服务端 API 配置不可用，请联系部署管理员'
-      : chatCapabilities.status === 'images_only'
-        ? chatCapabilities.chatAllowed
-          ? '当前 API 配置仅启用 Images，请切换到 Responses'
-          : '当前部署仅启用 Images，未启用 Chat Responses 能力'
-        : '当前 Responses API 配置缺少 API Key'
+  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
+  const chatUnavailableMessage = getChatUnavailableMessage(effectiveSettings)
   const missingApiConfigMessage = isAgentLayout && !isRestrictedAgentLayout
     ? chatUnavailableMessage
+    : isRestrictedAgentLayout
+      ? '当前部署未启用 Tool Agent Gateway'
     : serverManaged
       ? '服务端 API 配置不可用，请联系部署管理员'
       : '尚未完成 API 配置，请在右上角设置中进行'

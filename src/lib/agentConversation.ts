@@ -1,4 +1,4 @@
-import type { TaskRecord } from '../types'
+import type { AgentMode, TaskRecord } from '../types'
 
 export const AGENT_CONTEXT_MAX_TURNS = 4
 export const AGENT_CONTEXT_MAX_CHARACTERS = 6_000
@@ -55,10 +55,20 @@ export function createAgentConversationId(): string {
   return `agent-${randomPart}`
 }
 
+export function getAgentModeForTask(task: TaskRecord): AgentMode | null {
+  if (task.origin === 'agent') return 'chat'
+  if (task.origin === 'restricted-agent') return 'tool'
+  return null
+}
+
+export function filterAgentTasksByMode(tasks: TaskRecord[], mode: AgentMode): TaskRecord[] {
+  return tasks.filter((task) => getAgentModeForTask(task) === mode)
+}
+
 export function getConversationTasks(tasks: TaskRecord[], anchor: TaskRecord | string): TaskRecord[] {
   const conversationId = typeof anchor === 'string' ? anchor : getAgentConversationId(anchor)
   return tasks
-    .filter((task) => getAgentConversationId(task) === conversationId)
+    .filter((task) => getAgentModeForTask(task) === 'chat' && getAgentConversationId(task) === conversationId)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 }
 
