@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.3.5",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "mock:api": "node scripts/mock-image-api.mjs",
@@ -11,10 +14,13 @@
     "build:all": "npm run build && npm run build:gateway",
     "deploy:cf": "npm run build && wrangler deploy",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude e2e/**",
+    "test:docker-config": "docker compose config --quiet",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "test:gateway": "npm --prefix gateway test",
     "test:all": "npm run test && npm run test:gateway",
-    "test:watch": "vitest"
+    "test:watch": "vitest --exclude e2e/**"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.0",
@@ -24,6 +30,7 @@
     "zustand": "^5.0.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.0",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",

@@ -12,6 +12,14 @@ import type { ImageExecutor } from '../src/executor.js';
 import type { Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
 import type { RestrictedAgentPlanSnapshot } from '../src/types.js';
+import {
+  RESTRICTED_EXECUTION_RESPONSE_FIXTURE,
+  RESTRICTED_PLAN_RESPONSE_FIXTURE,
+  createDeterministicExecutorFixture,
+  createDeterministicPlannerFixture,
+  normalizeRestrictedExecutionResponse,
+  normalizeRestrictedPlanResponse,
+} from './fixtures.js';
 
 const apps: FastifyInstance[] = [];
 const tempDirs: string[] = [];
@@ -50,33 +58,8 @@ async function makeConfig(overrides: Partial<GatewayConfig> = {}): Promise<Gatew
   };
 }
 
-function fakePlanner(action: 'generate' | 'edit' = 'generate'): Planner {
-  return {
-    createDraft: vi.fn(async () => ({
-      summary: '生成一张测试图片',
-      steps: [{ title: action === 'generate' ? '生成图片' : '编辑图片', operation: action }],
-      generation: {
-        exactPrompt: '一张红色测试图片', action, size: '1024x1024', quality: 'medium',
-        outputFormat: 'png', outputCompression: null, imageCount: 1,
-      },
-      assumptions: [], warnings: [],
-    })),
-  };
-}
-
 function fakeExecutor(delayMs = 0, outputs: Buffer[] = [png]): ImageExecutor & { execute: ReturnType<typeof vi.fn> } {
-  return {
-    execute: vi.fn(async ({ signal }: { signal: AbortSignal }) => {
-      if (delayMs) await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, delayMs);
-        signal.addEventListener('abort', () => {
-          clearTimeout(timer);
-          reject(new Error('aborted'));
-        }, { once: true });
-      });
-      return outputs;
-    }),
-  };
+  return createDeterministicExecutorFixture(outputs, delayMs);
 }
 
 function multipart(fields: Record<string, string>, files: Array<{ field: string; bytes: Buffer; filename?: string }> = []) {
@@ -96,7 +79,7 @@ function multipart(fields: Record<string, string>, files: Array<{ field: string;
 async function setup(overrides: { config?: Partial<GatewayConfig>; planner?: Planner; executor?: ImageExecutor } = {}) {
   const config = await makeConfig(overrides.config);
   const executor = overrides.executor ?? fakeExecutor();
-  const app = await createApp({ config, planner: overrides.planner ?? fakePlanner(), executor });
+  const app = await createApp({ config, planner: overrides.planner ?? createDeterministicPlannerFixture(), executor });
   apps.push(app);
   const capabilities = await app.inject({ method: 'GET', url: '/v1/capabilities', headers: { host: 'app.internal' } });
   const cookie = capabilities.headers['set-cookie']!.split(';')[0]!;
@@ -122,6 +105,25 @@ async function waitForTerminal(app: FastifyInstance, id: string, cookie: string)
   }
   throw new Error('execution did not finish');
 }
+
+describe('response fixture normalization', () => {
+  it('只归一化服务端 toISOString 时间格式', () => {
+    const normalized = normalizeRestrictedPlanResponse({ expiresAt: '2026-08-10T00:00:00.000Z' }) as Record<string, unknown>;
+    expect(normalized.expiresAt).toBe('<expires-at>');
+  });
+
+  it.each([
+    '2026-08-10',
+    '08/10/2026',
+    '0',
+    'not-a-date',
+    0,
+    null,
+  ])('不隐藏非服务端 ISO 时间值：%j', (expiresAt) => {
+    const normalized = normalizeRestrictedPlanResponse({ expiresAt }) as Record<string, unknown>;
+    expect(normalized.expiresAt).toBe(expiresAt);
+  });
+});
 
 describe('fail-closed config', () => {
   it('缺少秘密或固定上游配置时拒绝启动', () => {
@@ -163,7 +165,7 @@ describe('two phase gateway', () => {
     expect(text).not.toContain('planner-fixed');
     expect(text).not.toContain('image-fixed');
     expect(text).not.toContain('upstream.invalid');
-    expect(response.json().data.status).toBe('awaiting_confirmation');
+    expect(normalizeRestrictedPlanResponse(response.json().data)).toEqual(RESTRICTED_PLAN_RESPONSE_FIXTURE);
   });
 
   it('拒绝 model、tools、upstream 等未知客户端字段', async () => {
@@ -192,7 +194,7 @@ describe('two phase gateway', () => {
   });
 
   it('上传图片按真实内容校验并绑定哈希', async () => {
-    const planner = fakePlanner('edit');
+    const planner = createDeterministicPlannerFixture('edit');
     const context = await setup({ planner });
     const form = multipart({ request: '把图片改成蓝色' }, [{ field: 'reference', bytes: png }]);
     const response = await context.app.inject({
@@ -207,7 +209,7 @@ describe('two phase gateway', () => {
   });
 
   it('拒绝规范化后膨胀超过单文件限制的压缩图片并清理产物', async () => {
-    const context = await setup({ config: { maxFileBytes: 1_000, maxUploadBytes: 5_000 }, planner: fakePlanner('edit') });
+    const context = await setup({ config: { maxFileBytes: 1_000, maxUploadBytes: 5_000 }, planner: createDeterministicPlannerFixture('edit') });
     expect(compressedNoisyJpeg.byteLength).toBeLessThan(1_000);
     const form = multipart({ request: '编辑图片' }, [{ field: 'reference', bytes: compressedNoisyJpeg, filename: 'compressed.jpg' }]);
     const response = await context.app.inject({
@@ -220,7 +222,7 @@ describe('two phase gateway', () => {
   });
 
   it('累计上传同时按规范化后大小计量', async () => {
-    const context = await setup({ config: { maxFileBytes: 5_000, maxUploadBytes: 6_000 }, planner: fakePlanner('edit') });
+    const context = await setup({ config: { maxFileBytes: 5_000, maxUploadBytes: 6_000 }, planner: createDeterministicPlannerFixture('edit') });
     const form = multipart({ request: '合并参考图片' }, [
       { field: 'reference', bytes: compressedNoisyJpeg, filename: 'a.jpg' },
       { field: 'reference', bytes: compressedNoisyJpeg, filename: 'b.jpg' },
@@ -249,8 +251,7 @@ describe('two phase gateway', () => {
     expect([first.statusCode, second.statusCode].sort()).toEqual([200, 202]);
     expect(first.json().data.id).toBe(second.json().data.id);
     const completed = await waitForTerminal(context.app, first.json().data.id, context.cookie);
-    expect(completed.status).toBe('completed');
-    expect(completed.outputAssets).toHaveLength(1);
+    expect(normalizeRestrictedExecutionResponse(completed, plan.id)).toEqual(RESTRICTED_EXECUTION_RESPONSE_FIXTURE);
     expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 

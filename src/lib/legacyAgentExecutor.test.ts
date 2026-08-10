@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AppSettings, type TaskRecord } from '../types'
+import {
+  LEGACY_AGENT_ASSISTANT_TEXT,
+  LEGACY_AGENT_COMPLETED_RESPONSE,
+  LEGACY_AGENT_IMAGE_BASE64,
+  LEGACY_AGENT_PROMPT,
+  LEGACY_AGENT_REQUEST_BODY_FIXTURE,
+  createLegacyAgentSseFixture,
+} from '../test/fixtures/legacyAgentResponses'
 import type { CallApiOptions, CallApiResult } from './imageApiShared'
 
 type SubmitTaskMockOptions = {
@@ -93,19 +101,10 @@ describe('storeBackedAgentExecutor', () => {
   })
 
   it('calls Responses API without the prompt rewrite guard in agent mode', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      output: [
-        {
-          type: 'message',
-          content: [{ type: 'output_text', text: '已生成海报。' }],
-        },
-        {
-          type: 'image_generation_call',
-          result: 'aW1hZ2U=',
-          revised_prompt: '完整海报提示词',
-        },
-      ],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
 
     const result = await callAgentResponsesImageApi({
       settings: {
@@ -139,19 +138,91 @@ describe('storeBackedAgentExecutor', () => {
         }],
         activeProfileId: 'default-openai',
       },
-      prompt: '生成海报',
+      prompt: LEGACY_AGENT_PROMPT,
       params: { ...DEFAULT_PARAMS, n: 1 },
       inputImageDataUrls: [],
     }, { stream: false, imageCount: 1 })
 
     expect(result.images).toHaveLength(1)
-    expect(result.assistantText).toBe('已生成海报。')
+    expect(result.assistantText).toBe(LEGACY_AGENT_ASSISTANT_TEXT)
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
-    expect(body.input).toBe('生成海报')
+    expect(body.input).toBe(LEGACY_AGENT_PROMPT)
     expect(body.input).not.toContain('Do not rewrite it')
     expect(body.tools[0]).toMatchObject({ type: 'image_generation', action: 'generate' })
     expect(body.tool_choice).toBe('required')
     expect(body.stream).toBeUndefined()
+  })
+
+  it('固定 Chat Responses 请求体与流事件契约', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(createLegacyAgentSseFixture(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    const events: Array<{ type: string; text?: string; status?: string; image?: string; assistantText?: string }> = []
+    const unsubscribe = subscribeAgentProgress((event) => events.push(event))
+
+    try {
+      const result = await callAgentResponsesImageApi({
+        settings: {
+          baseUrl: 'https://api.example.com/v1',
+          apiKey: 'test-key',
+          model: 'gpt-5.5',
+          timeout: 60,
+          apiMode: 'responses',
+          codexCli: false,
+          apiProxy: false,
+          customProviders: [],
+          providerOrder: undefined,
+          clearInputAfterSubmit: false,
+          persistInputOnRestart: true,
+          reuseTaskApiProfileTemporarily: false,
+          alwaysShowRetryButton: false,
+          enterSubmit: false,
+          agentStreaming: true,
+          agentImageCount: 1,
+          profiles: [{
+            id: 'default-openai',
+            name: '默认',
+            provider: 'openai',
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'test-key',
+            model: 'gpt-5.5',
+            timeout: 60,
+            apiMode: 'responses',
+            codexCli: false,
+            apiProxy: false,
+          }],
+          activeProfileId: 'default-openai',
+        },
+        prompt: LEGACY_AGENT_PROMPT,
+        params: { ...DEFAULT_PARAMS },
+        inputImageDataUrls: [],
+      }, { stream: true, imageCount: 1, taskId: 'task-stream' })
+
+      expect(result.images).toEqual([`data:image/png;base64,${LEGACY_AGENT_IMAGE_BASE64}`])
+      expect(result.assistantText).toBe(LEGACY_AGENT_ASSISTANT_TEXT)
+    } finally {
+      unsubscribe()
+    }
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(LEGACY_AGENT_REQUEST_BODY_FIXTURE)
+    expect(events.filter((event) => event.type === 'assistant_delta').map((event) => event.text)).toEqual([
+      'Chromium ',
+      '基线已完成。',
+    ])
+    expect(events.filter((event) => event.type === 'tool_status').map((event) => event.status)).toEqual([
+      'queued',
+      'in_progress',
+      'completed',
+    ])
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'partial_image',
+      image: `data:image/png;base64,${LEGACY_AGENT_IMAGE_BASE64}`,
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'done',
+      assistantText: LEGACY_AGENT_ASSISTANT_TEXT,
+    }))
   })
 
   it('将同一会话的有限文本上下文写入下一次 Responses 请求', async () => {

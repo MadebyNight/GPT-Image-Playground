@@ -4,14 +4,50 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: Publish the default branch as the latest image
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
 
 jobs:
-  docker:
+  verify:
+    if: ${{ github.event_name == 'push' || (github.ref_name == github.event.repository.default_branch && inputs.publish_latest) }}
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            gateway/package-lock.json
+
+      - run: npm ci
+      - run: npm --prefix gateway ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:all
+      - run: npm run build:all
+      - run: npm run test:docker-config
+      - run: npm run test:e2e
+
+  docker:
+    needs: verify
+    if: ${{ success() && (github.event_name == 'push' || (github.ref_name == github.event.repository.default_branch && inputs.publish_latest)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +66,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch && inputs.publish_latest) }}
 
       - name: Build and publish frontend image
         uses: docker/build-push-action@v6
@@ -49,7 +85,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch && inputs.publish_latest) }}
 
       - name: Build and publish Agent Gateway image
         uses: docker/build-push-action@v6

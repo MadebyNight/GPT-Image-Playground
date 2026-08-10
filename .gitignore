@@ -9,3 +9,4 @@ dev-proxy.config.json
 .env.local
 .gstack/
 .superpowers/
+.playwright/

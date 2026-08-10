@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
+const readNormalizedText = (path: string) => readFileSync(path, 'utf8').replace(/\r\n?/g, '\n')
+
 const shellScripts = [
   'deploy/inject-api-url.sh',
   'deploy/migrate-api-env.envsh',
@@ -16,6 +18,19 @@ describe('Docker entrypoint line endings', () => {
 })
 
 describe('Docker server-managed API defaults', () => {
+  it('uses Node.js 22 across packages, images and CI gates', () => {
+    const rootPackage = JSON.parse(readFileSync('package.json', 'utf8'))
+    const gatewayPackage = JSON.parse(readFileSync('gateway/package.json', 'utf8'))
+    expect(rootPackage.engines.node).toBe('>=22.0.0')
+    expect(gatewayPackage.engines.node).toBe('>=22.0.0')
+    expect(readFileSync('deploy/Dockerfile', 'utf8')).toContain('FROM --platform=$BUILDPLATFORM node:22-alpine AS build')
+    expect(readFileSync('gateway/Dockerfile', 'utf8').match(/FROM node:22-bookworm-slim/g)).toHaveLength(2)
+
+    for (const workflowPath of ['.github/workflows/deploy.yml', '.github/workflows/docker.yml']) {
+      expect(readFileSync(workflowPath, 'utf8')).toContain('node-version: 22')
+    }
+  })
+
   it('compiles the frontend as a runtime-config-required build', () => {
     const dockerfile = readFileSync('deploy/Dockerfile', 'utf8')
     expect(dockerfile).toContain('ENV DEPLOY_TARGET=runtime')
@@ -119,5 +134,58 @@ describe('Restricted Agent deployment boundary', () => {
     expect(workflow).toContain('context: ./gateway')
     expect(workflow).toContain('file: ./gateway/Dockerfile')
     expect(workflow.match(/platforms: linux\/amd64,linux\/arm64/g)).toHaveLength(2)
+  })
+
+  it('gates pull requests and release jobs on the full validation chain', () => {
+    const deployWorkflow = readNormalizedText('.github/workflows/deploy.yml')
+    const dockerWorkflow = readNormalizedText('.github/workflows/docker.yml')
+    expect(deployWorkflow).toMatch(/on:\s*\n\s*pull_request:/)
+    expect(deployWorkflow).toContain("if: github.event_name != 'pull_request'")
+    expect(deployWorkflow).toContain("format('pages-pr-{0}', github.event.pull_request.number)")
+    expect(deployWorkflow).toContain('needs: verify')
+    expect(dockerWorkflow).toContain('needs: verify')
+
+    const deployTopLevelPermissions = deployWorkflow.match(/permissions:\s*\n([\s\S]*?)\n\nconcurrency:/)?.[1] ?? ''
+    const deployJob = deployWorkflow.match(/\n  deploy:\s*\n([\s\S]*)$/)?.[1] ?? ''
+    expect(deployTopLevelPermissions.trim()).toBe('contents: read')
+    expect(deployTopLevelPermissions).not.toMatch(/pages: write|id-token: write/)
+    expect(deployJob).toContain('permissions:')
+    expect(deployJob).toContain('pages: write')
+    expect(deployJob).toContain('id-token: write')
+
+    for (const workflow of [deployWorkflow, dockerWorkflow]) {
+      expect(workflow).toContain('node-version: 22')
+      expect(workflow).toContain('npm --prefix gateway ci')
+      expect(workflow).toContain('npm run test:all')
+      expect(workflow).toContain('npm run build:all')
+      expect(workflow).toContain('npm run test:docker-config')
+      expect(workflow).toContain('npm run test:e2e')
+      expect(workflow).toContain('playwright install --with-deps chromium')
+    }
+  })
+
+  it('serializes Docker publishing and restricts manual latest releases to the default branch', () => {
+    const workflow = readNormalizedText('.github/workflows/docker.yml')
+    const topLevelPermissions = workflow.match(/permissions:\s*\n([\s\S]*?)\n\nconcurrency:/)?.[1] ?? ''
+    const manualGate = "github.ref_name == github.event.repository.default_branch && inputs.publish_latest"
+    expect(workflow).toContain('publish_latest:')
+    expect(workflow).toContain('required: true')
+    expect(workflow).toContain('type: boolean')
+    expect(workflow).toContain('default: false')
+    expect(workflow).toContain('group: docker-publish')
+    expect(workflow).toContain('cancel-in-progress: false')
+    expect(workflow.match(new RegExp(manualGate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(4)
+    expect(topLevelPermissions.trim()).toBe('contents: read')
+    const dockerJob = workflow.match(/\n  docker:\s*\n([\s\S]*)$/)?.[1] ?? ''
+    expect(dockerJob).toContain('packages: write')
+    expect(workflow.match(/type=raw,value=latest,enable=/g)).toHaveLength(2)
+    const latestTagGate = "startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch && inputs.publish_latest)"
+    expect(workflow.match(new RegExp(latestTagGate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(2)
+  })
+
+  it('keeps Docker configuration validation read-only', () => {
+    const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(pkg.scripts['test:docker-config']).toBe('docker compose config --quiet')
+    expect(pkg.scripts['test:docker-config']).not.toMatch(/\b(build|up|down|rm|rmi|volume)\b/)
   })
 })
