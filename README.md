@@ -154,11 +154,11 @@ $env:VITE_DEFAULT_API_URL="https://api.openai.com/v1"; npm run deploy:cf
 <details>
 <summary><strong>🐳 方式三：Docker 部署</strong></summary>
 
-Docker 部署支持三种互斥运行方式：兼容模式、服务端统一配置，以及必须先确认计划的受限 Agent 模式。你可以使用本仓库工作流发布的镜像，或在本地构建镜像。
+Docker 部署支持兼容模式、服务端统一配置（Chat Agent）和必须先确认计划的受限模式（Tool Agent）。Chat 与 Tool 是两项独立能力，可以只启用其中一项，也可以在同一部署中同时启用；两者故障时不会互相替代或自动回退。你可以使用本仓库工作流发布的镜像，或在本地构建镜像。
 
 **受限 Agent 模式（可信内网推荐）：**
 
-受限模式使用独立 `agent-gateway` 容器。Planner 只生成结构化计划，用户确认后 Executor 才调用固定 Images API。启用后 Nginx 会强制移除通用 `/api-proxy`，避免浏览器绕过确认流程。
+受限模式使用独立 `agent-gateway` 容器。Planner 只生成结构化计划，用户确认后才进入受限执行路径；`openshop.edit` 在浏览器的一次性离屏 OpenShop iframe 中执行并保存为新历史。仅启用 Tool 时 Nginx 会移除通用 `/api-proxy`；与服务端统一配置同时启用时，只保留由服务端固定上游和凭据的受控 Chat 代理。
 
 启用时至少配置：
 
@@ -174,7 +174,7 @@ AGENT_IMAGE_MODEL=你的图片模型
 
 关键限制均可通过 `AGENT_*` 环境变量调整，默认包括：计划 15 分钟过期、最多 16 张参考图、128 MiB 上传、每次 1–4 张输出、全局并发 2、队列 10。完整变量和默认值见 [.env.example](.env.example)。
 
-Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `agent-gateway-data` volume 中。受限模式不适用于纯静态托管，也不应与 `SERVER_API_CONFIG_ENABLED=true` 同时开启。Gateway 不健康时 Agent 会失败关闭，不会回退到旧代理。
+Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `agent-gateway-data` volume 中。Tool Agent 不适用于纯静态托管。Gateway 不健康时 Tool 会失败关闭，不会回退到 Chat 或旧代理；Chat 是否可用由独立的服务端统一配置或浏览器 Profile 决定。
 
 受限模式使用服务端固定 Images API 执行器，上游必须支持 `b64_json` 图片结果；不接受远程结果 URL，以避免 Gateway 代替用户抓取外部资源。
 
@@ -212,6 +212,79 @@ Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `a
 > ⚠️ **付费代理风险**：统一模式会暴露一个可消耗服务端额度的同源代理入口，项目本身不提供登录、租户隔离或完整限流。公网部署必须在外层增加认证、VPN、IP 白名单、网关限流等访问控制；仅隐藏 API Key 不能防止额度被滥用。
 
 > 静态托管无法安全保存服务端 Key，也无法实现覆盖 Authorization 的反向代理，因此纯静态 Vercel、GitHub Pages、Netlify 等部署不能直接启用此模式。普通 `npm run build` 会以 `DEPLOY_TARGET=static` 构建并直接使用浏览器端 Legacy 配置，不依赖运行时配置文件。需要服务端统一配置或受限 Agent 时，应使用本 Docker/Nginx 实现；非 Docker 的等价实现必须在构建环境中显式设置 `DEPLOY_TARGET=runtime`，并提供 `/runtime-config.json` 及相应同源服务端协议。runtime 构建在配置缺失、加载失败或校验失败时始终拒绝提交，不会回退到浏览器凭据。
+
+**Chat + Tool 双能力配置：**
+
+同时启用时，Chat 通过服务端统一配置的 `/api-proxy` 调用固定上游，Tool 通过 `/agent-api/v1` 访问 Gateway。除各自的模型和凭据外，至少需要同时设置以下变量：
+
+```env
+SERVER_API_CONFIG_ENABLED=true
+SERVER_API_UPSTREAM_URL=https://api.openai.com/v1
+SERVER_API_KEY=sk-your-chat-server-key
+SERVER_API_MODEL=gpt-5.5
+SERVER_API_MODE=responses
+SERVER_API_MODEL_OPTIONS=gpt-image-2,gpt-5.5
+SERVER_API_MODE_OPTIONS=images,responses
+
+RESTRICTED_AGENT_ENABLED=true
+RESTRICTED_AGENT_ONLY=false
+AGENT_PUBLIC_ORIGIN=https://你的站点域名
+AGENT_SESSION_SECRET=至少32字符的随机字符串
+AGENT_UPSTREAM_BASE_URL=https://api.openai.com/v1
+AGENT_API_KEY=sk-your-tool-agent-key
+AGENT_PLANNER_MODEL=你的规划模型
+AGENT_IMAGE_MODEL=你的图片模型
+```
+
+`RESTRICTED_AGENT_ONLY=false` 会保留 Gallery/Agent 工作区入口；设为 `true` 时隐藏 Gallery 并默认进入 Agent 工作区。该开关不强制 Tool 模式：只要 Chat 与 Tool 都可用，Agent 工作区内仍可切换两种模式。两个 Key 可以相同，但生产环境建议按能力拆分，便于独立限额、轮换和熔断。
+
+**部署后 health/readiness smoke：**
+
+以下 smoke 命令统一使用独立 Compose project `openshop-smoke`。仓库的 Compose 文件显式指定了 `gpt-image-playground:latest` 与 `gpt-image-playground-agent-gateway:latest`；直接执行 `build/up` 可能更新本机同名 `latest` 标签，并不提供镜像标签隔离。
+
+```bash
+docker compose -p openshop-smoke up -d --build --wait --wait-timeout 180
+docker compose -p openshop-smoke ps
+docker compose -p openshop-smoke exec -T gpt-image-playground wget -qO- http://127.0.0.1/runtime-config.json
+docker compose -p openshop-smoke exec -T gpt-image-playground wget -qO- http://127.0.0.1/agent-api/v1/capabilities
+docker compose -p openshop-smoke exec -T agent-gateway node -e "fetch('http://127.0.0.1:3000/healthz').then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"
+```
+
+双能力部署的 `runtime-config.json` 应同时包含 `serverApi.enabled: true` 与 `restrictedAgent.enabled: true`；capabilities 应返回 HTTP 200，并在 `operationTypes` 中包含 `openshop.edit`。修改环境变量或镜像后可执行以下重启检查：
+
+```bash
+docker compose -p openshop-smoke restart
+docker compose -p openshop-smoke up -d --wait --wait-timeout 180
+docker compose -p openshop-smoke ps
+```
+
+**本地发布门禁与 Chromium E2E：**
+
+```bash
+npm ci
+npm --prefix gateway ci
+npm run test:all
+npm run build:all
+npm run test:docker-config
+npm run test:e2e:install
+npm run test:e2e
+```
+
+首次运行或干净环境需要先通过 `npm run test:e2e:install` 安装 Chromium。当前 Playwright 配置会在 `127.0.0.1:4173` 启动 Vite，并通过确定性 fixture 验证 Chat、Tool、刷新不重放、跨页面 CAS 和 OpenShop 行为；它不是对 Compose 容器的浏览器访问。容器镜像、运行时配置、Nginx 到 Gateway 的链路和重启恢复应使用上面的 Docker smoke 单独验证。
+
+**验证环境清理：**
+
+只对专门用于 smoke 的 Compose project 执行清理。以下命令会删除该 project 的容器、网络和 `agent-gateway-data` 临时卷，其中的图片、执行记录与 SQLite 审计不可恢复；请勿对生产 project 使用：
+
+```bash
+docker compose -p openshop-smoke down --volumes --remove-orphans
+```
+
+该命令只清理 `openshop-smoke` project 的容器、网络和卷，不删除镜像。不要在未配置真实镜像标签隔离方案时删除仓库 Compose 使用的 `latest`。如果验证产生了 `.playwright/test-results/` 或本地 `dist/`、`gateway/dist/`，确认不再需要后也应一并移除。
+
+**静态部署降级与回滚：**
+
+纯静态构建不提供 Gateway，因此 Tool 会明确不可用；Chat 仍可使用浏览器 Profile，不会伪装成服务端统一配置。Docker 部署可通过 `RESTRICTED_AGENT_ENABLED=false` 单独关闭 Tool，或通过 `SERVER_API_CONFIG_ENABLED=false` 关闭服务端 Chat 并恢复浏览器端配置。回滚后重新创建容器并重复 health/readiness smoke，确认公开配置与预期一致。
 
 **1. 服务端统一配置：Docker CLI 示例**
 
