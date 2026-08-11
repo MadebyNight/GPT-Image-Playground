@@ -157,7 +157,7 @@ export const plannerJsonSchema = {
   properties: {
     summary: { type: 'string', minLength: 1, maxLength: 1000 },
     operation: {
-      oneOf: [
+      anyOf: [
         {
           type: 'object', additionalProperties: false, required: ['type', 'generation'],
           properties: {
@@ -177,7 +177,7 @@ export const plannerJsonSchema = {
           properties: {
             type: { type: 'string', enum: ['openshop.edit'] },
             inputIndex: { type: 'integer', minimum: 0 },
-            commands: { type: 'array', minItems: 1, maxItems: 5, items: { oneOf: commandJsonSchemas } },
+            commands: { type: 'array', minItems: 1, maxItems: 5, items: { anyOf: commandJsonSchemas } },
             outputFormat: { type: 'string', enum: ['png'] },
           },
         },

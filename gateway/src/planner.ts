@@ -15,6 +15,52 @@ export interface Planner {
   createDraft(input: PlannerInput): Promise<unknown>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sanitizeUpstreamText(value: unknown, maxLength = 500): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const sanitized = value
+    .replace(/\bBearer\s+[^\s,;，；。]+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[a-z0-9_-]{8,}\b/gi, '[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!sanitized) return undefined;
+  return sanitized.slice(0, maxLength);
+}
+
+async function readUpstreamError(response: Response): Promise<{
+  message?: string;
+  details: Record<string, string | number>;
+}> {
+  const details: Record<string, string | number> = { upstreamStatus: response.status };
+  let payload: unknown;
+  try {
+    const text = await response.text();
+    if (!text) return { details };
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      payload = { message: text };
+    }
+  } catch {
+    return { details };
+  }
+
+  const root = isRecord(payload) ? payload : undefined;
+  const upstreamError = root && isRecord(root.error) ? root.error : root;
+  if (!upstreamError) return { details };
+  const code = sanitizeUpstreamText(upstreamError.code, 100);
+  const type = sanitizeUpstreamText(upstreamError.type, 100);
+  const param = sanitizeUpstreamText(upstreamError.param, 200);
+  const message = sanitizeUpstreamText(upstreamError.message);
+  if (code) details.upstreamCode = code;
+  if (type) details.upstreamType = type;
+  if (param) details.upstreamParam = param;
+  return { message, details };
+}
+
 function extractOutputText(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const root = payload as Record<string, unknown>;
@@ -92,7 +138,13 @@ export class ResponsesPlanner implements Planner {
       throw new AppError(502, 'planner_unavailable', 'Planner 无法连接');
     }
     if (!response.ok) {
-      throw new AppError(502, 'planner_upstream_error', `Planner 上游返回 HTTP ${response.status}`);
+      const upstreamError = await readUpstreamError(response);
+      throw new AppError(
+        502,
+        'planner_upstream_error',
+        `Planner 上游返回 HTTP ${response.status}${upstreamError.message ? `：${upstreamError.message}` : ''}`,
+        upstreamError.details,
+      );
     }
 
     let payload: unknown;

@@ -65,6 +65,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(apps.splice(0).map((app) => app.close()));
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -492,8 +493,11 @@ describe('two phase gateway', () => {
   });
 
   it('Planner schema 与 system prompt 同时明示 crop 8000 万像素约束', async () => {
-    expect(JSON.stringify(plannerJsonSchema)).toContain('width * height');
-    expect(JSON.stringify(plannerJsonSchema)).toContain('80_000_000');
+    const serializedSchema = JSON.stringify(plannerJsonSchema);
+    expect(serializedSchema).toContain('width * height');
+    expect(serializedSchema).toContain('80_000_000');
+    expect(serializedSchema).not.toContain('"oneOf"');
+    expect(serializedSchema).toContain('"anyOf"');
     const config = await makeConfig();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output_text: JSON.stringify({
@@ -511,6 +515,32 @@ describe('two phase gateway', () => {
     await new ResponsesPlanner(config).createDraft({ request: '裁剪图片', preferences: {}, assets: [], allowOpenShop: true });
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(requestBody.input[0].content[0].text).toContain('width * height <= 80_000_000');
+  });
+
+  it('Planner 上游错误返回可诊断且脱敏的信息', async () => {
+    const config = await makeConfig();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        type: 'invalid_request_error',
+        code: 'invalid_json_schema',
+        param: 'text.format.schema',
+        message: '不支持 oneOf；authorization=Bearer upstream-secret；key=sk-test-secret-value',
+      },
+    }), { status: 400 }));
+
+    await expect(new ResponsesPlanner(config).createDraft({
+      request: '裁剪图片', preferences: {}, assets: [], allowOpenShop: true,
+    })).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'planner_upstream_error',
+      message: 'Planner 上游返回 HTTP 400：不支持 oneOf；authorization=Bearer [REDACTED]；key=[REDACTED]',
+      details: {
+        upstreamStatus: 400,
+        upstreamType: 'invalid_request_error',
+        upstreamCode: 'invalid_json_schema',
+        upstreamParam: 'text.format.schema',
+      },
+    });
   });
 
   it('拒绝规范化后膨胀超过单文件限制的压缩图片并清理产物', async () => {
