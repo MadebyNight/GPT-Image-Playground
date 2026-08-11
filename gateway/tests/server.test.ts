@@ -48,6 +48,35 @@ function applyInvalidPlanMutation(mutation: ContractFixture['invalidPlanMutation
   return plan;
 }
 
+function findStrictObjectSchemaIssues(value: unknown, path = '$'): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => findStrictObjectSchemaIssues(item, `${path}[${index}]`));
+  }
+  if (!value || typeof value !== 'object') return [];
+  const schema = value as Record<string, unknown>;
+  const issues: string[] = [];
+  if (schema.type === 'object') {
+    const properties = schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
+      ? Object.keys(schema.properties)
+      : null;
+    const required = Array.isArray(schema.required) && schema.required.every((item) => typeof item === 'string')
+      ? schema.required as string[]
+      : null;
+    if (!properties) issues.push(`${path}: properties 缺失`);
+    if (!required) issues.push(`${path}: required 缺失`);
+    if (schema.additionalProperties !== false) issues.push(`${path}: additionalProperties 必须为 false`);
+    if (properties && required) {
+      const missing = properties.filter((key) => !required.includes(key));
+      const extra = required.filter((key) => !properties.includes(key));
+      if (missing.length) issues.push(`${path}: required 缺少 ${missing.join(', ')}`);
+      if (extra.length) issues.push(`${path}: required 多出 ${extra.join(', ')}`);
+    }
+  }
+  return issues.concat(Object.entries(schema).flatMap(([key, item]) => (
+    findStrictObjectSchemaIssues(item, `${path}.${key}`)
+  )));
+}
+
 const apps: FastifyInstance[] = [];
 const tempDirs: string[] = [];
 let png: Buffer;
@@ -498,6 +527,7 @@ describe('two phase gateway', () => {
     expect(serializedSchema).toContain('80_000_000');
     expect(serializedSchema).not.toContain('"oneOf"');
     expect(serializedSchema).toContain('"anyOf"');
+    expect(findStrictObjectSchemaIssues(plannerJsonSchema)).toEqual([]);
     const config = await makeConfig();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output_text: JSON.stringify({

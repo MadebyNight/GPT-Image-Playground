@@ -145,7 +145,8 @@ const commandJsonSchemas = [
     required: ['schemaVersion', 'id', 'target', 'args'],
     properties: {
       schemaVersion: { type: 'integer', enum: [1] }, id: { type: 'string', enum: ['canvas.flatten'] },
-      target: { type: 'string', enum: ['document'] }, args: { type: 'object', additionalProperties: false },
+      target: { type: 'string', enum: ['document'] },
+      args: { type: 'object', additionalProperties: false, required: [], properties: {} },
     },
   },
 ] as const;
