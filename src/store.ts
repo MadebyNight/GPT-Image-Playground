@@ -7,6 +7,8 @@ import type {
   TaskParams,
   InputImage,
   MaskDraft,
+  OpenShopToolLocalRun,
+  OpenShopToolOutputDraft,
   TaskRecord,
   ExportData,
 } from './types'
@@ -2080,7 +2082,7 @@ export async function editOutputs(task: TaskRecord) {
 
 export interface SaveOpenShopEditOptions {
   /** 被高级编辑的原任务。 */
-  sourceTaskId: string
+  sourceTaskId: string | null
   /** 被编辑的原图 image store id；默认使用源任务的全部输出图。 */
   inputImageIds?: string[]
   /** OpenShop 导出的图片。 */
@@ -2091,6 +2093,27 @@ export interface SaveOpenShopEditOptions {
   timeoutMs?: number
   /** IndexedDB transaction oncomplete 时同步通知 Runner。 */
   onCommit?: () => void
+  /** Tool Agent 本地 Run 使用确定性 ID，保存重试不会创建第二条历史。 */
+  taskId?: string
+  /** 手工编辑保持 openshop；Tool Agent 结果进入 restricted-agent 历史。 */
+  origin?: Extract<TaskRecord['origin'], 'openshop' | 'restricted-agent'>
+  prompt?: string
+  createdAt?: number
+  agentPlanId?: string
+  agentOriginalRequest?: string
+  agentPlanSnapshot?: TaskRecord['agentPlanSnapshot']
+  agentRunId?: string
+  agentLocalRunId?: string
+  agentLocalRunStatus?: TaskRecord['agentLocalRunStatus']
+  agentLocalSaveStatus?: TaskRecord['agentLocalSaveStatus']
+  /** sourceTaskId=null 时由冻结 Composer 提供参数。 */
+  fallbackParams?: TaskParams
+  /** Tool Agent 最终保存与 Run completed/Blob 删除共用 transaction。 */
+  completeToolRun?: {
+    run: OpenShopToolLocalRun
+    draft: OpenShopToolOutputDraft
+    expectedStatus: 'saving'
+  }
 }
 
 /**
@@ -2104,16 +2127,32 @@ export async function saveOpenShopEdit({
   signal,
   timeoutMs,
   onCommit,
+  taskId,
+  origin = 'openshop',
+  prompt,
+  createdAt,
+  agentPlanId,
+  agentOriginalRequest,
+  agentPlanSnapshot,
+  agentRunId,
+  agentLocalRunId,
+  agentLocalRunStatus,
+  agentLocalSaveStatus,
+  fallbackParams,
+  completeToolRun,
 }: SaveOpenShopEditOptions): Promise<TaskRecord> {
-  const sourceTask = useStore.getState().tasks.find((task) => task.id === sourceTaskId)
-  if (!sourceTask) throw new Error('原始任务不存在，无法保存高级编辑结果')
+  const sourceTask = sourceTaskId
+    ? useStore.getState().tasks.find((task) => task.id === sourceTaskId)
+    : null
+  if (sourceTaskId && !sourceTask) throw new Error('原始任务不存在，无法保存高级编辑结果')
 
-  const sourceImageIds = inputImageIds ?? sourceTask.outputImages
+  const sourceImageIds = inputImageIds ?? sourceTask?.outputImages ?? []
   const uniqueSourceImageIds = [...new Set(sourceImageIds)]
   if (!uniqueSourceImageIds.length) throw new Error('原始任务没有可编辑的输出图片')
-  if (uniqueSourceImageIds.some((imageId) => !sourceTask.outputImages.includes(imageId))) {
+  if (sourceTask && uniqueSourceImageIds.some((imageId) => !sourceTask.outputImages.includes(imageId))) {
     throw new Error('编辑原图不属于原始任务')
   }
+  if (!sourceTask && !fallbackParams) throw new Error('原始上传缺少冻结参数，无法保存 OpenShop 结果')
 
   const outputDataUrl = await openShopImageToDataUrl(outputImage)
   const result = await saveTaskWithImageAtomic({
@@ -2122,31 +2161,40 @@ export async function saveOpenShopEdit({
     signal,
     timeoutMs,
     onCommit,
+    completeToolRun,
     createTask: (outputImageId) => {
       const now = Date.now()
+      const taskCreatedAt = createdAt ?? now
       return {
-        id: genId(),
-        prompt: sourceTask.prompt,
-        params: { ...sourceTask.params },
+        id: taskId ?? genId(),
+        prompt: prompt ?? sourceTask?.prompt ?? '',
+        params: { ...(sourceTask?.params ?? fallbackParams ?? DEFAULT_PARAMS) },
         apiProvider: 'openshop',
         apiProfileName: 'OpenShop',
         apiModel: 'OpenShop',
-        origin: 'openshop',
-        sourceTaskId,
+        origin,
+        sourceTaskId: sourceTaskId ?? undefined,
         inputImageIds: uniqueSourceImageIds,
         maskTargetImageId: null,
         maskImageId: null,
         outputImages: [outputImageId],
         status: 'done',
         error: null,
-        createdAt: now,
+        createdAt: taskCreatedAt,
         finishedAt: now,
-        elapsed: 0,
+        elapsed: Math.max(0, now - taskCreatedAt),
+        agentPlanId,
+        agentOriginalRequest,
+        agentPlanSnapshot,
+        agentRunId,
+        agentLocalRunId,
+        agentLocalRunStatus,
+        agentLocalSaveStatus,
       } satisfies TaskRecord
     },
   })
   cacheImage(result.imageId, outputDataUrl)
-  useStore.getState().setTasks([result.task, ...useStore.getState().tasks])
+  useStore.getState().setTasks([result.task, ...useStore.getState().tasks.filter((task) => task.id !== result.task.id)])
   return result.task
 }
 

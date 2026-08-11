@@ -232,7 +232,7 @@ function isOpenShopDocument(value: unknown): value is OpenShopDocument {
     && isNonEmptyString(value.name)
 }
 
-function isOpenShopToolDocumentDescriptor(value: unknown): value is OpenShopToolDocumentDescriptor {
+export function isOpenShopToolDocumentDescriptor(value: unknown): value is OpenShopToolDocumentDescriptor {
   if (!isPlainRecord(value) || !hasExactKeys(value, ['canvas', 'primaryImage'])) return false
   const { canvas, primaryImage } = value
   if (!isPlainRecord(canvas)

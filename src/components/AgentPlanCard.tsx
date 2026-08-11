@@ -42,7 +42,10 @@ export default function AgentPlanCard({
   const openShopBinding = openShopOperation
     ? assetBindings.find((binding) => binding.gatewayAssetId === openShopOperation.inputAssetId)
     : null
-  const confirmationDisabled = confirming || expired || stale || Boolean(openShopOperation)
+  const openShopBindingReady = Boolean(
+    openShopBinding?.browserImageId && openShopBinding.role === 'reference',
+  )
+  const confirmationDisabled = confirming || expired || stale || Boolean(openShopOperation && !openShopBindingReady)
   const badge = operation.type === 'image.generate'
     ? '图片生成'
     : operation.type === 'image.edit'
@@ -156,7 +159,7 @@ export default function AgentPlanCard({
 
       {openShopOperation && (
         <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
-          本阶段只冻结并审查 OpenShop operation；浏览器执行将在下一阶段接入。
+          确认后将在当前浏览器创建一次性 OpenShop iframe。刷新或中断不会自动重放命令。
         </p>
       )}
 
@@ -181,9 +184,11 @@ export default function AgentPlanCard({
               ? '计划已过时'
               : expired
                 ? '计划已过期'
-                : openShopOperation
-                  ? '等待浏览器执行接入'
-                  : '确认并执行'}
+                : openShopOperation && !openShopBindingReady
+                  ? '输入映射无效'
+                  : openShopOperation
+                    ? '确认并在浏览器执行'
+                    : '确认并执行'}
         </button>
       </div>
     </article>

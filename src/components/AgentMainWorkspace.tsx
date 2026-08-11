@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useRestrictedAgentStore } from '../restrictedAgentStore'
-import type { AgentMode, RestrictedAgentExecutionStatus, TaskRecord } from '../types'
+import type { AgentMode, OpenShopToolLocalRunStatus, RestrictedAgentExecutionStatus, TaskRecord } from '../types'
 import AgentPlanCard from './AgentPlanCard'
 import LegacyAgentMainWorkspace from './LegacyAgentMainWorkspace'
 import TaskDetailContent from './TaskDetailContent'
@@ -21,6 +21,17 @@ const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
   failed_unknown: '执行状态不确定，不会自动重试',
 }
 
+const LOCAL_RUN_STATUS_LABELS: Record<OpenShopToolLocalRunStatus, string> = {
+  running: 'OpenShop 正在当前浏览器执行',
+  exported: 'OpenShop 已导出结果，等待保存',
+  saving: '正在保存 OpenShop 导出结果',
+  completed: 'OpenShop 编辑与本地保存已完成',
+  cancelled: 'OpenShop 本地执行已取消',
+  failed: 'OpenShop 本地执行失败',
+  interrupted: 'OpenShop 本地执行被页面刷新或关闭中断',
+  expired: 'OpenShop 临时导出结果已过期',
+}
+
 function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const phase = useRestrictedAgentStore((state) => state.phase)
   const plan = useRestrictedAgentStore((state) => state.plan)
@@ -28,12 +39,14 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const flowTaskId = useRestrictedAgentStore((state) => state.taskId)
   const error = useRestrictedAgentStore((state) => state.error)
   const assetBindings = useRestrictedAgentStore((state) => state.assetBindings)
+  const localRun = useRestrictedAgentStore((state) => state.localRun)
   const confirmAndExecute = useRestrictedAgentStore((state) => state.confirmAndExecute)
+  const retryOpenShopSave = useRestrictedAgentStore((state) => state.retryOpenShopSave)
   const returnToEditing = useRestrictedAgentStore((state) => state.returnToEditing)
   const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
 
-  const showPlanningFlow = phase === 'planning' || phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale' || (phase === 'failed' && !execution)
-  const showExecutionFlow = Boolean(execution && (!task || task.id === flowTaskId))
+  const showPlanningFlow = phase === 'planning' || phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale' || (phase === 'failed' && !execution && !localRun)
+  const showExecutionFlow = Boolean((execution || localRun) && (!task || task.id === flowTaskId))
   const requestText = plan?.originalRequest || task?.agentOriginalRequest || task?.prompt || ''
   const planForTask = useMemo(() => plan ?? task?.agentPlanSnapshot ?? null, [plan, task?.agentPlanSnapshot])
 
@@ -121,7 +134,52 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
           </div>
         )}
 
-        {error && phase === 'failed' && !execution?.error && (
+        {showExecutionFlow && localRun && (
+          <div className="flex justify-start">
+            <div className={`max-w-[88%] rounded-2xl border px-4 py-3 text-sm leading-6 ${
+              localRun.status === 'completed'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200'
+                : ['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status)
+                  ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200'
+                  : localRun.status === 'exported'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'
+                    : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200'
+            }`} data-openshop-local-run-status={localRun.status}>
+              <div className="font-medium">{LOCAL_RUN_STATUS_LABELS[localRun.status]}</div>
+              <div className="mt-1 text-xs opacity-75">本地 Run：{localRun.id}</div>
+              {localRun.error?.message && <p className="mt-2">{localRun.error.message}</p>}
+              {localRun.status === 'exported' && (
+                <button
+                  type="button"
+                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
+                  onClick={() => { void retryOpenShopSave() }}
+                >
+                  仅重试保存
+                </button>
+              )}
+              {localRun.status === 'saving' && (
+                <button
+                  type="button"
+                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
+                  onClick={() => { void cancelExecution() }}
+                >
+                  取消保存
+                </button>
+              )}
+              {['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status) && (
+                <button
+                  type="button"
+                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
+                  onClick={returnToEditing}
+                >
+                  返回修改并重新规划
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {error && phase === 'failed' && !execution?.error && !localRun && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
             <p>{error}</p>
             <button type="button" className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium" onClick={returnToEditing}>

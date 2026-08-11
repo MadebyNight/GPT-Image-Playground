@@ -33,20 +33,25 @@ export const OPENSHOP_TOOL_TIMEOUTS = Object.freeze({
 export type OpenShopToolTimeouts = { [Key in keyof typeof OPENSHOP_TOOL_TIMEOUTS]: number }
 
 export interface OpenShopToolRunnerOptions {
-  sourceTaskId: string
+  sourceTaskId: string | null
   inputAssetId: string
   commands: readonly OpenShopCanvasCommand[]
   outputFormat: 'png'
   signal?: AbortSignal
   frameUrl?: string
   timeouts?: Partial<OpenShopToolTimeouts>
+  /** false 时仅执行、导出和校验，不进入最终 Task 保存。 */
+  saveOutput?: boolean
 }
 
-export interface OpenShopToolRunnerResult {
-  task: TaskRecord
+export interface OpenShopToolExportResult {
   blob: Blob
   filename: string
   document: OpenShopToolDocumentDescriptor
+}
+
+export interface OpenShopToolRunnerResult extends OpenShopToolExportResult {
+  task: TaskRecord
 }
 
 export class OpenShopToolRunnerError extends Error {
@@ -234,9 +239,9 @@ export interface OpenShopToolSaveContext {
 export interface OpenShopToolRunnerDependencies {
   hostWindow: Window
   hostDocument: Document
-  loadInput: (sourceTaskId: string, inputAssetId: string, signal: AbortSignal) => Promise<OpenShopDocument>
+  loadInput: (sourceTaskId: string | null, inputAssetId: string, signal: AbortSignal) => Promise<OpenShopDocument>
   saveOutput: (
-    sourceTaskId: string,
+    sourceTaskId: string | null,
     inputAssetId: string,
     blob: Blob,
     context: OpenShopToolSaveContext,
@@ -449,10 +454,12 @@ function createDefaultDependencies(): OpenShopToolRunnerDependencies {
     hostWindow: window,
     hostDocument: document,
     loadInput: async (sourceTaskId, inputAssetId) => {
-      const sourceTask = useStore.getState().tasks.find((task) => task.id === sourceTaskId)
-      if (!sourceTask) throw new OpenShopToolRunnerError('IMPORT_FAILED', 'OpenShop 输入来源任务不存在')
-      if (!sourceTask.outputImages.includes(inputAssetId)) {
-        throw new OpenShopToolRunnerError('IMPORT_FAILED', 'OpenShop 输入资源不属于来源任务')
+      if (sourceTaskId) {
+        const sourceTask = useStore.getState().tasks.find((task) => task.id === sourceTaskId)
+        if (!sourceTask) throw new OpenShopToolRunnerError('IMPORT_FAILED', 'OpenShop 输入来源任务不存在')
+        if (!sourceTask.outputImages.includes(inputAssetId)) {
+          throw new OpenShopToolRunnerError('IMPORT_FAILED', 'OpenShop 输入资源不属于来源任务')
+        }
       }
       const dataUrl = await ensureImageCached(inputAssetId)
       if (!dataUrl) throw new OpenShopToolRunnerError('IMPORT_FAILED', 'OpenShop 输入资源不存在')
@@ -562,10 +569,18 @@ function mapUnexpectedRunnerError(cause: unknown): OpenShopToolRunnerError {
   )
 }
 
+export function openShopToolRunner(
+  options: OpenShopToolRunnerOptions & { saveOutput: false },
+  dependencies?: OpenShopToolRunnerDependencies,
+): Promise<OpenShopToolExportResult>
+export function openShopToolRunner(
+  options: OpenShopToolRunnerOptions,
+  dependencies?: OpenShopToolRunnerDependencies,
+): Promise<OpenShopToolRunnerResult>
 export async function openShopToolRunner(
   options: OpenShopToolRunnerOptions,
   dependencies: OpenShopToolRunnerDependencies = createDefaultDependencies(),
-): Promise<OpenShopToolRunnerResult> {
+): Promise<OpenShopToolRunnerResult | OpenShopToolExportResult> {
   const timeouts = { ...OPENSHOP_TOOL_TIMEOUTS, ...options.timeouts }
   const deadline = new OpenShopRunnerDeadline(timeouts.hardLimitMs, options.signal)
   let frame: HTMLIFrameElement | null = null
@@ -686,6 +701,13 @@ export async function openShopToolRunner(
     }
     await validateExportedPng(exported.blob, exported.document, deadline)
 
+    const exportResult: OpenShopToolExportResult = {
+      blob: exported.blob,
+      filename: exported.filename,
+      document: exported.document,
+    }
+    if (options.saveOutput === false) return exportResult
+
     let committed = false
     const task = await deadline.wait(
       () => dependencies.saveOutput(options.sourceTaskId, options.inputAssetId, exported.blob, {
@@ -699,10 +721,8 @@ export async function openShopToolRunner(
       },
     )
     return {
+      ...exportResult,
       task,
-      blob: exported.blob,
-      filename: exported.filename,
-      document: exported.document,
     }
   } catch (cause) {
     throw mapUnexpectedRunnerError(cause)

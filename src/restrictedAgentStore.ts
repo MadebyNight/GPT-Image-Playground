@@ -1,5 +1,16 @@
 import { create } from 'zustand'
-import { putTask, storeImage } from './lib/db'
+import {
+  claimOpenShopToolLocalRun,
+  cleanupExpiredOpenShopToolOutputDrafts,
+  createOpenShopToolLocalRunRecord,
+  getOpenShopToolLocalRun,
+  getOpenShopToolOutputDraft,
+  getVerifiedCompletedOpenShopToolTask,
+  putTask,
+  storeImage,
+  storeOpenShopToolExport,
+  transitionOpenShopToolLocalRun,
+} from './lib/db'
 import {
   cancelRestrictedAgentExecution,
   computeRestrictedAgentConfirmationHash,
@@ -9,13 +20,16 @@ import {
   executeRestrictedAgentPlan,
   getRestrictedAgentAsset,
   getRestrictedAgentExecution,
+  getRestrictedAgentPlan,
   subscribeRestrictedAgentExecution,
   getRestrictedAgentPlanOperation,
   type RestrictedAgentPlanRequest,
 } from './lib/restrictedAgentApi'
+import { openShopToolRunner, OpenShopToolRunnerError } from './lib/openShopToolRunner'
 import {
   clearComposerDraft,
   getComposerDraftSnapshot,
+  saveOpenShopEdit,
   updateTaskInStore,
   useStore,
   type ComposerDraftSnapshot,
@@ -25,6 +39,8 @@ import type {
   RestrictedAgentExecution,
   RestrictedAgentAssetBinding,
   RestrictedAgentPlan,
+  OpenShopToolLocalRun,
+  ToolAgentPlan,
   TaskRecord,
 } from './types'
 
@@ -47,11 +63,14 @@ export interface PersistedAgentFlow {
   error: string | null
   composerSnapshotVersion: number | null
   assetBindings: RestrictedAgentAssetBinding[]
+  localRunId: string | null
 }
 
 interface RestrictedAgentState extends PersistedAgentFlow {
+  localRun: OpenShopToolLocalRun | null
   createPlanFromCurrentInput: (draftSnapshot?: ComposerDraftSnapshot) => Promise<RestrictedAgentPlan | null>
   confirmAndExecute: () => Promise<string | null>
+  retryOpenShopSave: (options?: OpenShopSaveAttemptOptions) => Promise<string | null>
   returnToEditing: () => void
   cancelExecution: () => Promise<void>
   recover: (tasks?: TaskRecord[]) => Promise<void>
@@ -64,6 +83,53 @@ const executionPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const executionEventStops = new Map<string, () => void>()
 const finalizingExecutions = new Set<string>()
 const taskCreationPromises = new Map<string, Promise<string>>()
+const openShopRunPromises = new Map<string, Promise<string | null>>()
+const openShopSavePromises = new Map<string, Promise<string | null>>()
+const openShopSaveControllers = new Map<string, AbortController>()
+const OPENSHOP_OUTPUT_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1_000
+const OPENSHOP_SAVE_TIMEOUT_MS = 30_000
+
+export interface OpenShopSaveAttemptOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+class OpenShopConfirmationError extends Error {
+  constructor(readonly phase: 'stale' | 'expired' | 'failed', message: string) {
+    super(message)
+    this.name = 'OpenShopConfirmationError'
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function createOpenShopRunId(plan: ToolAgentPlan) {
+  return `openshop:${plan.id}:${plan.version}:${plan.composerSnapshotHash}`
+}
+
+function createOpenShopTaskId(plan: ToolAgentPlan) {
+  return `agent-openshop-${plan.id}-${plan.version}-${plan.composerSnapshotHash}`
+}
+
+function getLocalRunError(error: unknown) {
+  if (error instanceof OpenShopToolRunnerError) {
+    return { code: error.code, message: error.message, retryable: error.retryable }
+  }
+  return {
+    code: 'LOCAL_RUN_FAILED',
+    message: error instanceof Error ? error.message : String(error),
+    retryable: false,
+  }
+}
 
 function fallbackPersistedState(): PersistedAgentFlow {
   return {
@@ -74,6 +140,7 @@ function fallbackPersistedState(): PersistedAgentFlow {
     error: null,
     composerSnapshotVersion: null,
     assetBindings: [],
+    localRunId: null,
   }
 }
 
@@ -108,6 +175,7 @@ export function decodePersistedAgentFlow(value: unknown, now = Date.now()): Pers
       error: bindingError ? `计划输入 binding 已失效：${bindingError}` : parsed.error ?? null,
       composerSnapshotVersion: typeof parsed.composerSnapshotVersion === 'number' ? parsed.composerSnapshotVersion : null,
       assetBindings,
+      localRunId: typeof parsed.localRunId === 'string' && parsed.localRunId ? parsed.localRunId : null,
     }
   } catch {
     return fallback
@@ -133,6 +201,7 @@ function persistState(state: RestrictedAgentState) {
     error: state.error,
     composerSnapshotVersion: state.composerSnapshotVersion,
     assetBindings: state.assetBindings,
+    localRunId: state.localRunId,
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted))
 }
@@ -197,6 +266,77 @@ function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot): Restr
   }
 }
 
+async function validateOpenShopConfirmation(
+  plan: RestrictedAgentPlan,
+  assetBindings: RestrictedAgentAssetBinding[],
+) {
+  if (plan.schemaVersion !== 2) {
+    throw new OpenShopConfirmationError('failed', 'OpenShop 只能执行 Tool Plan schema v2')
+  }
+  const operation = getRestrictedAgentPlanOperation(plan)
+  if (operation.type !== 'openshop.edit') {
+    throw new OpenShopConfirmationError('failed', '当前计划不是 OpenShop operation')
+  }
+  if (plan.status !== 'awaiting_confirmation') {
+    throw new OpenShopConfirmationError(
+      plan.status === 'expired' ? 'expired' : 'stale',
+      `计划状态已变化：${plan.status}`,
+    )
+  }
+  if (Date.parse(plan.expiresAt) <= Date.now()) {
+    throw new OpenShopConfirmationError('expired', '计划已过期，请重新生成计划')
+  }
+
+  let decodedBindings: RestrictedAgentAssetBinding[]
+  try {
+    decodedBindings = decodeRestrictedAgentAssetBindings(plan, assetBindings)
+  } catch (error) {
+    throw new OpenShopConfirmationError(
+      'stale',
+      `计划输入 binding 已失效：${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  const binding = decodedBindings.find((item) => item.gatewayAssetId === operation.inputAssetId)
+  if (!binding || binding.role !== 'reference' || !binding.browserImageId) {
+    throw new OpenShopConfirmationError('stale', 'OpenShop inputAssetId 缺少有效浏览器图片 binding')
+  }
+  if (binding.sourceTaskId) {
+    const sourceTask = useStore.getState().tasks.find((task) => task.id === binding.sourceTaskId)
+    if (!sourceTask || !sourceTask.outputImages.includes(binding.browserImageId)) {
+      throw new OpenShopConfirmationError('stale', 'OpenShop sourceTaskId 与浏览器图片来源不匹配')
+    }
+  }
+
+  const draft = getComposerDraftSnapshot('tool')
+  const currentHash = await computeRestrictedAgentConfirmationHash(
+    plan,
+    decodedBindings,
+    createPlanRequestFromDraft(draft),
+  )
+  if (currentHash !== plan.composerSnapshotHash) {
+    throw new OpenShopConfirmationError('stale', 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认')
+  }
+
+  const freshPlan = await getRestrictedAgentPlan(plan.id)
+  if (freshPlan.schemaVersion !== 2
+    || freshPlan.version !== plan.version
+    || freshPlan.composerSnapshotHash !== plan.composerSnapshotHash
+    || stableJson(freshPlan) !== stableJson(plan)) {
+    throw new OpenShopConfirmationError('stale', 'Gateway 计划版本或冻结快照已变化，请重新规划')
+  }
+  if (freshPlan.status !== 'awaiting_confirmation') {
+    throw new OpenShopConfirmationError(
+      freshPlan.status === 'expired' ? 'expired' : 'stale',
+      `Gateway 计划状态已变化：${freshPlan.status}`,
+    )
+  }
+  if (Date.parse(freshPlan.expiresAt) <= Date.now()) {
+    throw new OpenShopConfirmationError('expired', '计划已过期，请重新生成计划')
+  }
+
+  return { plan: freshPlan, operation, binding, draft }
+}
+
 async function materializePlanInputs(plan: RestrictedAgentPlan) {
   const inputImageIds: string[] = []
   let maskTargetImageId: string | null = null
@@ -216,6 +356,100 @@ async function materializePlanInputs(plan: RestrictedAgentPlan) {
     inputImageIds.sort((id) => id === maskTargetImageId ? -1 : 1)
   }
   return { inputImageIds, maskTargetImageId, maskImageId }
+}
+
+async function createTaskForOpenShopRun(run: OpenShopToolLocalRun) {
+  const existing = useStore.getState().tasks.find((task) => (
+    task.id === run.taskId || task.agentRunId === run.id || task.agentLocalRunId === run.id
+  ))
+  if (existing) return existing.id
+  const task: TaskRecord = {
+    id: run.taskId,
+    prompt: run.planSnapshot.originalRequest,
+    params: { ...run.taskParams },
+    apiProvider: 'openshop',
+    apiProfileName: 'OpenShop Tool Agent',
+    apiModel: 'OpenShop',
+    inputImageIds: [run.inputImageId],
+    maskTargetImageId: null,
+    maskImageId: null,
+    outputImages: [],
+    status: 'running',
+    error: null,
+    createdAt: run.createdAt,
+    finishedAt: null,
+    elapsed: null,
+    origin: 'restricted-agent',
+    sourceTaskId: run.sourceTaskId ?? undefined,
+    agentPlanId: run.planId,
+    agentOriginalRequest: run.planSnapshot.originalRequest,
+    agentPlanSnapshot: run.planSnapshot,
+    agentRunId: run.id,
+    agentLocalRunId: run.id,
+    agentLocalRunStatus: run.status,
+    agentLocalSaveStatus: run.saveStatus,
+  }
+  await putTask(task)
+  useStore.getState().setTasks([task, ...useStore.getState().tasks.filter((item) => item.id !== task.id)])
+  clearComposerDraft('tool', run.composerSnapshotVersion, useStore.getState().settings.clearInputAfterSubmit)
+  return task.id
+}
+
+function reflectOpenShopRunInTask(run: OpenShopToolLocalRun, terminalMessage?: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === run.taskId || item.agentRunId === run.id)
+  if (!task) return
+  const terminal = ['completed', 'cancelled', 'failed', 'interrupted', 'expired'].includes(run.status)
+  updateTaskInStore(task.id, {
+    status: run.status === 'completed' ? 'done' : terminal || run.status === 'exported' ? 'error' : 'running',
+    error: run.status === 'completed' ? null : terminalMessage ?? run.error?.message ?? null,
+    finishedAt: terminal || run.status === 'exported' ? run.completedAt ?? Date.now() : null,
+    elapsed: terminal || run.status === 'exported'
+      ? Math.max(0, (run.completedAt ?? Date.now()) - task.createdAt)
+      : null,
+    agentLocalRunStatus: run.status,
+    agentLocalSaveStatus: run.saveStatus,
+  })
+}
+
+function syncOpenShopRunState(run: OpenShopToolLocalRun) {
+  reflectOpenShopRunInTask(run)
+  const phase: AgentFlowPhase = run.status === 'completed'
+    ? 'completed'
+    : run.status === 'running' || run.status === 'saving'
+      ? 'executing'
+      : run.status === 'expired'
+        ? 'expired'
+        : 'failed'
+  useRestrictedAgentStore.setState({
+    localRun: run,
+    localRunId: run.id,
+    taskId: run.taskId,
+    phase,
+    error: run.error?.message ?? (run.status === 'exported' ? 'OpenShop 已导出结果等待重试保存' : null),
+  })
+}
+
+function readAbortReason(signal: AbortSignal) {
+  return signal.reason instanceof Error ? signal.reason : new DOMException('OpenShop 本地保存已取消', 'AbortError')
+}
+
+function waitForAbortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(readAbortReason(signal))
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return false
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      return true
+    }
+    const onAbort = () => { if (finish()) reject(readAbortReason(signal)) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => { if (finish()) resolve(value) },
+      (error) => { if (finish()) reject(error) },
+    )
+  })
 }
 
 async function createTaskForExecution(plan: RestrictedAgentPlan, execution: RestrictedAgentExecution) {
@@ -399,8 +633,334 @@ function watchExecution(executionId: string, taskId: string | null) {
   void refreshExecution(executionId, taskId)
 }
 
+async function saveExportedOpenShopRun(
+  runId: string,
+  options: OpenShopSaveAttemptOptions = {},
+): Promise<string | null> {
+  const timeoutMs = Math.max(1, options.timeoutMs ?? OPENSHOP_SAVE_TIMEOUT_MS)
+  const controller = new AbortController()
+  const onExternalAbort = () => controller.abort(
+    options.signal?.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException('OpenShop 本地保存已取消', 'AbortError'),
+  )
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true })
+  if (options.signal?.aborted) onExternalAbort()
+  const timeout = globalThis.setTimeout(
+    () => controller.abort(new DOMException('OpenShop 本地保存超时', 'TimeoutError')),
+    timeoutMs,
+  )
+  openShopSaveControllers.set(runId, controller)
+  let saving: OpenShopToolLocalRun | null = null
+
+  try {
+    saving = await transitionOpenShopToolLocalRun(runId, ['exported'], {
+      status: 'saving',
+      saveStatus: 'saving',
+      error: null,
+      errorStage: null,
+      completedAt: null,
+    }, controller.signal)
+    if (!saving) {
+      const current = await getOpenShopToolLocalRun(runId, controller.signal)
+      if (!current) return null
+      syncOpenShopRunState(current)
+      return current.status === 'completed' ? current.taskId : null
+    }
+
+    useRestrictedAgentStore.setState({
+      localRun: saving,
+      localRunId: saving.id,
+      taskId: saving.taskId,
+      phase: 'executing',
+      error: null,
+    })
+    reflectOpenShopRunInTask(saving)
+
+    const draft = await getOpenShopToolOutputDraft(runId, controller.signal)
+    if (!draft) throw new Error('OpenShop 已导出结果不存在，不能重试保存')
+    if (draft.expiresAt <= Date.now()) {
+      await cleanupExpiredOpenShopToolOutputDrafts()
+      throw new Error('OpenShop 已导出结果已过期，请重新规划')
+    }
+    const completedAt = Date.now()
+    const completed: OpenShopToolLocalRun = {
+      ...saving,
+      status: 'completed',
+      saveStatus: 'completed',
+      blobId: null,
+      error: null,
+      errorStage: null,
+      updatedAt: completedAt,
+      completedAt,
+    }
+    const task = await waitForAbortable(saveOpenShopEdit({
+      sourceTaskId: saving.sourceTaskId,
+      inputImageIds: [saving.inputImageId],
+      outputImage: draft.blob,
+      taskId: saving.taskId,
+      origin: 'restricted-agent',
+      prompt: saving.planSnapshot.originalRequest,
+      createdAt: saving.createdAt,
+      fallbackParams: saving.taskParams,
+      agentPlanId: saving.planId,
+      agentOriginalRequest: saving.planSnapshot.originalRequest,
+      agentPlanSnapshot: saving.planSnapshot,
+      agentRunId: saving.id,
+      agentLocalRunId: saving.id,
+      agentLocalRunStatus: 'completed',
+      agentLocalSaveStatus: 'completed',
+      signal: controller.signal,
+      timeoutMs,
+      completeToolRun: { run: completed, draft, expectedStatus: 'saving' },
+    }), controller.signal)
+    useRestrictedAgentStore.setState({
+      localRun: completed,
+      localRunId: completed.id,
+      taskId: task.id,
+      phase: 'completed',
+      error: null,
+      composerSnapshotVersion: null,
+    })
+    return task.id
+  } catch (error) {
+    if (!saving) {
+      const current = useRestrictedAgentStore.getState().localRun
+      if (current?.id === runId) syncOpenShopRunState(current)
+      return null
+    }
+    let durable: OpenShopToolLocalRun | undefined
+    try {
+      durable = await getOpenShopToolLocalRun(runId)
+    } catch (readError) {
+      const message = readError instanceof Error ? readError.message : String(readError)
+      useRestrictedAgentStore.setState({ phase: 'failed', error: message })
+      return null
+    }
+    if (durable?.status === 'completed') {
+      syncOpenShopRunState(durable)
+      return durable.taskId
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    const errorCode = error instanceof DOMException && error.name === 'TimeoutError'
+      ? 'SAVE_TIMEOUT'
+      : error instanceof DOMException && error.name === 'AbortError'
+        ? 'SAVE_CANCELLED'
+        : 'SAVE_FAILED'
+    let exported: OpenShopToolLocalRun | null = null
+    try {
+      exported = await transitionOpenShopToolLocalRun(runId, ['saving'], {
+        status: 'exported',
+        saveStatus: 'failed',
+        error: { code: errorCode, message: `OpenShop 已导出，但本地保存失败：${message}`, retryable: true },
+        errorStage: 'save',
+        completedAt: null,
+      })
+    } catch {
+      // 继续读取 durable 状态；invalid/并发状态必须以持久层为准。
+    }
+    if (exported) {
+      syncOpenShopRunState(exported)
+      return null
+    }
+    try {
+      durable = await getOpenShopToolLocalRun(runId)
+      if (durable) {
+        syncOpenShopRunState(durable)
+        return durable.status === 'completed' ? durable.taskId : null
+      }
+    } catch (readError) {
+      useRestrictedAgentStore.setState({
+        phase: 'failed',
+        error: readError instanceof Error ? readError.message : String(readError),
+      })
+    }
+    return null
+  } finally {
+    globalThis.clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', onExternalAbort)
+    if (openShopSaveControllers.get(runId) === controller) openShopSaveControllers.delete(runId)
+  }
+}
+
+function getOrCreateOpenShopSaveAttempt(
+  runId: string,
+  options: OpenShopSaveAttemptOptions = {},
+): Promise<string | null> {
+  const existing = openShopSavePromises.get(runId)
+  if (existing) return existing
+  const local = useRestrictedAgentStore.getState().localRun
+  const attempt = local?.id === runId && local.status === 'exported'
+    ? saveExportedOpenShopRun(runId, options)
+    : (async () => {
+        const run = await getOpenShopToolLocalRun(runId)
+        if (!run) return null
+        if (run.status !== 'exported') {
+          syncOpenShopRunState(run)
+          return run.status === 'completed' ? run.taskId : null
+        }
+        return saveExportedOpenShopRun(runId, options)
+      })()
+  openShopSavePromises.set(runId, attempt)
+  const cleanup = () => {
+    if (openShopSavePromises.get(runId) === attempt) openShopSavePromises.delete(runId)
+  }
+  attempt.then(cleanup, cleanup)
+  return attempt
+}
+
+async function executeOpenShopLocalRun(run: OpenShopToolLocalRun): Promise<string | null> {
+  useRestrictedAgentStore.setState({
+    localRun: run,
+    localRunId: run.id,
+    taskId: run.taskId,
+    phase: 'executing',
+    error: null,
+  })
+  reflectOpenShopRunInTask(run)
+  try {
+    const exported = await openShopToolRunner({
+      sourceTaskId: run.sourceTaskId,
+      inputAssetId: run.inputImageId,
+      commands: run.commands,
+      outputFormat: run.outputFormat,
+      saveOutput: false,
+    })
+    const exportedRun = await storeOpenShopToolExport(run.id, {
+      runId: run.id,
+      blob: exported.blob,
+      filename: exported.filename,
+      document: exported.document,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + OPENSHOP_OUTPUT_DRAFT_TTL_MS,
+    })
+    useRestrictedAgentStore.setState({ localRun: exportedRun, phase: 'executing', error: null })
+    return getOrCreateOpenShopSaveAttempt(run.id)
+  } catch (error) {
+    const durable = await getOpenShopToolLocalRun(run.id)
+    if (durable?.status === 'exported') return getOrCreateOpenShopSaveAttempt(run.id)
+    if (durable?.status === 'completed') return durable.taskId
+    const localError = getLocalRunError(error)
+    const status = localError.code === 'CANCELLED' ? 'cancelled' as const : 'failed' as const
+    const failed = await transitionOpenShopToolLocalRun(run.id, ['running'], {
+      status,
+      saveStatus: 'not_started',
+      error: localError,
+      errorStage: 'execution',
+      completedAt: null,
+    })
+    if (failed) {
+      reflectOpenShopRunInTask(failed)
+      useRestrictedAgentStore.setState({
+        localRun: failed,
+        localRunId: failed.id,
+        taskId: failed.taskId,
+        phase: 'failed',
+        error: failed.error?.message ?? null,
+      })
+    }
+    return null
+  }
+}
+
+async function confirmOpenShopPlan(
+  plan: RestrictedAgentPlan,
+  assetBindings: RestrictedAgentAssetBinding[],
+): Promise<string | null> {
+  useRestrictedAgentStore.setState({ phase: 'confirming', error: null })
+  try {
+    const validated = await validateOpenShopConfirmation(plan, assetBindings)
+    const now = Date.now()
+    const runId = createOpenShopRunId(validated.plan)
+    const candidate = await createOpenShopToolLocalRunRecord({
+      id: runId,
+      idempotencyKey: runId,
+      taskId: createOpenShopTaskId(validated.plan),
+      planId: validated.plan.id,
+      planVersion: validated.plan.version,
+      composerSnapshotHash: validated.plan.composerSnapshotHash,
+      composerSnapshotVersion: validated.draft.composerVersion,
+      planSnapshot: validated.plan,
+      sourceTaskId: validated.binding.sourceTaskId,
+      inputImageId: validated.binding.browserImageId as string,
+      inputBinding: {
+        gatewayAssetId: validated.binding.gatewayAssetId,
+        browserImageId: validated.binding.browserImageId as string,
+        sourceTaskId: validated.binding.sourceTaskId,
+        role: 'reference',
+        ordinal: validated.binding.ordinal,
+      },
+      taskParams: { ...validated.draft.params },
+      commands: validated.operation.commands.map((command) => structuredClone(command)),
+      outputFormat: 'png',
+      blobId: null,
+      status: 'running',
+      saveStatus: 'not_started',
+      error: null,
+      errorStage: null,
+      createdAt: now,
+      startedAt: now,
+      exportedAt: null,
+      updatedAt: now,
+      completedAt: null,
+    })
+    const claimed = await claimOpenShopToolLocalRun(candidate)
+    if (claimed.run.status === 'completed') {
+      const completedTask = await getVerifiedCompletedOpenShopToolTask(claimed.run)
+      if (!useStore.getState().tasks.some((task) => task.id === completedTask.id)) {
+        useStore.getState().setTasks([
+          completedTask,
+          ...useStore.getState().tasks.filter((task) => task.id !== completedTask.id),
+        ])
+      }
+      clearComposerDraft('tool', claimed.run.composerSnapshotVersion, useStore.getState().settings.clearInputAfterSubmit)
+      useRestrictedAgentStore.setState({
+        localRun: claimed.run,
+        localRunId: claimed.run.id,
+        taskId: completedTask.id,
+        composerSnapshotVersion: null,
+        phase: 'completed',
+        error: null,
+      })
+      return completedTask.id
+    }
+    const taskId = await createTaskForOpenShopRun(claimed.run)
+    useRestrictedAgentStore.setState({
+      localRun: claimed.run,
+      localRunId: claimed.run.id,
+      taskId,
+      composerSnapshotVersion: null,
+    })
+    if (claimed.created) return executeOpenShopLocalRun(claimed.run)
+
+    if (claimed.run.status === 'running' || claimed.run.status === 'saving') {
+      useRestrictedAgentStore.setState({
+        phase: 'executing',
+        error: '相同计划已由当前浏览器中的本地 Run 处理，不会重复执行',
+      })
+      return claimed.run.taskId
+    }
+    useRestrictedAgentStore.setState({
+      phase: 'failed',
+      error: claimed.run.error?.message ?? (
+        claimed.run.status === 'exported'
+          ? 'OpenShop 已导出结果等待重试保存'
+          : '相同计划已有终态 Run；重新执行前必须重新规划'
+      ),
+    })
+    return claimed.run.taskId
+  } catch (error) {
+    const phase = error instanceof OpenShopConfirmationError ? error.phase : 'failed'
+    const message = error instanceof Error ? error.message : String(error)
+    useRestrictedAgentStore.setState({ phase, error: message })
+    useStore.getState().showToast(message, 'error')
+    return null
+  }
+}
+
 export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) => ({
   ...readPersistedState(),
+  localRun: null,
 
   async createPlanFromCurrentInput(draftSnapshot = getComposerDraftSnapshot('tool')) {
     if (['planning', 'confirming', 'executing'].includes(get().phase)) return null
@@ -422,6 +982,8 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       error: null,
       composerSnapshotVersion: draftSnapshot.composerVersion,
       assetBindings: [],
+      localRunId: null,
+      localRun: null,
     })
     try {
       const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot))
@@ -439,6 +1001,8 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
         execution: null,
         taskId: null,
         error: fresh ? null : '输入已在规划期间变化，旧计划不可确认',
+        localRunId: null,
+        localRun: null,
       })
       const plan = creation.plan
       return plan
@@ -452,17 +1016,23 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
 
   async confirmAndExecute() {
     const current = get()
-    if (current.phase === 'confirming' || current.phase === 'executing') return current.taskId
-    if (current.phase !== 'awaiting_confirmation') return null
     const { plan, assetBindings } = current
     if (!plan) return null
+    const operation = getRestrictedAgentPlanOperation(plan)
+    if (operation.type === 'openshop.edit' && plan.schemaVersion === 2) {
+      const runId = createOpenShopRunId(plan)
+      const pending = openShopRunPromises.get(runId)
+      if (pending) return pending
+      if (current.phase !== 'awaiting_confirmation') return current.taskId
+      const confirmation = confirmOpenShopPlan(plan, assetBindings)
+        .finally(() => openShopRunPromises.delete(runId))
+      openShopRunPromises.set(runId, confirmation)
+      return confirmation
+    }
+    if (current.phase === 'confirming' || current.phase === 'executing') return current.taskId
+    if (current.phase !== 'awaiting_confirmation') return null
     if (Date.parse(plan.expiresAt) <= Date.now()) {
       set({ phase: 'expired', error: '计划已过期，请重新生成计划' })
-      return null
-    }
-    const operation = getRestrictedAgentPlanOperation(plan)
-    if (operation.type === 'openshop.edit') {
-      set({ error: 'OpenShop 计划将在下一阶段接入浏览器执行，本阶段不可确认' })
       return null
     }
     set({ phase: 'confirming', error: null })
@@ -488,7 +1058,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       })
       if (!isTerminalExecution(execution)) watchExecution(execution.id, null)
       const taskId = await createTaskForExecution(plan, execution)
-      set({ taskId, composerSnapshotVersion: null, assetBindings: [] })
+      set({ taskId, composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null })
       const latestExecution = get().execution?.id === execution.id ? get().execution! : execution
       await applyExecution(latestExecution, taskId)
       if (!isTerminalExecution(latestExecution)) watchExecution(latestExecution.id, taskId)
@@ -508,12 +1078,31 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
     }
   },
 
+  retryOpenShopSave(options) {
+    const runId = get().localRunId
+    if (!runId) return Promise.resolve(null)
+    return getOrCreateOpenShopSaveAttempt(runId, options)
+  },
+
   returnToEditing() {
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null, assetBindings: [] })
+    set({
+      phase: 'idle', plan: null, execution: null, taskId: null, error: null,
+      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null,
+    })
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-bar] [contenteditable="true"]')?.focus())
   },
 
   async cancelExecution() {
+    const localRun = get().localRun
+    const localRunId = localRun?.id ?? get().localRunId
+    const saveController = localRunId ? openShopSaveControllers.get(localRunId) : undefined
+    if (saveController) {
+      saveController.abort(new DOMException('用户取消了 OpenShop 本地保存', 'AbortError'))
+      return
+    }
+    if (localRun?.status === 'saving') {
+      return
+    }
     const execution = get().execution
     if (!execution || isTerminalExecution(execution)) return
     try {
@@ -524,8 +1113,85 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   },
 
   async recover(tasks = useStore.getState().tasks) {
+    try {
+      await cleanupExpiredOpenShopToolOutputDrafts()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      set({ phase: 'failed', error: message, localRun: null })
+      return
+    }
+    const persistedRunId = get().localRunId
+    if (persistedRunId) {
+      let run: OpenShopToolLocalRun | undefined
+      try {
+        run = await getOpenShopToolLocalRun(persistedRunId)
+      } catch (error) {
+        set({
+          phase: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+          localRun: null,
+        })
+        return
+      }
+      if (run) {
+        const taskExists = tasks.some((task) => task.id === run?.taskId || task.agentRunId === run?.id)
+        if (!taskExists && run.status !== 'completed') await createTaskForOpenShopRun(run)
+        const draft = await getOpenShopToolOutputDraft(run.id)
+        if (run.status === 'running') {
+          const transitioned = await transitionOpenShopToolLocalRun(run.id, ['running'], {
+            status: 'interrupted',
+            error: { code: 'INTERRUPTED', message: '页面刷新中断了 OpenShop 执行，系统不会自动重放', retryable: false },
+            errorStage: 'recovery',
+            completedAt: null,
+          })
+          run = transitioned ?? await getOpenShopToolLocalRun(run.id) ?? run
+        } else if (run.status === 'saving') {
+          const transitioned = await transitionOpenShopToolLocalRun(run.id, ['saving'], draft ? {
+            status: 'exported',
+            saveStatus: 'failed',
+            error: { code: 'SAVE_INTERRUPTED', message: '页面刷新中断了保存，可直接重试保存已导出的结果', retryable: true },
+            errorStage: 'save',
+            completedAt: null,
+          } : {
+            status: 'expired',
+            saveStatus: 'failed',
+            blobId: null,
+            error: { code: 'OUTPUT_DRAFT_MISSING', message: '页面刷新中断了保存，且没有可恢复的导出结果', retryable: false },
+            errorStage: 'expiry',
+            completedAt: null,
+          })
+          run = transitioned ?? await getOpenShopToolLocalRun(run.id) ?? run
+        } else if (run.status === 'exported' && !draft) {
+          const transitioned = await transitionOpenShopToolLocalRun(run.id, ['exported'], {
+            status: 'expired',
+            saveStatus: 'failed',
+            blobId: null,
+            error: { code: 'OUTPUT_DRAFT_MISSING', message: 'OpenShop 已导出结果缺失，不能重试保存', retryable: false },
+            errorStage: 'expiry',
+            completedAt: null,
+          })
+          run = transitioned ?? await getOpenShopToolLocalRun(run.id) ?? run
+        }
+        const phase: AgentFlowPhase = run.status === 'completed'
+          ? 'completed'
+          : run.status === 'running' || run.status === 'saving'
+            ? 'executing'
+            : 'failed'
+        set({
+          localRun: run,
+          localRunId: run.id,
+          taskId: run.taskId,
+          phase,
+          error: run.error?.message ?? (run.status === 'exported' ? 'OpenShop 已导出结果等待重试保存' : null),
+        })
+        reflectOpenShopRunInTask(run)
+      }
+    } else if (!get().execution && get().phase === 'confirming' && get().plan) {
+      set({ phase: 'awaiting_confirmation', error: '上次确认未开始本地 Run，请再次确认' })
+    }
+
     const active = get().execution
-    if (!active && get().phase === 'confirming' && get().plan) {
+    if (!persistedRunId && !active && get().phase === 'confirming' && get().plan) {
       set({ phase: 'awaiting_confirmation', error: '上次确认未取得执行编号，请再次确认；服务端会按计划幂等返回同一执行。' })
     }
     let activeTaskId = get().taskId
@@ -546,7 +1212,10 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   reset() {
     const executionId = get().execution?.id
     if (executionId) stopExecutionWatch(executionId)
-    set({ phase: 'idle', plan: null, execution: null, taskId: null, error: null, composerSnapshotVersion: null, assetBindings: [] })
+    set({
+      phase: 'idle', plan: null, execution: null, taskId: null, error: null,
+      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null,
+    })
   },
 }))
 

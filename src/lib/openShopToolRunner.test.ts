@@ -352,6 +352,20 @@ describe('OpenShopToolBridgeClient', () => {
 })
 
 describe('openShopToolRunner', () => {
+  it('仅执行导出模式返回已校验 Blob，且不进入最终 Task 保存', async () => {
+    const harness = createRunnerHarness()
+
+    const result = await runWithHarness(harness, { saveOutput: false })
+
+    expect(result).toMatchObject({
+      blob: harness.outputBlob,
+      filename: 'tool-output.png',
+      document: { canvas: { width: 2, height: 2 } },
+    })
+    expect(harness.dependencies.saveOutput).not.toHaveBeenCalled()
+    expect(harness.frame.remove).toHaveBeenCalledOnce()
+  })
+
   it('按严格时序完成并销毁固定尺寸 iframe/listener', async () => {
     const harness = createRunnerHarness()
 
@@ -419,7 +433,7 @@ describe('openShopToolRunner', () => {
   it('卡住的 save 按总 deadline 失败，并通过统一 signal 取消未提交保存', async () => {
     vi.useFakeTimers()
     let saveSignal: AbortSignal | null = null
-    const saveOutput = vi.fn((_source: string, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
+    const saveOutput = vi.fn((_source: string | null, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
       saveSignal = context.signal
       return new Promise<TaskRecord>((_resolve, reject) => {
         context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true })
@@ -440,7 +454,7 @@ describe('openShopToolRunner', () => {
   it('save 中外部 Abort 取消未提交保存', async () => {
     const controller = new AbortController()
     const saveStarted = deferred<void>()
-    const saveOutput = vi.fn((_source: string, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
+    const saveOutput = vi.fn((_source: string | null, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
       saveStarted.resolve()
       return new Promise<TaskRecord>((_resolve, reject) => {
         context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true })
@@ -460,7 +474,7 @@ describe('openShopToolRunner', () => {
     vi.useFakeTimers()
     const late = deferred<TaskRecord>()
     let landed = false
-    const saveOutput = vi.fn((_source: string, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => (
+    const saveOutput = vi.fn((_source: string | null, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => (
       late.promise.then((value) => {
         if (!context.signal.aborted) landed = true
         return value
@@ -482,7 +496,7 @@ describe('openShopToolRunner', () => {
 
   it('transaction 已 oncomplete 后到来的 Abort 不会覆盖成功结果', async () => {
     const controller = new AbortController()
-    const saveOutput = vi.fn(async (_source: string, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
+    const saveOutput = vi.fn(async (_source: string | null, _asset: string, _blob: Blob, context: OpenShopToolSaveContext) => {
       context.onCommit()
       controller.abort()
       await Promise.resolve()

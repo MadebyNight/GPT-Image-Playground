@@ -21,6 +21,17 @@ interface AgentConversationSummary {
   turnCount: number
 }
 
+const LOCAL_RUN_STATUS_LABELS: Record<NonNullable<TaskRecord['agentLocalRunStatus']>, string> = {
+  running: '执行中',
+  exported: '待保存',
+  saving: '保存中',
+  completed: '已完成',
+  cancelled: '已取消',
+  failed: '失败',
+  interrupted: '已中断',
+  expired: '已过期',
+}
+
 export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, onNewConversation }: AgentHistoryPanelProps) {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
@@ -122,6 +133,14 @@ export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, on
               {mode === 'chat' && conversation.turnCount > 1 && (
                 <span className="pointer-events-none absolute right-2 top-2 rounded-full border border-white/70 bg-gray-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur dark:border-white/10">
                   {conversation.turnCount} 轮
+                </span>
+              )}
+              {mode === 'tool' && conversation.task.agentLocalRunStatus && (
+                <span
+                  data-agent-local-run-status={conversation.task.agentLocalRunStatus}
+                  className="pointer-events-none absolute right-2 top-2 rounded-full border border-white/70 bg-gray-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur dark:border-white/10"
+                >
+                  {LOCAL_RUN_STATUS_LABELS[conversation.task.agentLocalRunStatus]}
                 </span>
               )}
             </div>

@@ -62,7 +62,7 @@ describe('AgentPlanCard', () => {
     expect(markup).toContain('确认并执行')
   })
 
-  it('展示实际 OpenShop 命令但隐藏原始ID并禁用确认', () => {
+  it('展示实际 OpenShop 命令、隐藏原始ID并允许浏览器确认', () => {
     const markup = renderToStaticMarkup(
       <AgentPlanCard
         plan={openShopPlan}
@@ -82,11 +82,19 @@ describe('AgentPlanCard', () => {
     expect(markup).toContain('canvas.rotate')
     expect(markup).toContain('旋转：90°')
     expect(markup).toContain('历史任务输出')
-    expect(markup).toContain('等待浏览器执行接入')
-    expect(markup).toContain('disabled')
+    expect(markup).toContain('确认并在浏览器执行')
+    expect(markup).not.toContain('disabled=""')
     expect(markup).not.toContain('gateway-asset-private-id')
     expect(markup).not.toContain('browser-indexeddb-private-id')
     expect(markup).not.toContain('source-task-private-id')
+  })
+
+  it('OpenShop binding 缺失时 fail closed 并禁用确认', () => {
+    const markup = renderToStaticMarkup(
+      <AgentPlanCard plan={openShopPlan} assetBindings={[]} onConfirm={vi.fn()} onReturnToEditing={vi.fn()} />,
+    )
+    expect(markup).toContain('输入映射无效')
+    expect(markup).toContain('disabled=""')
   })
 
   it('stale计划禁用确认并提示重新规划', () => {

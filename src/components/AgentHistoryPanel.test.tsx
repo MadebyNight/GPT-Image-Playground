@@ -83,8 +83,8 @@ describe('AgentHistoryPanel', () => {
   it('Tool 模式只展示 restricted-agent Run，不聚合为 Chat 会话', () => {
     visibleTasks = [
       task,
-      { ...task, id: 'tool-a', origin: 'restricted-agent', createdAt: 3 },
-      { ...task, id: 'tool-b', origin: 'restricted-agent', createdAt: 2 },
+      { ...task, id: 'tool-a', origin: 'restricted-agent', createdAt: 3, agentConversationId: 'shared-tool-context' },
+      { ...task, id: 'tool-b', origin: 'restricted-agent', createdAt: 2, agentConversationId: 'shared-tool-context' },
       { ...task, id: 'gallery-a', origin: 'gallery', createdAt: 4 },
       { ...task, id: 'openshop-a', origin: 'openshop', createdAt: 5 },
     ]
@@ -98,6 +98,38 @@ describe('AgentHistoryPanel', () => {
     expect(markup).toContain('data-agent-run-id="tool-b"')
     expect(markup).not.toContain('data-agent-conversation-id')
     expect(capturedTaskCards).toHaveLength(2)
+  })
+
+  it('Tool 模式直接展示每个本地 Run 的持久化状态 badge', () => {
+    const statuses = [
+      ['running', '执行中'],
+      ['exported', '待保存'],
+      ['interrupted', '已中断'],
+      ['failed', '失败'],
+      ['completed', '已完成'],
+      ['expired', '已过期'],
+    ] as const
+    visibleTasks = statuses.map(([status], index) => ({
+      ...task,
+      id: `tool-${status}`,
+      origin: 'restricted-agent',
+      createdAt: statuses.length - index,
+      agentConversationId: 'shared-tool-context',
+      agentLocalRunStatus: status,
+      agentLocalSaveStatus: status === 'completed' ? 'completed' : status === 'exported' ? 'failed' : 'not_started',
+    }))
+
+    const markup = renderToStaticMarkup(
+      <AgentHistoryPanel mode="tool" activeTaskId="tool-running" onSelectTask={vi.fn()} />,
+    )
+
+    statuses.forEach(([status, label]) => {
+      expect(markup).toContain(`data-agent-run-id="tool-${status}"`)
+      expect(markup).toContain(`data-agent-local-run-status="${status}"`)
+      expect(markup).toContain(label)
+    })
+    expect(markup).not.toContain('data-agent-conversation-id')
+    expect(capturedTaskCards).toHaveLength(statuses.length)
   })
 
   it('Chat 模式排除 Tool、Gallery 和手工 OpenShop 记录', () => {

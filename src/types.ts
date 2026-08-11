@@ -1,4 +1,4 @@
-import type { OpenShopCanvasCommand } from './lib/openshopBridge'
+import type { OpenShopCanvasCommand, OpenShopToolDocumentDescriptor } from './lib/openshopBridge'
 
 // ===== 设置 =====
 
@@ -206,6 +206,14 @@ export interface TaskRecord {
   agentOriginalRequest?: string
   /** 用户实际确认的不可变计划快照。 */
   agentPlanSnapshot?: RestrictedAgentPlan
+  /** 浏览器本地执行的 OpenShop Run ID；Gateway 图片执行不设置。 */
+  agentLocalRunId?: string
+  /** Tool Agent Run ID；MVP 的 OpenShop 本地 Run 与 agentLocalRunId 相同。 */
+  agentRunId?: string
+  /** 浏览器本地 OpenShop Run 的持久化状态。 */
+  agentLocalRunStatus?: OpenShopToolLocalRunStatus
+  /** 浏览器本地 OpenShop 输出的保存状态。 */
+  agentLocalSaveStatus?: OpenShopToolLocalSaveStatus
 }
 
 // ===== 受限 Agent Gateway =====
@@ -300,6 +308,82 @@ export interface ToolAgentPlan extends RestrictedAgentPlanBase {
 }
 
 export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan
+
+export type OpenShopToolLocalRunStatus =
+  | 'running'
+  | 'exported'
+  | 'saving'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+  | 'interrupted'
+  | 'expired'
+
+export type OpenShopToolLocalSaveStatus =
+  | 'not_started'
+  | 'pending'
+  | 'saving'
+  | 'completed'
+  | 'failed'
+
+export type OpenShopToolLocalErrorStage = 'execution' | 'save' | 'recovery' | 'expiry'
+
+export interface OpenShopToolLocalRunError {
+  code: string
+  message: string
+  retryable: boolean
+}
+
+export interface OpenShopToolLocalInputBinding {
+  gatewayAssetId: string
+  browserImageId: string
+  sourceTaskId: string | null
+  role: 'reference'
+  ordinal: number
+}
+
+/** `openshop.edit` 在当前浏览器中的单次、不可自动重放 Run。 */
+export interface OpenShopToolLocalRun {
+  schemaVersion: 1
+  id: string
+  idempotencyKey: string
+  identitySha256: string
+  taskId: string
+  planId: string
+  planVersion: number
+  composerSnapshotHash: string
+  composerSnapshotVersion: number
+  planSnapshot: ToolAgentPlan
+  sourceTaskId: string | null
+  inputImageId: string
+  inputBinding: OpenShopToolLocalInputBinding
+  taskParams: TaskParams
+  commands: OpenShopCanvasCommand[]
+  outputFormat: 'png'
+  blobId: string | null
+  status: OpenShopToolLocalRunStatus
+  saveStatus: OpenShopToolLocalSaveStatus
+  error: OpenShopToolLocalRunError | null
+  errorStage: OpenShopToolLocalErrorStage | null
+  createdAt: number
+  startedAt: number
+  exportedAt: number | null
+  updatedAt: number
+  completedAt: number | null
+}
+
+/** 已导出且通过 Runner 校验、等待原子保存的临时 PNG。 */
+export interface OpenShopToolOutputDraft {
+  schemaVersion: 1
+  runId: string
+  blobId: string
+  blobSha256: string
+  blob: Blob
+  filename: string
+  document: OpenShopToolDocumentDescriptor
+  createdAt: number
+  expiresAt: number
+}
 
 export interface RestrictedAgentAssetBinding {
   gatewayAssetId: string
