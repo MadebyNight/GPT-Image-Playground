@@ -32,6 +32,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    networks:
+      - agent-network
 
   agent-gateway:
     build:
@@ -86,6 +88,11 @@ services:
       start_period: 20s
     stop_grace_period: 30s
     command: ["/bin/sh", "/usr/local/bin/run-agent-gateway.sh"]
+    networks:
+      - agent-network
 
 volumes:
   agent-gateway-data:
+
+networks:
+  agent-network:

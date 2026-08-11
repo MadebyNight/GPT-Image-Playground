@@ -130,6 +130,17 @@ describe('Restricted Agent deployment boundary', () => {
     expect(compose).not.toMatch(/agent-gateway:[\s\S]*?ports:/)
   })
 
+  it('keeps the frontend and Gateway on a shared Compose network', () => {
+    const compose = readNormalizedText('docker-compose.yml')
+    const frontend = compose.match(/  gpt-image-playground:[\s\S]*?\n  agent-gateway:/)?.[0] ?? ''
+    const gateway = compose.match(/  agent-gateway:[\s\S]*?\nvolumes:/)?.[0] ?? ''
+
+    expect(frontend).toContain('networks:\n      - agent-network')
+    expect(gateway).toContain('networks:\n      - agent-network')
+    expect(compose).toContain('\nnetworks:\n  agent-network:\n')
+    expect(compose).not.toContain('dokploy-network')
+  })
+
   it('publishes both frontend and Gateway multi-architecture images', () => {
     const workflow = readFileSync('.github/workflows/docker.yml', 'utf8')
     expect(workflow).toContain('file: deploy/Dockerfile')
