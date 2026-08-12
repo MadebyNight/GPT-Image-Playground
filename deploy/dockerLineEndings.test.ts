@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest'
 
 const readNormalizedText = (path: string) => readFileSync(path, 'utf8').replace(/\r\n?/g, '\n')
 
+const getLocationBlock = (nginx: string, declaration: string) => {
+  const escapedDeclaration = declaration.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return nginx.match(new RegExp(`location ${escapedDeclaration} \\{([\\s\\S]*?)\\n    \\}`))?.[1] ?? ''
+}
+
 const shellScripts = [
   'deploy/inject-api-url.sh',
   'deploy/migrate-api-env.envsh',
@@ -57,6 +62,33 @@ describe('Docker server-managed API defaults', () => {
     expect(migrateScript).toContain('RUNTIME_SERVER_API_ALLOW_CUSTOM_MODEL=true')
     expect(migrateScript).toContain('SERVER_API_ALLOW_CUSTOM_MODEL=${SERVER_API_ALLOW_CUSTOM_MODEL-true}')
     expect(migrateScript).toContain('input=${1:-gpt-image-2,gpt-5.5}')
+  })
+})
+
+describe('Nginx static cache policy', () => {
+  const nginx = readNormalizedText('deploy/nginx.conf')
+
+  it('revalidates application entry points and Service Workers', () => {
+    for (const path of ['/', '/index.html', '/sw.js', '/openshop/', '/openshop/index.html', '/openshop/sw.js']) {
+      const location = getLocationBlock(nginx, `= ${path}`)
+      expect(location, `missing exact location for ${path}`).not.toBe('')
+      expect(location).toContain('add_header Cache-Control "no-cache, must-revalidate" always;')
+      expect(location).not.toContain('no-store')
+    }
+
+    expect(getLocationBlock(nginx, '= /')).toContain('try_files /index.html =404;')
+    expect(getLocationBlock(nginx, '= /openshop/')).toContain('try_files /openshop/index.html =404;')
+    expect(getLocationBlock(nginx, '/')).toContain('try_files $uri $uri/ /index.html;')
+  })
+
+  it('keeps hashed assets immutable and runtime config uncached', () => {
+    const assets = getLocationBlock(nginx, '/assets/')
+    expect(assets).toContain('expires 1y;')
+    expect(assets).toContain('add_header Cache-Control "public, immutable";')
+
+    const runtimeConfig = getLocationBlock(nginx, '= /runtime-config.json')
+    expect(runtimeConfig).toContain('add_header Cache-Control "no-store" always;')
+    expect(runtimeConfig).toContain('try_files $uri =404;')
   })
 })
 

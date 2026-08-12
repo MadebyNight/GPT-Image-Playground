@@ -5,8 +5,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
-const HOST_VERSION = '0.24.0-host.5'
-const PREVIOUS_HOST_VERSION = '0.24.0-host.4'
+const HOST_VERSION = '0.24.0-host.6'
+const PREVIOUS_HOST_VERSION = '0.24.0-host.5'
 const V024_CORE_RUNTIME_ASSETS = [
   './vendor/fabric-7.4.0.min.js',
 ]
@@ -110,7 +110,7 @@ function expectLocalizedMethodMessage(source: string, key: string) {
   expect(source).toMatch(invocation)
 }
 
-describe('OpenShop v0.24-host.5 发布产物契约', () => {
+describe('OpenShop v0.24-host.6 发布产物契约', () => {
   it('uses the v0.24 host baseline and defaults to Simplified Chinese', () => {
     expect(editorHtml).toContain('<html lang="zh-CN">')
     expect(editorHtml).toContain(`<title>OpenShop v${HOST_VERSION} — 在线图像编辑器</title>`)
@@ -457,7 +457,7 @@ describe('OpenShop v0.24-host.5 发布产物契约', () => {
     expect(standalone).not.toMatch(/cached|cache|subsequent/i)
   })
 
-  it('publishes host.5 with only host.4 as the verified v0.24 rollback shell', () => {
+  it('publishes host.6 with only host.5 as the verified v0.24 rollback shell', () => {
     const revision = serviceWorker.match(/const SHELL_REVISION = '([^']+)'/)?.[1]
     const previousRevision = serviceWorker.match(/const PREVIOUS_SHELL_REVISION = '([^']+)'/)?.[1]
     const trustedRevisions = serviceWorker.match(/const TRUSTED_SHELL_REVISIONS = new Set\(\s*\[([\s\S]*?)\]\s*\);/)?.[1] ?? ''

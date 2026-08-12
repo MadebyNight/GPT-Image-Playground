@@ -10,8 +10,8 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-p7wJ1Vq4fkpiKgIlMXwiynzoeLFoeYzxzvK2aPUMzgA=' 'sha256-LKtfHFIL42+frALbxc3k3kS5UjUmi0L1DET1t1fVswU=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
-<title>OpenShop v0.24.0-host.5 — 在线图像编辑器</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-p7wJ1Vq4fkpiKgIlMXwiynzoeLFoeYzxzvK2aPUMzgA=' 'sha256-UgdPuzX31snB0lzph2BttFa0qM7z6scPTiDPphO/pRs=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
+<title>OpenShop v0.24.0-host.6 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
 // Promise-based v7 API while each call site is migrated independently.
@@ -1771,7 +1771,7 @@ input[type="range"]::-moz-range-thumb:hover{transform:scale(1.15)}
 
 <!-- ===== TOP MENU ===== -->
 <div id="topbar">
-    <div class="logo" aria-label="OpenShop 版本 0.24.0-host.5">
+    <div class="logo" aria-label="OpenShop 版本 0.24.0-host.6">
         <span class="logo-mark">OS</span>
         <span class="logo-word">OpenShop</span>
         <span class="logo-version">v0.24</span>
@@ -5007,7 +5007,7 @@ const OS = {
         if (label) label.textContent = labelText;
         const dirtyPrefix = this._isDirty ? '* ' : '';
         const stateSuffix = this._persistenceState === 'saving' ? ` (${this._t('Saving')})` : this._persistenceState === 'error' ? ` (${this._t('Save failed')})` : '';
-        document.title = `${dirtyPrefix}${this._docName || this._t('Untitled')}${stateSuffix} — OpenShop v0.24.0-host.5`;
+        document.title = `${dirtyPrefix}${this._docName || this._t('Untitled')}${stateSuffix} — OpenShop v0.24.0-host.6`;
     },
     _markDocumentDirty() {
         this._documentRevision += 1;
@@ -5367,7 +5367,7 @@ const OS = {
         return {
             kind: 'openshop-document',
             schemaVersion: this._documentSchemaVersion,
-            appVersion: '0.24.0-host.5',
+            appVersion: '0.24.0-host.6',
             document: {
                 id:this._coerceDocumentId(this._documentId, 'document'),
                 name:this._safeText(this._docName || 'Untitled', 100)
@@ -16641,7 +16641,7 @@ self.onmessage = async function(e) {
         const data = JSON.stringify({
             kind:'openshop-command-sequence',
             schemaVersion:this._commandSchemaVersion,
-            appVersion:'0.24.0-host.5',
+            appVersion:'0.24.0-host.6',
             commands:this._macroSteps.map(command => this._normalizeCommand(command, { allowSequence:false }))
         }, null, 2);
         const blob = new Blob([data], { type: 'application/json' });

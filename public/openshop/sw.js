@@ -1,7 +1,7 @@
 'use strict';
 
-const SHELL_REVISION = '0.24.0-host.5';
-const PREVIOUS_SHELL_REVISION = '0.24.0-host.4';
+const SHELL_REVISION = '0.24.0-host.6';
+const PREVIOUS_SHELL_REVISION = '0.24.0-host.5';
 // State is origin-readable, so a cache name from it is never trusted merely
 // because it looks like a revision. Retain exactly the directly preceding
 // v0.24 host shell for a verified rollback, while discarding the incompatible
