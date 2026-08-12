@@ -181,10 +181,11 @@ export default function AgentWorkspace({
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
     const nextMode: AgentMode = event.key === 'ArrowLeft' || event.key === 'Home' ? 'chat' : 'tool'
+    const tabList = event.currentTarget.closest('[role="tablist"]')
     setMobileDrawer(null)
     onModeChange(nextMode)
     requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(`[data-agent-mode-tab="${nextMode}"]`)?.focus()
+      tabList?.querySelector<HTMLButtonElement>(`[data-agent-mode-tab="${nextMode}"]`)?.focus()
     })
   }
 
@@ -199,33 +200,6 @@ export default function AgentWorkspace({
 
   return (
     <div className="relative flex h-[calc(100dvh-6.5rem)] min-h-[32rem] flex-col overflow-hidden rounded-3xl border border-gray-200/80 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-950/80 dark:shadow-[0_20px_70px_rgba(0,0,0,0.28)]">
-      {capabilities.modeSwitching && (
-        <div data-agent-mode-switcher className="absolute left-1/2 top-3 z-20 hidden -translate-x-1/2 xl:flex" role="tablist" aria-label="Agent 模式">
-          <div className="inline-flex rounded-xl border border-gray-200 bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/[0.08] dark:bg-gray-900/90">
-            {(['chat', 'tool'] as const).map((candidateMode) => (
-              <button
-                key={candidateMode}
-                type="button"
-                role="tab"
-                data-agent-mode-tab={candidateMode}
-                aria-selected={mode === candidateMode}
-                aria-controls={`agent-${candidateMode}-panel`}
-                tabIndex={mode === candidateMode ? 0 : -1}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  mode === candidateMode
-                    ? 'bg-blue-500 text-white shadow-sm'
-                    : 'text-gray-500 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'
-                }`}
-                onClick={() => onModeChange(candidateMode)}
-                onKeyDown={handleModeKeyDown}
-              >
-                {candidateMode === 'chat' ? 'Chat' : 'Tool'}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200/80 px-2 xl:hidden dark:border-white/[0.08]">
         <button
           ref={historyTriggerRef}
@@ -301,7 +275,32 @@ export default function AgentWorkspace({
           )}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col bg-white dark:bg-gray-950">
-          <div className="hidden h-12 shrink-0 border-b border-gray-200/80 xl:block dark:border-white/[0.08]" aria-hidden="true" />
+          <div data-agent-desktop-mode-header className="hidden h-12 shrink-0 items-center justify-center border-b border-gray-200/80 xl:flex dark:border-white/[0.08]">
+            {capabilities.modeSwitching ? (
+              <div data-agent-mode-switcher className="inline-flex rounded-xl border border-gray-200 bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/[0.08] dark:bg-gray-900/90" role="tablist" aria-label="Agent 模式">
+                {(['chat', 'tool'] as const).map((candidateMode) => (
+                  <button
+                    key={candidateMode}
+                    type="button"
+                    role="tab"
+                    data-agent-mode-tab={candidateMode}
+                    aria-selected={mode === candidateMode}
+                    aria-controls={`agent-${candidateMode}-panel`}
+                    tabIndex={mode === candidateMode ? 0 : -1}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      mode === candidateMode
+                        ? 'bg-blue-500 text-white shadow-sm'
+                        : 'text-gray-500 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'
+                    }`}
+                    onClick={() => onModeChange(candidateMode)}
+                    onKeyDown={handleModeKeyDown}
+                  >
+                    {candidateMode === 'chat' ? 'Chat' : 'Tool'}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <div className="min-h-0 flex-1"><AgentMainWorkspace mode={mode} chatTask={chatTask} chatConversationTasks={chatConversationTasks} toolTask={selectedTaskByMode.tool} /></div>
           {active ? composer : null}
         </div>

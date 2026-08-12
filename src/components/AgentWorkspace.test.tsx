@@ -64,6 +64,9 @@ describe('AgentWorkspace', () => {
 
     expect(markup).toContain('data-agent-mobile-drawer-trigger="history"')
     expect(markup).toContain('data-agent-mobile-drawer-trigger="templates"')
+    expect(markup).toContain('data-agent-desktop-mode-header="true"')
+    expect(markup).toContain('data-agent-mode-switcher="true" class="inline-flex')
+    expect(markup).not.toContain('data-agent-mode-switcher="true" class="absolute')
     expect(markup).toContain('data-component="agent-history"')
     expect(markup).toContain('data-component="agent-main"')
     expect(markup).toContain('aria-label="Agent 模式"')
