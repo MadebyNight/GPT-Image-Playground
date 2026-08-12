@@ -4,15 +4,25 @@ import type { TaskRecord } from '../types'
 import { DEFAULT_PARAMS } from '../types'
 
 vi.mock('../store', () => ({
-  useStore: <T,>(selector: (state: { toggleTaskSelection: () => void; settings: { alwaysShowRetryButton: boolean } }) => T) =>
+  useStore: <T,>(selector: (state: {
+    toggleTaskSelection: () => void
+    settings: { alwaysShowRetryButton: boolean }
+    setMaskEditorImageId: () => void
+    setConfirmDialog: () => void
+  }) => T) =>
     selector({
       toggleTaskSelection: vi.fn(),
       settings: { alwaysShowRetryButton: true },
+      setMaskEditorImageId: vi.fn(),
+      setConfirmDialog: vi.fn(),
     }),
   ensureImageThumbnailCached: vi.fn(async () => undefined),
   subscribeImageThumbnail: vi.fn(() => vi.fn()),
   updateTaskInStore: vi.fn(),
   retryTask: vi.fn(),
+  reuseConfig: vi.fn(),
+  editOutputs: vi.fn(),
+  removeTask: vi.fn(),
 }))
 
 import TaskCard from './TaskCard'
@@ -52,6 +62,7 @@ describe('TaskCard', () => {
     expect(markup).toContain('title="复用输入与参数"')
     expect(markup).toContain('title="编辑输出"')
     expect(markup).toContain('title="在 OpenShop 中高级编辑"')
+    expect(markup).toContain('title="遮罩编辑"')
     expect(markup).toContain('高级编辑')
     expect(markup).toContain('title="删除记录"')
   })

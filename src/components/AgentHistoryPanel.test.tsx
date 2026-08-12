@@ -24,6 +24,7 @@ const capturedTaskCards: Array<{
   selectionEnabled?: boolean
   isSelected?: boolean
   onClick: () => void
+  onDelete?: () => void
 }> = []
 const setDetailTaskId = vi.fn()
 
@@ -192,6 +193,7 @@ describe('AgentHistoryPanel', () => {
       selectionEnabled: false,
       isSelected: true,
     })
+    expect(capturedTaskCards[0].onDelete).toBeUndefined()
 
     capturedTaskCards[0].onClick()
 

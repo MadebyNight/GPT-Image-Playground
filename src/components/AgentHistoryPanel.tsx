@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { editOutputs, removeTask, reuseConfig, useStore } from '../store'
+import { editOutputs, reuseConfig, useStore } from '../store'
 import { filterAgentTasksByMode, getAgentConversationId, getConversationTasks } from '../lib/agentConversation'
 import { filterAndSortTasks } from '../lib/taskFilters'
 import type { AgentMode, TaskRecord } from '../types'
@@ -37,7 +37,6 @@ export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, on
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
-  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
   const filteredTasks = useMemo(
     () => filterAndSortTasks(filterAgentTasksByMode(tasks, mode), { searchQuery, filterStatus, filterFavorite }),
@@ -79,16 +78,6 @@ export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, on
     return mode === 'chat' ? getAgentConversationId(activeTask) : activeTask.id
   }, [activeTaskId, mode, tasks])
 
-  const handleDelete = (task: TaskRecord) => {
-    setConfirmDialog({
-      title: '删除记录',
-      message: '确定要删除这条记录吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
-      action: () => {
-        void removeTask(task)
-      },
-    })
-  }
-
   return (
     <aside className="flex h-full min-h-0 flex-col" aria-labelledby="agent-history-title">
       <div className="sticky top-0 z-10 border-b border-gray-100 bg-gray-50/95 p-4 backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/95">
@@ -128,7 +117,6 @@ export default function AgentHistoryPanel({ mode, activeTaskId, onSelectTask, on
                 onClick={() => onSelectTask(conversation.latestTaskId)}
                 onReuse={() => void reuseConfig(conversation.task)}
                 onEditOutputs={() => void editOutputs(conversation.task)}
-                onDelete={() => handleDelete(conversation.task)}
               />
               {mode === 'chat' && conversation.turnCount > 1 && (
                 <span className="pointer-events-none absolute right-2 top-2 rounded-full border border-white/70 bg-gray-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur dark:border-white/10">

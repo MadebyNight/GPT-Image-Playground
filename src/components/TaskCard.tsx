@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTaskInStore, retryTask } from '../store'
+import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
-import { getRuntimeConfigState, isServerApiConfigEnabled } from '../lib/serverApiConfig'
 import { CodeIcon } from './icons'
+import TaskActionRow from './TaskActionRow'
 
 export type TaskCardVariant = 'default' | 'compact'
 
@@ -14,7 +14,7 @@ interface Props {
   onReuse: () => void
   onEditOutputs: () => void
   onAdvancedEdit?: (imageId: string, taskId: string) => void
-  onDelete: () => void
+  onDelete?: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
   isSelected?: boolean
   variant?: TaskCardVariant
@@ -42,8 +42,6 @@ export default function TaskCard({
   const [swipeActionActive, setSwipeActionActive] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
-  const runtimeConfigState = getRuntimeConfigState()
-  const serverManaged = isServerApiConfigEnabled() || runtimeConfigState.status !== 'ready'
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
   const suppressClickUntilRef = useRef(0)
@@ -475,119 +473,15 @@ export default function TaskCard({
                 </span>
               )}
             </div>
-            {/* 操作按钮 */}
-            <div
-              className="mt-0.5 flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-1"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {task.origin !== 'restricted-agent' && task.origin !== 'openshop' && ((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
-                <button
-                  onClick={() => retryTask(task)}
-                  className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
-                  title="重试任务"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-              )}
-              <button
-                onClick={() =>
-                  updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
-                }
-                className={`p-1.5 rounded-md transition ${
-                  task.isFavorite
-                    ? 'text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
-                    : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
-                }`}
-                title={task.isFavorite ? '取消收藏' : '收藏记录'}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={task.isFavorite ? 'currentColor' : 'none'}
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
-                  />
-                </svg>
-              </button>
-              <button
-                onClick={onReuse}
-                className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
-                title={serverManaged ? '复用输入与参数' : '复用配置'}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                  />
-                </svg>
-              </button>
-              <button
-                onClick={onEditOutputs}
-                className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-950/30 text-gray-400 hover:text-green-500 transition disabled:opacity-30"
-                title="编辑输出"
-                disabled={!task.outputImages?.length}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const imageId = task.outputImages?.[0]
-                  if (!imageId) return
-                  onAdvancedEdit?.(imageId, task.id)
-                }}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-violet-500/10 dark:hover:text-violet-300"
-                title="在 OpenShop 中高级编辑"
-                disabled={!task.outputImages?.length}
-              >
-                <span>高级编辑</span>
-              </button>
-              <button
-                onClick={onDelete}
-                className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500 transition"
-                title="删除记录"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
-            </div>
+            <TaskActionRow
+              task={task}
+              presentation="compact"
+              alwaysShowRetry={settings.alwaysShowRetryButton}
+              onReuse={onReuse}
+              onEditOutputs={onEditOutputs}
+              onAdvancedEdit={onAdvancedEdit}
+              onDelete={onDelete}
+            />
           </div>
         </div>
       </div>

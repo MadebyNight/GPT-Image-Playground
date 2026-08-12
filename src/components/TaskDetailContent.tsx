@@ -1,19 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { TaskRecord } from '../types'
 import {
-  editOutputs,
   ensureImageCached,
   getCachedImage,
-  removeTask,
-  retryTask,
-  reuseConfig,
-  updateTaskInStore,
   useStore,
 } from '../store'
 import { DetailParamValue } from '../lib/paramDisplay'
 import { formatImageRatio } from '../lib/size'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { getOpenShopHash } from '../lib/openshopRoute'
+import TaskActionRow from './TaskActionRow'
 
 interface TaskDetailContentProps {
   task: TaskRecord
@@ -31,8 +26,6 @@ export default function TaskDetailContent({
   onAdvancedEdit,
 }: TaskDetailContentProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
-  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
-  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
   const [imageIndex, setImageIndex] = useState(0)
   const [outputSrc, setOutputSrc] = useState('')
@@ -120,46 +113,6 @@ export default function TaskDetailContent({
     return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
   }, [isRecovering, now, task.createdAt, task.elapsed, task.status])
 
-  const closeIfModal = () => {
-    if (presentation === 'modal') onRequestClose?.()
-  }
-
-  const focusInputEditor = () => {
-    requestAnimationFrame(() => {
-      const inputEditor = document.querySelector<HTMLElement>('[data-input-bar] [contenteditable="true"]')
-      inputEditor?.focus()
-      inputEditor?.scrollIntoView({ block: 'nearest' })
-    })
-  }
-
-  const handleReuse = () => {
-    void reuseConfig(task).then(focusInputEditor)
-    closeIfModal()
-  }
-
-  const handleEditOutputs = () => {
-    void editOutputs(task).then(focusInputEditor)
-    closeIfModal()
-  }
-
-  const handleMaskEditCurrentOutput = () => {
-    if (!outputImageId) return
-    setMaskEditorImageId(outputImageId)
-    closeIfModal()
-  }
-
-  const handleAdvancedEdit = () => {
-    if (!outputImageId) return
-
-    if (onAdvancedEdit) {
-      onAdvancedEdit(outputImageId, task.id)
-    } else {
-      window.location.hash = getOpenShopHash(outputImageId, task.id)
-    }
-
-    closeIfModal()
-  }
-
   const handleCopyPrompt = async () => {
     if (!task.prompt) return
     try {
@@ -189,17 +142,6 @@ export default function TaskDetailContent({
     } catch (err) {
       showToast(getClipboardFailureMessage('复制原始响应失败', err), 'error')
     }
-  }
-
-  const handleDelete = () => {
-    closeIfModal()
-    setConfirmDialog({
-      title: '删除记录',
-      message: '确定要删除这条记录吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
-      action: () => {
-        void removeTask(task).then(onDeleteCommitted)
-      },
-    })
   }
 
   return (
@@ -373,31 +315,14 @@ export default function TaskDetailContent({
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-4 dark:border-white/[0.08]">
-          <button type="button" className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400" onClick={handleReuse}>
-            复用配置
-          </button>
-          <button type="button" disabled={!task.outputImages.length} className="rounded-xl bg-green-50 px-3 py-2 text-sm font-medium text-green-600 hover:bg-green-100 disabled:opacity-40 dark:bg-green-500/10 dark:text-green-400" onClick={handleEditOutputs}>
-            编辑输出
-          </button>
-          <button type="button" disabled={!outputImageId} className="inline-flex items-center gap-1 rounded-xl bg-violet-50 px-3 py-2 text-sm font-medium text-violet-600 hover:bg-violet-100 disabled:opacity-40 dark:bg-violet-500/10 dark:text-violet-300" onClick={handleAdvancedEdit}>
-            高级编辑
-          </button>
-          <button type="button" disabled={!outputImageId} className="rounded-xl bg-purple-50 px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-100 disabled:opacity-40 dark:bg-purple-500/10 dark:text-purple-400" onClick={handleMaskEditCurrentOutput}>
-            遮罩编辑
-          </button>
-          <button type="button" className="rounded-xl bg-gray-50 px-3 py-2 text-sm font-medium text-gray-500 hover:bg-yellow-50 hover:text-yellow-500 dark:bg-white/[0.04]" onClick={() => updateTaskInStore(task.id, { isFavorite: !task.isFavorite })}>
-            {task.isFavorite ? '取消收藏' : '收藏'}
-          </button>
-          {task.origin !== 'restricted-agent' && task.origin !== 'openshop' && (
-            <button type="button" className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400" onClick={() => { retryTask(task); closeIfModal() }}>
-              重试
-            </button>
-          )}
-          <button type="button" className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400" onClick={handleDelete}>
-            删除记录
-          </button>
-        </div>
+        <TaskActionRow
+          task={task}
+          presentation={presentation}
+          outputImageId={outputImageId}
+          onAdvancedEdit={onAdvancedEdit}
+          onRequestClose={onRequestClose}
+          onDeleteCommitted={onDeleteCommitted}
+        />
       </div>
     </article>
   )
