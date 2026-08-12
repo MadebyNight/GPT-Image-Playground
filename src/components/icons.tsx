@@ -1,4 +1,24 @@
 import type { SVGProps } from 'react'
+export {
+  ArrowDown as ArrowDownIcon,
+  Bot as BotIcon,
+  CircleAlert as CircleAlertIcon,
+  CircleCheck as CircleCheckIcon,
+  History as HistoryIcon,
+  Image as ImageIcon,
+  LayoutTemplate as LayoutTemplateIcon,
+  LoaderCircle as LoaderCircleIcon,
+  Paintbrush as MaskEditIcon,
+  PanelLeftClose as PanelLeftCloseIcon,
+  PanelLeftOpen as PanelLeftOpenIcon,
+  PanelRightClose as PanelRightCloseIcon,
+  PanelRightOpen as PanelRightOpenIcon,
+  RotateCcw as RotateCcwIcon,
+  Sparkles as SparklesIcon,
+  Star as StarIcon,
+  User as UserIcon,
+  Undo2 as ReuseIcon,
+} from 'lucide-react'
 
 export function CopyIcon(props: SVGProps<SVGSVGElement>) {
   return (
