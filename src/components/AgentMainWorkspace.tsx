@@ -1,9 +1,25 @@
-import { useMemo } from 'react'
+import type { ReactNode } from 'react'
+import { getRestrictedAgentPlanOperation } from '../lib/restrictedAgentApi'
 import { useRestrictedAgentStore } from '../restrictedAgentStore'
-import type { AgentMode, OpenShopToolLocalRunStatus, RestrictedAgentExecutionStatus, TaskRecord } from '../types'
+import { getComposerDraftSnapshot, useStore } from '../store'
+import type {
+  AgentMode,
+  OpenShopToolLocalRun,
+  OpenShopToolLocalRunStatus,
+  RestrictedAgentExecution,
+  RestrictedAgentExecutionStatus,
+  RestrictedAgentPlan,
+  TaskRecord,
+} from '../types'
+import AgentConversationStream from './AgentConversationStream'
+import AgentExecutionDetails from './AgentExecutionDetails'
+import AgentImagePreview from './AgentImagePreview'
 import AgentPlanCard from './AgentPlanCard'
+import AgentResultReply, {
+  type AgentResultStatus,
+} from './AgentResultReply'
 import LegacyAgentMainWorkspace from './LegacyAgentMainWorkspace'
-import TaskDetailContent from './TaskDetailContent'
+import TaskActionRow from './TaskActionRow'
 
 interface AgentMainWorkspaceProps {
   mode: AgentMode
@@ -32,176 +48,391 @@ const LOCAL_RUN_STATUS_LABELS: Record<OpenShopToolLocalRunStatus, string> = {
   expired: 'OpenShop 临时导出结果已过期',
 }
 
+const recoveryButtonClassName = 'inline-flex min-h-11 items-center rounded-xl border border-current px-3 py-2 text-sm font-medium transition hover:bg-current/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+
+function getExecutionTone(status: RestrictedAgentExecutionStatus): AgentResultStatus['tone'] {
+  if (status === 'completed') return 'success'
+  if (status === 'failed' || status === 'failed_unknown' || status === 'cancelled') return 'error'
+  return 'progress'
+}
+
+function getLocalRunTone(status: OpenShopToolLocalRunStatus): AgentResultStatus['tone'] {
+  if (status === 'completed') return 'success'
+  if (status === 'exported') return 'warning'
+  if (status === 'cancelled' || status === 'failed' || status === 'interrupted' || status === 'expired') return 'error'
+  return 'progress'
+}
+
+function getTaskStatus(task: TaskRecord): AgentResultStatus {
+  if (task.status === 'done') {
+    return {
+      label: task.origin === 'openshop' ? 'OpenShop 编辑完成' : '任务完成',
+      detail: task.elapsed == null ? undefined : `耗时 ${(task.elapsed / 1000).toFixed(1)} 秒`,
+      tone: 'success',
+    }
+  }
+  if (task.status === 'error') {
+    const localStatus = task.agentLocalRunStatus
+    return {
+      label: localStatus ? LOCAL_RUN_STATUS_LABELS[localStatus] : '任务失败',
+      tone: 'error',
+    }
+  }
+  return { label: '任务执行中，等待状态恢复', tone: 'progress' }
+}
+
+function getPlanPrompt(plan: RestrictedAgentPlan | null): string | undefined {
+  if (!plan) return undefined
+  const operation = getRestrictedAgentPlanOperation(plan)
+  if (operation.type === 'image.generate' || operation.type === 'image.edit') {
+    return operation.generation.exactPrompt
+  }
+  return undefined
+}
+
+function PlanDetails({ plan }: { plan: RestrictedAgentPlan }) {
+  const operation = getRestrictedAgentPlanOperation(plan)
+  return (
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">摘要</dt>
+        <dd className="mt-0.5 text-gray-700 dark:text-gray-200">{plan.summary}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">Operation</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{operation.type}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">计划</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{plan.id} · v{plan.version}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">策略</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{plan.policyVersion}</dd>
+      </div>
+    </dl>
+  )
+}
+
+function ParameterDetails({ task }: { task: TaskRecord }) {
+  const source = [task.apiProfileName, task.apiModel].filter(Boolean).join(' · ')
+  return (
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      <div><dt className="text-gray-400 dark:text-gray-500">尺寸</dt><dd>{task.params.size}</dd></div>
+      <div><dt className="text-gray-400 dark:text-gray-500">质量</dt><dd>{task.params.quality}</dd></div>
+      <div><dt className="text-gray-400 dark:text-gray-500">格式</dt><dd>{task.params.output_format}</dd></div>
+      <div><dt className="text-gray-400 dark:text-gray-500">数量</dt><dd>{task.params.n}</dd></div>
+      {source ? <div className="sm:col-span-2"><dt className="text-gray-400 dark:text-gray-500">来源</dt><dd>{source}</dd></div> : null}
+    </dl>
+  )
+}
+
+function RunDetails({
+  task,
+  execution,
+  localRun,
+}: {
+  task: TaskRecord | null
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+}) {
+  const executionId = execution?.id ?? task?.agentExecutionId
+  const executionStatus = execution?.status
+  const runId = localRun?.id ?? task?.agentRunId ?? task?.agentLocalRunId
+  const runStatus = localRun?.status ?? task?.agentLocalRunStatus
+  const saveStatus = localRun?.saveStatus ?? task?.agentLocalSaveStatus
+  if (!executionId && !runId) return null
+
+  return (
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      {executionId ? (
+        <div>
+          <dt className="text-gray-400 dark:text-gray-500">执行 ID</dt>
+          <dd className="break-all font-mono">{executionId}{executionStatus ? ` · ${executionStatus}` : ''}</dd>
+        </div>
+      ) : null}
+      {runId ? (
+        <div>
+          <dt className="text-gray-400 dark:text-gray-500">本地 Run</dt>
+          <dd className="break-all font-mono">{runId}{runStatus ? ` · ${runStatus}` : ''}{saveStatus ? ` / ${saveStatus}` : ''}</dd>
+        </div>
+      ) : null}
+    </dl>
+  )
+}
+
+interface ToolExecutionDetailsProps {
+  task: TaskRecord | null
+  plan: RestrictedAgentPlan | null
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+  onOpenImage: (imageId: string, imageIds: string[]) => void
+}
+
+function ToolExecutionDetails({ task, plan, execution, localRun, onOpenImage }: ToolExecutionDetailsProps) {
+  const referenceImageIds = task?.inputImageIds ?? []
+  const prompt = task?.agentOriginalRequest || plan?.originalRequest || task?.prompt
+  const revisedPrompt = task?.outputImages
+    .map((imageId) => task.revisedPromptByImage?.[imageId]?.trim())
+    .find(Boolean) || getPlanPrompt(plan)
+  const runDetails = <RunDetails task={task} execution={execution} localRun={localRun} />
+
+  return (
+    <AgentExecutionDetails
+      prompt={prompt}
+      revisedPrompt={revisedPrompt && revisedPrompt !== prompt ? revisedPrompt : undefined}
+      references={referenceImageIds.length ? (
+        <div className="flex flex-wrap gap-2">
+          {referenceImageIds.map((imageId, index) => (
+            <AgentImagePreview
+              key={imageId}
+              imageId={imageId}
+              imageIds={referenceImageIds}
+              alt={`参考图 ${index + 1}`}
+              onOpen={onOpenImage}
+            />
+          ))}
+        </div>
+      ) : undefined}
+      parameters={task ? <ParameterDetails task={task} /> : undefined}
+      plan={plan ? <PlanDetails plan={plan} /> : undefined}
+      run={runDetails}
+      rawImageUrls={task?.rawImageUrls}
+      rawResponse={task?.rawResponsePayload}
+    />
+  )
+}
+
+interface LiveReplyState {
+  status?: AgentResultStatus
+  assistantText?: ReactNode
+  errorMessage?: ReactNode
+  recoveryActions?: ReactNode
+}
+
+function getLiveReplyState({
+  phase,
+  execution,
+  localRun,
+  error,
+  retryOpenShopSave,
+  returnToEditing,
+  cancelExecution,
+}: {
+  phase: string
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+  error: string | null
+  retryOpenShopSave: () => Promise<string | null>
+  returnToEditing: () => void
+  cancelExecution: () => Promise<void>
+}): LiveReplyState {
+  if (phase === 'planning') {
+    return {
+      assistantText: 'Planner 正在生成可审查的执行计划，此阶段不会调用图片接口。',
+      status: { label: '规划中', tone: 'progress' },
+    }
+  }
+
+  if (execution) {
+    const terminal = ['failed', 'failed_unknown', 'cancelled'].includes(execution.status)
+    return {
+      status: {
+        label: STATUS_LABELS[execution.status],
+        detail: `执行 ID：${execution.id}`,
+        tone: getExecutionTone(execution.status),
+      },
+      errorMessage: execution.error?.message || (terminal ? error : undefined),
+      recoveryActions: execution.status === 'queued' || execution.status === 'executing' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void cancelExecution() }}>
+          尝试取消
+        </button>
+      ) : terminal ? (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改并重新规划
+        </button>
+      ) : undefined,
+    }
+  }
+
+  if (localRun) {
+    const terminal = ['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status)
+    return {
+      status: {
+        label: LOCAL_RUN_STATUS_LABELS[localRun.status],
+        detail: `本地 Run：${localRun.id}`,
+        tone: getLocalRunTone(localRun.status),
+      },
+      errorMessage: localRun.error?.message || (localRun.status === 'exported' || terminal ? error : undefined),
+      recoveryActions: localRun.status === 'exported' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void retryOpenShopSave() }}>
+          仅重试保存
+        </button>
+      ) : localRun.status === 'saving' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void cancelExecution() }}>
+          取消保存
+        </button>
+      ) : terminal ? (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改并重新规划
+        </button>
+      ) : undefined,
+    }
+  }
+
+  if (phase === 'expired' || phase === 'stale') {
+    return {
+      status: { label: phase === 'expired' ? '计划已过期' : '计划已过时', tone: 'warning' },
+      errorMessage: error || (phase === 'expired'
+        ? '计划已过期。返回修改后重新生成计划，旧计划不会被执行。'
+        : '输入已变化。返回修改后重新生成计划，旧计划不会被确认。'),
+    }
+  }
+
+  if (phase === 'failed' && error) {
+    return {
+      status: { label: 'Agent 流程失败', tone: 'error' },
+      errorMessage: error,
+      recoveryActions: (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改
+        </button>
+      ),
+    }
+  }
+
+  return {}
+}
+
 function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const phase = useRestrictedAgentStore((state) => state.phase)
-  const plan = useRestrictedAgentStore((state) => state.plan)
-  const execution = useRestrictedAgentStore((state) => state.execution)
+  const livePlan = useRestrictedAgentStore((state) => state.plan)
+  const liveExecution = useRestrictedAgentStore((state) => state.execution)
   const flowTaskId = useRestrictedAgentStore((state) => state.taskId)
-  const error = useRestrictedAgentStore((state) => state.error)
+  const liveError = useRestrictedAgentStore((state) => state.error)
   const assetBindings = useRestrictedAgentStore((state) => state.assetBindings)
-  const localRun = useRestrictedAgentStore((state) => state.localRun)
+  const liveLocalRun = useRestrictedAgentStore((state) => state.localRun)
   const confirmAndExecute = useRestrictedAgentStore((state) => state.confirmAndExecute)
   const retryOpenShopSave = useRestrictedAgentStore((state) => state.retryOpenShopSave)
   const returnToEditing = useRestrictedAgentStore((state) => state.returnToEditing)
   const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
+  const setLightboxImageId = useStore((state) => state.setLightboxImageId)
 
-  const showPlanningFlow = phase === 'planning' || phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale' || (phase === 'failed' && !execution && !localRun)
-  const showExecutionFlow = Boolean((execution || localRun) && (!task || task.id === flowTaskId))
-  const requestText = plan?.originalRequest || task?.agentOriginalRequest || task?.prompt || ''
-  const planForTask = useMemo(() => plan ?? task?.agentPlanSnapshot ?? null, [plan, task?.agentPlanSnapshot])
-
-  if (!task && !showPlanningFlow && !showExecutionFlow) {
-    return (
-      <section className="flex h-full min-h-[28rem] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white/70 p-6 text-center dark:border-white/[0.08] dark:bg-gray-900/70" aria-labelledby="tool-agent-workspace-title">
-        <div>
-          <h2 id="tool-agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">Tool Agent 工作区</h2>
-          <p className="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
-            输入图片需求后先生成执行计划。你确认 Prompt、参数和步骤后，Gateway 才会调用图片接口。
-          </p>
-        </div>
-      </section>
-    )
-  }
+  const liveFlowMatchesSelection = !task || task.id === flowTaskId
+  const plan = liveFlowMatchesSelection ? livePlan ?? task?.agentPlanSnapshot ?? null : task?.agentPlanSnapshot ?? null
+  const execution = liveFlowMatchesSelection ? liveExecution : null
+  const localRun = liveFlowMatchesSelection ? liveLocalRun : null
+  const hasLiveFlow = liveFlowMatchesSelection && (
+    phase !== 'idle' || Boolean(livePlan || liveExecution || liveLocalRun || liveError)
+  )
+  const hasConversation = Boolean(task || hasLiveFlow)
+  const liveDraftRequest = hasLiveFlow && !task && !livePlan
+    ? getComposerDraftSnapshot('tool').prompt.trim()
+    : ''
+  const requestText = hasLiveFlow
+    ? livePlan?.originalRequest || task?.agentOriginalRequest || task?.prompt || liveDraftRequest
+    : task?.agentOriginalRequest || task?.prompt || ''
+  const showPlanCard = Boolean(hasLiveFlow && livePlan && (
+    phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale'
+  ))
+  const liveReply = hasLiveFlow
+    ? getLiveReplyState({
+        phase,
+        execution,
+        localRun,
+        error: liveError,
+        retryOpenShopSave,
+        returnToEditing,
+        cancelExecution,
+      })
+    : {}
+  const taskStatus = task ? getTaskStatus(task) : undefined
+  const replyStatus = liveReply.status ?? taskStatus
+  const errorMessage = liveReply.errorMessage ?? (task?.status === 'error' ? task.error : undefined)
+  const completedImages = task?.status === 'done'
+    ? task.outputImages.map((imageId, index) => ({ id: imageId, alt: `生成结果 ${index + 1}` }))
+    : []
+  const taskActionRow = task?.status === 'done'
+    ? <TaskActionRow task={task} presentation="agent" />
+    : undefined
+  const details = plan || task || execution || localRun ? (
+    <ToolExecutionDetails
+      task={task}
+      plan={plan}
+      execution={execution}
+      localRun={localRun}
+      onOpenImage={setLightboxImageId}
+    />
+  ) : undefined
+  const contentVersion = [
+    phase,
+    task?.status,
+    task?.outputImages.length,
+    execution?.status,
+    localRun?.status,
+    localRun?.saveStatus,
+    errorMessage ? String(errorMessage) : '',
+  ].join(':')
 
   return (
-    <section className="h-full min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900" aria-labelledby="tool-agent-workspace-title">
-      <h2 id="tool-agent-workspace-title" className="sr-only">当前 Tool Agent 工作区</h2>
-      <div className="mx-auto max-w-4xl space-y-4">
-        {(showPlanningFlow || showExecutionFlow) && requestText && (
-          <div className="flex justify-end">
-            <div className="max-w-[84%] rounded-2xl bg-blue-500 px-4 py-3 text-sm leading-6 text-white shadow-sm">
-              {requestText}
-            </div>
+    <AgentConversationStream
+      conversationKey={task?.id ?? flowTaskId ?? 'tool-new'}
+      contentVersion={contentVersion}
+      className="h-full"
+      emptyState={(
+        <section className="flex min-h-[28rem] flex-1 items-center justify-center text-center" aria-labelledby="tool-agent-workspace-title">
+          <div>
+            <h2 id="tool-agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">Tool Agent 工作区</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
+              输入图片需求后先生成执行计划。你确认 Prompt、参数和步骤后，Gateway 才会调用图片接口。
+            </p>
           </div>
-        )}
-
-        {phase === 'planning' && (
-          <div className="flex justify-start">
-            <div className="rounded-2xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-              <div className="flex items-center gap-3">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-                Planner 正在生成可审查的执行计划，此阶段不会调用图片接口。
+        </section>
+      )}
+    >
+      {hasConversation ? (
+        <div className="flex flex-1 flex-col justify-end gap-6 pb-4">
+          {requestText ? (
+            <div data-agent-tool-user-message data-selectable-text className="flex justify-end">
+              <div className="max-w-[min(84%,36rem)] whitespace-pre-wrap rounded-2xl bg-blue-500 px-4 py-3 text-sm leading-6 text-white shadow-sm">
+                {requestText}
               </div>
             </div>
-          </div>
-        )}
+          ) : null}
 
-        {plan && (phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale') && (
-          <AgentPlanCard
-            plan={plan}
-            assetBindings={assetBindings}
-            confirming={phase === 'confirming'}
-            stale={phase === 'stale'}
-            onConfirm={() => { void confirmAndExecute() }}
-            onReturnToEditing={returnToEditing}
-          />
-        )}
+          <div data-agent-tool-response data-selectable-text className="flex justify-start">
+            <div className="w-full min-w-0 max-w-[42rem]">
+              {liveReply.assistantText || replyStatus || errorMessage || completedImages.length || taskActionRow ? (
+                <AgentResultReply
+                  assistantText={liveReply.assistantText}
+                  status={replyStatus}
+                  errorMessage={errorMessage}
+                  recoveryActions={liveReply.recoveryActions}
+                  images={completedImages}
+                  onOpenImage={setLightboxImageId}
+                  taskActionRow={taskActionRow}
+                  executionDetails={!showPlanCard ? details : undefined}
+                />
+              ) : null}
 
-        {phase === 'expired' && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-            计划已过期。返回修改后重新生成计划，旧计划不会被执行。
-          </div>
-        )}
-
-        {phase === 'stale' && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-            输入已变化。返回修改后重新生成计划，旧计划不会被确认。
-          </div>
-        )}
-
-        {showExecutionFlow && execution && (
-          <div className="flex justify-start">
-            <div className={`max-w-[88%] rounded-2xl border px-4 py-3 text-sm leading-6 ${
-              execution.status === 'completed'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200'
-                : ['failed', 'failed_unknown', 'cancelled'].includes(execution.status)
-                  ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200'
-                  : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200'
-            }`}>
-              <div className="font-medium">{STATUS_LABELS[execution.status]}</div>
-              <div className="mt-1 text-xs opacity-75">执行 ID：{execution.id}</div>
-              {execution.error?.message && <p className="mt-2">{execution.error.message}</p>}
-              {(execution.status === 'queued' || execution.status === 'executing') && (
-                <button
-                  type="button"
-                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
-                  onClick={() => { void cancelExecution() }}
-                >
-                  尝试取消
-                </button>
-              )}
+              {showPlanCard && livePlan ? (
+                <div className="mt-3">
+                  <AgentPlanCard
+                    plan={livePlan}
+                    assetBindings={assetBindings}
+                    confirming={phase === 'confirming'}
+                    stale={phase === 'stale'}
+                    onConfirm={() => { void confirmAndExecute() }}
+                    onReturnToEditing={returnToEditing}
+                  />
+                  {details ? <div className="mt-4">{details}</div> : null}
+                </div>
+              ) : null}
             </div>
           </div>
-        )}
-
-        {showExecutionFlow && localRun && (
-          <div className="flex justify-start">
-            <div className={`max-w-[88%] rounded-2xl border px-4 py-3 text-sm leading-6 ${
-              localRun.status === 'completed'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200'
-                : ['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status)
-                  ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200'
-                  : localRun.status === 'exported'
-                    ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'
-                    : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200'
-            }`} data-openshop-local-run-status={localRun.status}>
-              <div className="font-medium">{LOCAL_RUN_STATUS_LABELS[localRun.status]}</div>
-              <div className="mt-1 text-xs opacity-75">本地 Run：{localRun.id}</div>
-              {localRun.error?.message && <p className="mt-2">{localRun.error.message}</p>}
-              {localRun.status === 'exported' && (
-                <button
-                  type="button"
-                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
-                  onClick={() => { void retryOpenShopSave() }}
-                >
-                  仅重试保存
-                </button>
-              )}
-              {localRun.status === 'saving' && (
-                <button
-                  type="button"
-                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
-                  onClick={() => { void cancelExecution() }}
-                >
-                  取消保存
-                </button>
-              )}
-              {['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status) && (
-                <button
-                  type="button"
-                  className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium opacity-80 hover:opacity-100"
-                  onClick={returnToEditing}
-                >
-                  返回修改并重新规划
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {error && phase === 'failed' && !execution?.error && !localRun && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
-            <p>{error}</p>
-            <button type="button" className="mt-3 rounded-lg border border-current px-3 py-1.5 text-xs font-medium" onClick={returnToEditing}>
-              返回修改
-            </button>
-          </div>
-        )}
-
-        {task && (!showPlanningFlow || task.id === flowTaskId) && (
-          <>
-            {task.origin === 'restricted-agent' && planForTask && !showExecutionFlow && (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-                已确认计划：{planForTask.summary} · 策略 {planForTask.policyVersion}
-              </div>
-            )}
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
-              <TaskDetailContent task={task} presentation="workspace" />
-            </div>
-          </>
-        )}
-      </div>
-    </section>
+        </div>
+      ) : null}
+    </AgentConversationStream>
   )
 }
 
@@ -210,6 +441,7 @@ export default function AgentMainWorkspace(props: AgentMainWorkspaceProps) {
   return (
     <>
       <div
+        id="agent-chat-panel"
         data-agent-main-mode="chat"
         className={mode === 'chat' ? 'h-full min-h-0' : 'hidden'}
         aria-hidden={mode !== 'chat'}
@@ -217,6 +449,7 @@ export default function AgentMainWorkspace(props: AgentMainWorkspaceProps) {
         <LegacyAgentMainWorkspace task={chatTask} conversationTasks={chatConversationTasks} />
       </div>
       <div
+        id="agent-tool-panel"
         data-agent-main-mode="tool"
         className={mode === 'tool' ? 'h-full min-h-0' : 'hidden'}
         aria-hidden={mode !== 'tool'}

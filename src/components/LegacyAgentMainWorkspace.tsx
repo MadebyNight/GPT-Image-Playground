@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TaskRecord } from '../types'
 import { cancelAgentTask, subscribeAgentProgress, type AgentProgressEvent, type AgentToolStatus } from '../lib/agentExecutor'
+import { useStore } from '../store'
+import AgentConversationStream from './AgentConversationStream'
+import AgentExecutionDetails from './AgentExecutionDetails'
 import AgentImagePreview from './AgentImagePreview'
-import TaskDetailContent from './TaskDetailContent'
-import { ChevronDownIcon } from './icons'
+import AgentResultReply, { type AgentResultImage, type AgentResultStatus } from './AgentResultReply'
+import TaskActionRow from './TaskActionRow'
 
 interface AgentMainWorkspaceProps {
   task: TaskRecord | null
@@ -131,67 +134,76 @@ function getTaskStatusLabel(task: TaskRecord): string {
   return '已完成'
 }
 
-function getTaskStatusColor(task: TaskRecord): string {
-  if (task.status === 'running') return 'bg-blue-500'
-  if (task.status === 'error') return 'bg-red-500'
-  return 'bg-emerald-500'
+function getTaskStatus(task: TaskRecord, session: AgentSessionView): AgentResultStatus {
+  if (task.status === 'running') {
+    return { label: getTaskStatusLabel(task), detail: session.toolStatus === 'queued' ? '等待响应' : undefined, tone: 'progress' }
+  }
+  if (task.status === 'error') return { label: getTaskStatusLabel(task), tone: 'error' }
+  return {
+    label: getTaskStatusLabel(task),
+    detail: task.elapsed == null ? undefined : `${Math.max(0, Math.round(task.elapsed / 1000))} 秒`,
+    tone: 'success',
+  }
 }
 
-interface AgentDisclosureProps {
-  title: string
-  meta?: string
-  children: React.ReactNode
-  testId: string
-}
+function getResultImages(task: TaskRecord, session: AgentSessionView): AgentResultImage[] {
+  if (task.outputImages.length) {
+    return task.outputImages.map((id, index) => ({
+      id,
+      alt: `第 ${task.agentTurn ?? 1} 轮生成结果 ${index + 1}`,
+    }))
+  }
 
-function AgentDisclosure({ title, meta, children, testId }: AgentDisclosureProps) {
-  return (
-    <details data-testid={testId} className="group rounded-xl border border-gray-200 bg-white dark:border-white/[0.08] dark:bg-white/[0.03]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-gray-700 marker:content-none dark:text-gray-200 [&::-webkit-details-marker]:hidden">
-        <span>{title}</span>
-        <span className="flex items-center gap-2 text-xs font-normal text-gray-400 dark:text-gray-500">
-          {meta}
-          <ChevronDownIcon className="h-4 w-4 transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
-        </span>
-      </summary>
-      <div className="border-t border-gray-100 px-4 py-4 dark:border-white/[0.08]">{children}</div>
-    </details>
-  )
-}
+  const partialImage = session.partialImages[session.partialImages.length - 1]
+  if (partialImage) {
+    return [{
+      fallbackSrc: partialImage,
+      alt: 'Agent 流式预览',
+      interactive: false,
+    }]
+  }
 
-function DeferredTaskDetail({ task }: { task: TaskRecord }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <details
-      data-testid="agent-task-detail"
-      className="group rounded-xl border border-gray-200 bg-white dark:border-white/[0.08] dark:bg-white/[0.03]"
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-gray-700 marker:content-none dark:text-gray-200 [&::-webkit-details-marker]:hidden">
-        <span>查看图片与任务操作</span>
-        <ChevronDownIcon className="h-4 w-4 text-gray-400 transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
-      </summary>
-      {expanded && (
-        <div className="border-t border-gray-100 p-3 dark:border-white/[0.08]">
-          <TaskDetailContent task={task} presentation="workspace" />
-        </div>
-      )}
-    </details>
-  )
+  return task.status === 'running'
+    ? [{ alt: '等待 Agent 图片输出', interactive: false }]
+    : []
 }
 
 export default function LegacyAgentMainWorkspace({ task, conversationTasks }: AgentMainWorkspaceProps) {
   const [sessions, setSessions] = useState<Record<string, AgentSessionView>>({})
+  const setLightboxImageId = useStore((state) => state.setLightboxImageId)
   const fallbackTaskIdRef = useRef(task?.id ?? null)
   fallbackTaskIdRef.current = task?.id ?? null
-  const activeSession = useMemo(
-    () => task ? mergeSessionWithTask(task, sessions[task.id]) : null,
-    [sessions, task],
-  )
   const threadTasks = useMemo(
-    () => conversationTasks?.length ? conversationTasks : task ? [task] : [],
+    () => {
+      const tasks = conversationTasks?.length ? conversationTasks : task ? [task] : []
+      return [...tasks].sort((left, right) => {
+        const turnDifference = (left.agentTurn ?? Number.MAX_SAFE_INTEGER) - (right.agentTurn ?? Number.MAX_SAFE_INTEGER)
+        return turnDifference || left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      })
+    },
     [conversationTasks, task],
+  )
+  const threadViews = useMemo(
+    () => threadTasks.map((threadTask) => ({
+      task: threadTask,
+      session: mergeSessionWithTask(threadTask, sessions[threadTask.id]),
+    })),
+    [sessions, threadTasks],
+  )
+  const conversationKey = threadTasks[0]?.agentConversationId ?? task?.agentConversationId ?? task?.id ?? null
+  const contentVersion = useMemo(
+    () => threadViews.map(({ task: threadTask, session }) => [
+      threadTask.id,
+      threadTask.status,
+      threadTask.outputImages.join(','),
+      session.assistantText,
+      session.toolStatus,
+      session.toolMessage,
+      session.partialImages.map((image) => image.length).join(','),
+      session.revisedPrompts.join('\n'),
+      session.error,
+    ].join(':')).join('|'),
+    [threadViews],
   )
 
   useEffect(() => {
@@ -206,150 +218,95 @@ export default function LegacyAgentMainWorkspace({ task, conversationTasks }: Ag
     })
   }, [])
 
-  if (!task) {
-    return (
-      <section className="flex h-full min-h-[28rem] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white/70 p-6 text-center dark:border-white/[0.08] dark:bg-gray-900/70" aria-labelledby="agent-workspace-title">
-        <div>
-          <h2 id="agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">工作区</h2>
-          <p className="mt-2 max-w-sm text-sm leading-6 text-gray-500 dark:text-gray-400">
-            输入提示词开始一段新的对话，或从左侧历史继续已有会话。
-          </p>
-        </div>
-      </section>
-    )
-  }
-
-  const previewImageId = task.outputImages[0]
-  const previewFallbackSrc = activeSession?.partialImages[activeSession.partialImages.length - 1] ?? ''
-  const revisedPrompts = activeSession?.revisedPrompts ?? []
-  const extraOutputImageIds = task.outputImages.slice(1)
-  const hasExecutionDetails = Boolean(
-    activeSession?.toolMessage ||
-    revisedPrompts.length ||
-    extraOutputImageIds.length ||
-    activeSession?.partialImages.length,
-  )
-  const assistantResponseText = getAssistantText(task, activeSession ?? undefined)
-  const executionError = activeSession?.error || task.error
-
   return (
-    <section className="h-full min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 dark:border-white/[0.08] dark:bg-gray-900" aria-labelledby="agent-workspace-title">
+    <section className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-900" aria-labelledby="agent-workspace-title">
       <h2 id="agent-workspace-title" className="sr-only">当前 Agent 工作区</h2>
-      <div className="mx-auto w-full max-w-[42rem] space-y-3 py-1 sm:py-3">
-        <article data-agent-latest-response className="rounded-2xl border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.04]">
-          <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
-            <span className={`h-2 w-2 rounded-full ${getTaskStatusColor(task)}`} aria-hidden="true" />
-            <span>Agent</span>
-            <span className="text-gray-400 dark:text-gray-500">· {getTaskStatusLabel(task)}</span>
+      <AgentConversationStream
+        conversationKey={conversationKey}
+        contentVersion={contentVersion}
+        emptyState={(
+          <div className="flex min-h-[28rem] flex-1 items-center justify-center text-center">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">工作区</h3>
+              <p className="mt-2 max-w-sm text-sm leading-6 text-gray-500 dark:text-gray-400">
+                输入提示词开始一段新的对话，或从左侧历史继续已有会话。
+              </p>
+            </div>
           </div>
-          <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-200">
-            {assistantResponseText}
-          </p>
-          {task.status === 'running' && (
-            <button
-              type="button"
-              data-agent-cancel-task={task.id}
-              className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
-              onClick={() => { cancelAgentTask(task.id) }}
-            >
-              取消生成
-            </button>
-          )}
-          {(previewImageId || previewFallbackSrc || task.status === 'running') && (
-            <AgentImagePreview
-              imageId={previewImageId}
-              fallbackSrc={previewFallbackSrc}
-              alt="本轮生成结果预览"
-              className="mx-auto mt-4 h-56 w-full max-w-md sm:h-64"
-            />
-          )}
-          {executionError && executionError !== assistantResponseText && (
-            <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
-              {executionError}
-            </p>
-          )}
-        </article>
-
-        <AgentDisclosure
-          testId="agent-full-thread"
-          title="完整对话"
-          meta={`${threadTasks.length} 轮`}
-        >
-          <div className="space-y-4">
-            {threadTasks.map((threadTask, index) => (
-              <article key={threadTask.id} data-agent-thread-turn={threadTask.id} className="rounded-xl bg-gray-50 p-3 dark:bg-white/[0.03]">
-                <div className="text-xs font-medium text-gray-400 dark:text-gray-500">
-                  第 {threadTask.agentTurn ?? index + 1} 轮
-                </div>
-                <div className="mt-2 rounded-xl bg-blue-500 px-3 py-2 text-sm leading-6 text-white">
-                  {threadTask.prompt || '（无提示词）'}
-                </div>
-                <div className="mt-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm leading-6 text-gray-700 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200">
-                  {getAssistantText(threadTask, threadTask.id === task.id ? activeSession ?? undefined : undefined)}
-                </div>
-              </article>
-            ))}
-          </div>
-        </AgentDisclosure>
-
-        {hasExecutionDetails && (
-          <AgentDisclosure
-            testId="agent-execution-details"
-            title="执行详情"
-            meta={task.status === 'running' ? '进行中' : '按需查看'}
-          >
-            <div className="space-y-4 text-sm">
-              {activeSession?.toolMessage && (
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
-                  <span className="font-medium">工具状态：</span>{activeSession.toolMessage}
-                </div>
-              )}
-              {revisedPrompts.length > 0 && (
-                <section className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-                  <h3 className="font-medium">工具实际使用的提示词</h3>
-                  <div className="mt-2 space-y-2">
-                    {revisedPrompts.map((prompt, index) => (
-                      <p key={`${prompt}-${index}`} className="whitespace-pre-wrap">{prompt}</p>
-                    ))}
-                  </div>
-                </section>
-              )}
-              {extraOutputImageIds.length > 0 && (
-                <section>
-                  <h3 className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">其余生成图片</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {extraOutputImageIds.map((imageId, index) => (
+        )}
+      >
+        {threadViews.length ? <div className="space-y-8">
+          {threadViews.map(({ task: threadTask, session }, index) => {
+            const assistantText = getAssistantText(threadTask, session)
+            const executionError = session.error || threadTask.error
+            const revisedPrompt = session.revisedPrompts.length
+              ? session.revisedPrompts.map((prompt, promptIndex) => (
+                <p key={`${prompt}-${promptIndex}`}>{prompt}</p>
+              ))
+              : undefined
+            const partialPreviews = session.partialImages.length ? (
+              <div className="flex flex-wrap gap-2">
+                {session.partialImages.slice(-4).map((image, partialIndex) => (
                       <AgentImagePreview
-                        key={imageId}
-                        imageId={imageId}
-                        alt={`本轮其余生成图片 ${index + 2}`}
-                        className="aspect-square w-full"
-                      />
-                    ))}
-                  </div>
-                </section>
-              )}
-              {activeSession?.partialImages.length ? (
-                <section>
-                  <h3 className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">流式预览</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {activeSession.partialImages.slice(-4).map((image, index) => (
-                      <AgentImagePreview
-                        key={`${image.slice(0, 32)}-${index}`}
+                        key={`${image.slice(0, 32)}-${partialIndex}`}
                         fallbackSrc={image}
                         alt="Agent 流式预览"
-                        className="aspect-square w-full"
+                        interactive={false}
                       />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </div>
-          </AgentDisclosure>
-        )}
+                ))}
+              </div>
+            ) : undefined
 
-        <DeferredTaskDetail task={task} />
-      </div>
+            return (
+              <div key={threadTask.id} data-agent-conversation-turn={threadTask.id} className="space-y-4">
+                <div className="flex justify-end">
+                  <div
+                    data-agent-user-message={threadTask.id}
+                    data-selectable-text
+                    className="max-w-[min(84%,36rem)] whitespace-pre-wrap rounded-2xl rounded-br-md bg-blue-500 px-4 py-3 text-sm leading-6 text-white"
+                  >
+                    {threadTask.prompt || '（无提示词）'}
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <AgentResultReply
+                    className="w-full max-w-[40rem]"
+                    assistantText={<span data-selectable-text>{assistantText}</span>}
+                    status={getTaskStatus(threadTask, session)}
+                    errorMessage={executionError}
+                    recoveryActions={threadTask.status === 'running' ? (
+                      <button
+                        type="button"
+                        data-agent-cancel-task={threadTask.id}
+                        className="inline-flex min-h-11 items-center rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
+                        onClick={() => { cancelAgentTask(threadTask.id) }}
+                      >
+                        取消生成
+                      </button>
+                    ) : undefined}
+                    images={getResultImages(threadTask, session)}
+                    onOpenImage={(imageId, imageIds) => setLightboxImageId(imageId, imageIds)}
+                    taskActionRow={threadTask.status === 'running' ? undefined : (
+                      <TaskActionRow task={threadTask} presentation="agent" />
+                    )}
+                    executionDetails={(
+                      <AgentExecutionDetails
+                        prompt={threadTask.prompt || '（无提示词）'}
+                        revisedPrompt={revisedPrompt}
+                        toolMessages={session.toolMessage}
+                        partialPreviews={partialPreviews}
+                      />
+                    )}
+                  />
+                </div>
+                {index < threadViews.length - 1 ? (
+                  <div className="h-px bg-gray-100 dark:bg-white/[0.06]" aria-hidden="true" />
+                ) : null}
+              </div>
+            )
+          })}
+        </div> : undefined}
+      </AgentConversationStream>
     </section>
   )
 }

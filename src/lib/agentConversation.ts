@@ -69,7 +69,14 @@ export function getConversationTasks(tasks: TaskRecord[], anchor: TaskRecord | s
   const conversationId = typeof anchor === 'string' ? anchor : getAgentConversationId(anchor)
   return tasks
     .filter((task) => getAgentModeForTask(task) === 'chat' && getAgentConversationId(task) === conversationId)
-    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .sort((a, b) => {
+      const aTurn = a.agentTurn
+      const bTurn = b.agentTurn
+      if (aTurn !== undefined && bTurn !== undefined && aTurn !== bTurn) return aTurn - bTurn
+      if (aTurn !== undefined && bTurn === undefined) return -1
+      if (aTurn === undefined && bTurn !== undefined) return 1
+      return a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+    })
 }
 
 /**

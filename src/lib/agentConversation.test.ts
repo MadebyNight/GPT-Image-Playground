@@ -54,6 +54,21 @@ describe('agentConversation', () => {
     expect(context).not.toContain('B 的回复')
   })
 
+  it('优先按 agentTurn 排列消息，并为旧记录保留稳定时间顺序', () => {
+    const conversationId = 'conversation-turn-order'
+    const second = { ...task('turn-2', conversationId, 10, '第二轮', '第二轮回复'), agentTurn: 2 }
+    const first = { ...task('turn-1', conversationId, 20, '第一轮', '第一轮回复'), agentTurn: 1 }
+    const legacyA = { ...task('legacy-a', conversationId, 30, '旧记录 A', '旧回复 A'), agentTurn: undefined }
+    const legacyB = { ...task('legacy-b', conversationId, 40, '旧记录 B', '旧回复 B'), agentTurn: undefined }
+
+    expect(getConversationTasks([legacyB, second, legacyA, first], conversationId).map((item) => item.id)).toEqual([
+      'turn-1',
+      'turn-2',
+      'legacy-a',
+      'legacy-b',
+    ])
+  })
+
   it('把没有会话字段的旧任务视为各自独立的会话', () => {
     const legacyA = task('legacy-a', undefined, 1, '旧任务 A', '旧任务 A 的回复')
     const legacyB = task('legacy-b', undefined, 2, '旧任务 B', '旧任务 B 的回复')
