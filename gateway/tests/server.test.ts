@@ -15,6 +15,7 @@ import { hashComposerSnapshot, plannerJsonSchema } from '../src/policy.js';
 import { ResponsesPlanner, type Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
 import type { RestrictedAgentPlanSnapshot } from '../src/types.js';
+import type { WebSearchService } from '../src/webSearch.js';
 import {
   RESTRICTED_EXECUTION_RESPONSE_FIXTURE,
   RESTRICTED_PLAN_RESPONSE_FIXTURE,
@@ -111,7 +112,9 @@ async function makeConfig(overrides: Partial<GatewayConfig> = {}): Promise<Gatew
     maxReferenceImages: 16, maxFileBytes: 1024 * 1024, maxUploadBytes: 4 * 1024 * 1024,
     maxImagePixels: 1_000_000, maxOutputImages: 4, maxQueue: 10, maxConcurrency: 2,
     planRatePerMinute: 20, executeRatePerMinute: 20, imagesRatePerHour: 100,
-    plannerTimeoutMs: 1000, executorTimeoutMs: 1000, logLevel: 'silent', ...overrides,
+    plannerTimeoutMs: 1000, executorTimeoutMs: 1000,
+    webSearchEnabled: false, webSearchBaseUrl: null, webSearchTimeoutMs: 1000, webSearchMaxResults: 5, webSearchRatePerMinute: 20,
+    logLevel: 'silent', ...overrides,
   };
 }
 
@@ -183,10 +186,10 @@ function composerSnapshot(options: {
   });
 }
 
-async function setup(overrides: { config?: Partial<GatewayConfig>; planner?: Planner; executor?: ImageExecutor } = {}) {
+async function setup(overrides: { config?: Partial<GatewayConfig>; planner?: Planner; executor?: ImageExecutor; webSearch?: WebSearchService } = {}) {
   const config = await makeConfig(overrides.config);
   const executor = overrides.executor ?? fakeExecutor();
-  const app = await createApp({ config, planner: overrides.planner ?? createDeterministicPlannerFixture(), executor });
+  const app = await createApp({ config, planner: overrides.planner ?? createDeterministicPlannerFixture(), executor, webSearch: overrides.webSearch });
   apps.push(app);
   const capabilities = await app.inject({ method: 'GET', url: '/v1/capabilities', headers: { host: 'app.internal' } });
   const cookie = capabilities.headers['set-cookie']!.split(';')[0]!;
@@ -295,6 +298,40 @@ describe('two phase gateway', () => {
     expect(hashComposerSnapshot(contractFixture.canonicalComposer.manifest as never))
       .toBe(contractFixture.canonicalComposer.expectedHash);
     expect(normalizeRestrictedPlanResponse(response.json().data)).toEqual(RESTRICTED_PLAN_RESPONSE_FIXTURE);
+  });
+
+  it('开启联网搜索后将受限来源写入冻结计划并传递给 Planner', async () => {
+    const planner = createDeterministicPlannerFixture();
+    const webSearch: WebSearchService = {
+      search: vi.fn(async () => [{
+        title: '参考资料', url: 'https://example.com/reference', description: '用于验证的搜索摘要', engine: 'duckduckgo',
+      }]),
+    };
+    const context = await setup({
+      config: { webSearchEnabled: true, webSearchBaseUrl: 'http://web-search.internal' },
+      planner,
+      webSearch,
+    });
+    const response = await createPlan(context, { request: '生成一张红色图片', webSearchEnabled: 'true' });
+    expect(response.statusCode, response.body).toBe(201);
+    expect(webSearch.search).toHaveBeenCalledWith('生成一张红色图片');
+    expect(response.json().data.webSearch).toEqual({ enabled: true, sources: [{
+      title: '参考资料', url: 'https://example.com/reference', description: '用于验证的搜索摘要', engine: 'duckduckgo',
+    }] });
+    expect(planner.createDraft).toHaveBeenCalledWith(expect.objectContaining({ webSearchSources: [{
+      title: '参考资料', url: 'https://example.com/reference', description: '用于验证的搜索摘要', engine: 'duckduckgo',
+    }] }));
+  });
+
+  it('联网搜索失败时降级为离线计划并保留可见警告', async () => {
+    const context = await setup({
+      config: { webSearchEnabled: true, webSearchBaseUrl: 'http://web-search.internal' },
+      webSearch: { search: vi.fn(async () => { throw new Error('upstream unavailable'); }) },
+    });
+    const response = await createPlan(context, { request: '生成一张红色图片', webSearchEnabled: 'true' });
+    expect(response.statusCode, response.body).toBe(201);
+    expect(response.json().data.webSearch).toEqual({ enabled: true, sources: [] });
+    expect(response.json().data.warnings).toContain('联网搜索未完成：upstream unavailable；本计划按离线信息生成。');
   });
 
   it('旧客户端仍读取原形 v1 generation 计划并可按旧确认语义执行', async () => {

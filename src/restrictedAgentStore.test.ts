@@ -321,6 +321,12 @@ describe('restricted Agent flow store', () => {
     expect(mocks.putTask).not.toHaveBeenCalled()
   })
 
+  it('将当前页面的联网开关作为单次 Tool 规划参数传递', async () => {
+    await useRestrictedAgentStore.getState().createPlanFromCurrentInput(undefined, true)
+
+    expect(mocks.createPlan).toHaveBeenCalledWith(expect.objectContaining({ webSearchEnabled: true }))
+  })
+
   it('从显式 Tool Composer 快照构造完整规范输入', async () => {
     mocks.appState.tasks = [{
       id: 'source-task', prompt: 'source', params: mocks.appState.params, inputImageIds: [], outputImages: ['tool-image'],
@@ -344,6 +350,7 @@ describe('restricted Agent flow store', () => {
       request: 'Tool 独立需求',
       quality: 'medium',
       moderation: 'auto',
+      webSearchEnabled: false,
       inputs: [{
         role: 'reference', browserImageId: 'tool-image', sourceTaskId: 'source-task',
         dataUrl: 'data:image/png;base64,dG9vbA==',

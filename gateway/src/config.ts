@@ -29,6 +29,11 @@ const envSchema = z.object({
   AGENT_IMAGES_RATE_PER_HOUR: numberFromEnv(20, 1, 10000),
   AGENT_PLANNER_TIMEOUT_MS: numberFromEnv(60_000, 1000, 300_000),
   AGENT_EXECUTOR_TIMEOUT_MS: numberFromEnv(180_000, 1000, 900_000),
+  AGENT_WEB_SEARCH_ENABLED: z.enum(['true', 'false']).default('false'),
+  AGENT_WEB_SEARCH_BASE_URL: z.string().url().optional(),
+  AGENT_WEB_SEARCH_TIMEOUT_MS: numberFromEnv(10_000, 1_000, 60_000),
+  AGENT_WEB_SEARCH_MAX_RESULTS: numberFromEnv(5, 1, 10),
+  AGENT_WEB_SEARCH_RATE_PER_MINUTE: numberFromEnv(5, 1, 1000),
   AGENT_LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 }).passthrough();
 
@@ -59,6 +64,11 @@ export interface GatewayConfig {
   imagesRatePerHour: number;
   plannerTimeoutMs: number;
   executorTimeoutMs: number;
+  webSearchEnabled: boolean;
+  webSearchBaseUrl: string | null;
+  webSearchTimeoutMs: number;
+  webSearchMaxResults: number;
+  webSearchRatePerMinute: number;
   logLevel: string;
 }
 
@@ -80,6 +90,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   }
   if (upstream.username || upstream.password || upstream.search || upstream.hash) {
     throw new Error('AGENT_UPSTREAM_BASE_URL 不得包含凭据、查询或片段');
+  }
+  let webSearchBaseUrl: string | null = null;
+  if (value.AGENT_WEB_SEARCH_ENABLED === 'true') {
+    if (!value.AGENT_WEB_SEARCH_BASE_URL) throw new Error('启用联网搜索时必须配置 AGENT_WEB_SEARCH_BASE_URL');
+    const webSearch = new URL(value.AGENT_WEB_SEARCH_BASE_URL);
+    if (!['http:', 'https:'].includes(webSearch.protocol) || webSearch.username || webSearch.password || webSearch.search || webSearch.hash) {
+      throw new Error('AGENT_WEB_SEARCH_BASE_URL 必须是无凭据、无路径的 http/https origin');
+    }
+    if (webSearch.pathname !== '/') throw new Error('AGENT_WEB_SEARCH_BASE_URL 必须是纯 origin，不得包含路径');
+    webSearchBaseUrl = webSearch.origin;
   }
 
   const dataDir = path.resolve(value.AGENT_DATA_DIR);
@@ -110,6 +130,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     imagesRatePerHour: value.AGENT_IMAGES_RATE_PER_HOUR,
     plannerTimeoutMs: value.AGENT_PLANNER_TIMEOUT_MS,
     executorTimeoutMs: value.AGENT_EXECUTOR_TIMEOUT_MS,
+    webSearchEnabled: value.AGENT_WEB_SEARCH_ENABLED === 'true',
+    webSearchBaseUrl,
+    webSearchTimeoutMs: value.AGENT_WEB_SEARCH_TIMEOUT_MS,
+    webSearchMaxResults: value.AGENT_WEB_SEARCH_MAX_RESULTS,
+    webSearchRatePerMinute: value.AGENT_WEB_SEARCH_RATE_PER_MINUTE,
     logLevel: value.AGENT_LOG_LEVEL,
   };
 }

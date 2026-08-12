@@ -401,7 +401,12 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
             </div>
           ) : null}
 
-          <div data-agent-tool-response data-selectable-text className="flex justify-start">
+          <div
+            data-agent-tool-response
+            data-openshop-local-run-status={localRun?.status}
+            data-selectable-text
+            className="flex justify-start"
+          >
             <div className="w-full min-w-0 max-w-[42rem]">
               {liveReply.assistantText || replyStatus || errorMessage || completedImages.length || taskActionRow ? (
                 <AgentResultReply

@@ -72,6 +72,11 @@ services:
       AGENT_IMAGES_RATE_PER_HOUR: ${AGENT_IMAGES_RATE_PER_HOUR:-20}
       AGENT_PLANNER_TIMEOUT_MS: ${AGENT_PLANNER_TIMEOUT_MS:-60000}
       AGENT_EXECUTOR_TIMEOUT_MS: ${AGENT_EXECUTOR_TIMEOUT_MS:-180000}
+      AGENT_WEB_SEARCH_ENABLED: ${AGENT_WEB_SEARCH_ENABLED:-true}
+      AGENT_WEB_SEARCH_BASE_URL: ${AGENT_WEB_SEARCH_BASE_URL:-http://web-search:3210}
+      AGENT_WEB_SEARCH_TIMEOUT_MS: ${AGENT_WEB_SEARCH_TIMEOUT_MS:-10000}
+      AGENT_WEB_SEARCH_MAX_RESULTS: ${AGENT_WEB_SEARCH_MAX_RESULTS:-5}
+      AGENT_WEB_SEARCH_RATE_PER_MINUTE: ${AGENT_WEB_SEARCH_RATE_PER_MINUTE:-5}
       AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
     expose:
       - "3000"
@@ -88,6 +93,38 @@ services:
       start_period: 20s
     stop_grace_period: 30s
     command: ["/bin/sh", "/usr/local/bin/run-agent-gateway.sh"]
+    networks:
+      - agent-network
+
+  web-search:
+    # 上游当前仅保证 latest 标签可拉取；生产环境应镜像到自有仓库并固定 digest。
+    image: ghcr.io/aas-ee/open-web-search:latest
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      MODE: http
+      DEFAULT_SEARCH_ENGINE: ${WEB_SEARCH_DEFAULT_ENGINE:-duckduckgo}
+      ALLOWED_SEARCH_ENGINES: ${WEB_SEARCH_ALLOWED_ENGINES:-duckduckgo,bing,baidu}
+      SEARCH_MODE: request
+      USE_PROXY: ${WEB_SEARCH_USE_PROXY:-false}
+      PROXY_URL: ${WEB_SEARCH_PROXY_URL:-}
+      PORT: 3210
+    command: ["node", "build/index.js", "serve", "--host", "0.0.0.0", "--port", "3210"]
+    expose:
+      - "3210"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - agent-network
 

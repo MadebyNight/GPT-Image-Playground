@@ -1,2 +1,4 @@
 *.sh text eol=lf
 *.envsh text eol=lf
+public/openshop/vendor/fabric-7.4.0.min.js text eol=lf
+public/openshop/index.html text eol=lf

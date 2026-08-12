@@ -53,6 +53,18 @@ export interface PlanInputView {
   height: number;
 }
 
+export interface WebSearchSource {
+  title: string;
+  url: string;
+  description: string;
+  engine: string;
+}
+
+export interface WebSearchReference {
+  enabled: true;
+  sources: WebSearchSource[];
+}
+
 export interface PlanStep {
   title: string;
   operation: 'generate' | 'edit';
@@ -127,6 +139,7 @@ interface RestrictedAgentPlanSnapshotBase {
   assumptions: string[];
   warnings: string[];
   policyVersion: string;
+  webSearch?: WebSearchReference;
 }
 
 export interface LegacyRestrictedAgentPlanSnapshot extends RestrictedAgentPlanSnapshotBase {

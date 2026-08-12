@@ -8,6 +8,7 @@ import type {
   RestrictedAgentPlanSnapshot,
   ToolAgentPlanSnapshot,
   ToolOperation,
+  WebSearchReference,
 } from './types.js';
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -99,6 +100,15 @@ const planBaseShape = {
   assumptions: z.array(z.string()),
   warnings: z.array(z.string()),
   policyVersion: z.string().min(1),
+  webSearch: z.object({
+    enabled: z.literal(true),
+    sources: z.array(z.object({
+      title: z.string().min(1).max(300),
+      url: z.string().url(),
+      description: z.string().max(1_000),
+      engine: z.string().min(1).max(64),
+    }).strict()).max(10),
+  }).strict().optional(),
 };
 const legacyPlanSchema = z.object({
   ...planBaseShape,

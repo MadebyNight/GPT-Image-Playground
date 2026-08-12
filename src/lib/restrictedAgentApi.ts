@@ -6,6 +6,7 @@ import type {
   RestrictedAgentPlanGeneration,
   RestrictedAgentPlanInput,
   RestrictedAgentToolOperation,
+  RestrictedAgentWebSearchReference,
   TaskParams,
   ToolAgentPlan,
 } from '../types'
@@ -36,6 +37,7 @@ export interface RestrictedAgentPlanRequest {
   outputCompression: number | null
   moderation: TaskParams['moderation']
   imageCount: number
+  webSearchEnabled?: boolean
   inputs: RestrictedAgentComposerInput[]
   mask?: {
     targetBrowserImageId: string
@@ -142,6 +144,38 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function decodeWebSearchReference(value: unknown): RestrictedAgentWebSearchReference {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ['enabled', 'sources'])
+    || value.enabled !== true
+    || !Array.isArray(value.sources)) {
+    throw new Error('联网搜索来源 schema 无效')
+  }
+  const sources = value.sources.map((source) => {
+    if (!isRecord(source)
+      || !hasExactKeys(source, ['title', 'url', 'description', 'engine'])
+      || !isNonEmptyString(source.title)
+      || !isNonEmptyString(source.url)
+      || typeof source.description !== 'string'
+      || !isNonEmptyString(source.engine)) {
+      throw new Error('联网搜索来源 schema 无效')
+    }
+    try {
+      const url = new URL(source.url)
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error()
+    } catch {
+      throw new Error('联网搜索来源 URL 无效')
+    }
+    return {
+      title: source.title,
+      url: source.url,
+      description: source.description,
+      engine: source.engine,
+    }
+  })
+  return { enabled: true, sources }
 }
 
 function readApiError(payload: unknown, response: Response) {
@@ -350,7 +384,7 @@ export function decodeRestrictedAgentPlan(value: unknown): RestrictedAgentPlan {
     throw new Error('计划公共字段 schema 无效')
   }
   if (value.schemaVersion === undefined) {
-    if (!hasExactKeys(value, [...commonRequired, 'steps', 'generation'])) throw new Error('旧版计划 schema 无效')
+    if (!hasExactKeys(value, [...commonRequired, 'steps', 'generation'], ['webSearch'])) throw new Error('旧版计划 schema 无效')
     if (!Array.isArray(value.steps) || value.steps.length < 1 || !Array.isArray(value.inputs)) throw new Error('旧版计划 schema 无效')
     const generation = decodeGeneration(value.generation)
     const steps = value.steps.map((step) => {
@@ -366,10 +400,11 @@ export function decodeRestrictedAgentPlan(value: unknown): RestrictedAgentPlan {
       steps,
       generation,
       inputs: value.inputs.map(decodePlanInput),
+      ...(value.webSearch === undefined ? {} : { webSearch: decodeWebSearchReference(value.webSearch) }),
     } as unknown as RestrictedAgentPlan
   }
   if (value.schemaVersion !== 2
-    || !hasExactKeys(value, [...commonRequired, 'schemaVersion', 'composerSnapshotHash', 'operation'])
+    || !hasExactKeys(value, [...commonRequired, 'schemaVersion', 'composerSnapshotHash', 'operation'], ['webSearch'])
     || typeof value.composerSnapshotHash !== 'string'
     || !/^[a-f0-9]{64}$/.test(value.composerSnapshotHash)
     || !Array.isArray(value.inputs)) {
@@ -386,6 +421,7 @@ export function decodeRestrictedAgentPlan(value: unknown): RestrictedAgentPlan {
     schemaVersion: 2,
     operation,
     inputs,
+    ...(value.webSearch === undefined ? {} : { webSearch: decodeWebSearchReference(value.webSearch) }),
   } as unknown as ToolAgentPlan
 }
 
@@ -602,6 +638,7 @@ export async function createRestrictedAgentPlan(input: RestrictedAgentPlanReques
   form.set('outputFormat', input.outputFormat)
   if (input.outputCompression != null) form.set('outputCompression', String(input.outputCompression))
   form.set('imageCount', String(input.imageCount))
+  form.set('webSearchEnabled', String(input.webSearchEnabled === true))
   form.set('composerSnapshot', JSON.stringify(manifest))
 
   input.inputs.forEach((image, index) => {

@@ -341,6 +341,7 @@ describe('AgentMainWorkspace', () => {
     expect(markup).not.toContain('返回修改并重新规划')
     expect(markup).toContain('local-run-1')
     expect(markup).toContain('执行与 Run')
+    expect(markup).toContain('data-openshop-local-run-status="exported"')
   })
 
   it('失败、取消、过期和 stale 的恢复动作保持直接可见', () => {
