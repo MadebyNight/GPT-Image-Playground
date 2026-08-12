@@ -284,6 +284,7 @@ function useIsMobile() {
 interface InputBarProps {
   onTaskSubmitted?: (taskId: string) => void
   layout?: 'default' | 'agent'
+  presentation?: 'fixed' | 'embedded'
   agentMode?: AgentMode
   agentCapabilities?: AgentCapabilities
   /** 当前默认 Agent 会话；为空时下一次提交会创建新会话。 */
@@ -294,9 +295,16 @@ export function getInputBarSubmitRoute(layout: 'default' | 'agent', agentMode: A
   return layout === 'agent' ? agentMode : 'gallery'
 }
 
+export function getInputBarPresentationClass(presentation: 'fixed' | 'embedded') {
+  return presentation === 'embedded'
+    ? 'relative z-20 w-full px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]'
+    : 'fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-[bottom] duration-300 sm:bottom-6 sm:px-4'
+}
+
 export default function InputBar({
   onTaskSubmitted,
   layout = 'default',
+  presentation = 'fixed',
   agentMode = 'chat',
   agentCapabilities,
   agentConversationId = null,
@@ -1745,11 +1753,11 @@ export default function InputBar({
         />
       )}
 
-      <div data-input-bar className={`fixed bottom-4 sm:bottom-6 z-30 w-full px-3 sm:px-4 transition-all duration-300 ${
-        layout === 'agent'
-          ? 'left-1/2 -translate-x-1/2 max-w-3xl xl:left-[calc(50%+1rem)] xl:max-w-[min(54rem,calc(100vw-46rem))]'
-          : 'left-1/2 -translate-x-1/2 max-w-4xl'
-      }`}>
+      <div
+        data-input-bar
+        data-input-bar-presentation={presentation}
+        className={getInputBarPresentationClass(presentation)}
+      >
         {selectedTaskIds.length > 0 && (
           <div className="flex justify-center mb-3">
             <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-gray-200/50 dark:border-white/10 pointer-events-auto">

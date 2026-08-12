@@ -46,8 +46,16 @@ vi.mock('./components/Header', () => ({ default: () => <div data-component="head
 vi.mock('./components/TemplateGallery', () => ({ default: () => <div data-component="template-gallery" /> }))
 vi.mock('./components/SearchBar', () => ({ default: () => <div data-component="search-bar" /> }))
 vi.mock('./components/TaskGrid', () => ({ default: () => <div data-component="task-grid" /> }))
-vi.mock('./components/AgentWorkspace', () => ({ default: ({ mode }: { mode: string }) => <div data-component="agent-workspace" data-mode={mode} /> }))
-vi.mock('./components/InputBar', () => ({ default: ({ agentMode }: { agentMode: string }) => <div data-component="input-bar" data-agent-mode={agentMode} /> }))
+vi.mock('./components/AgentWorkspace', () => ({
+  default: ({ mode, composer }: { mode: string; composer?: React.ReactNode }) => (
+    <div data-component="agent-workspace" data-mode={mode}>{composer}</div>
+  ),
+}))
+vi.mock('./components/InputBar', () => ({
+  default: ({ agentMode, presentation = 'fixed' }: { agentMode: string; presentation?: string }) => (
+    <div data-component="input-bar" data-agent-mode={agentMode} data-presentation={presentation} />
+  ),
+}))
 vi.mock('./components/DetailModal', () => ({ default: () => <div data-component="detail-modal" /> }))
 vi.mock('./components/Lightbox', () => ({ default: () => <div data-component="lightbox" /> }))
 vi.mock('./components/SettingsModal', () => ({ default: () => <div data-component="settings-modal" /> }))
@@ -82,6 +90,7 @@ describe('App workspace entry', () => {
     expect(searchIndex).toBeGreaterThan(-1)
     expect(taskGridIndex).toBeGreaterThan(searchIndex)
     expect(markup).toContain('data-component="input-bar"')
+    expect(markup).toContain('data-presentation="fixed"')
     expect(markup).toContain('role="tablist"')
     expect(markup).toContain('画廊')
     expect(markup).toContain('Agent')
@@ -119,6 +128,8 @@ describe('App workspace entry', () => {
     const markup = renderToStaticMarkup(<App />)
 
     expect(markup).toContain('data-component="agent-workspace"')
+    expect(markup).toContain('data-presentation="embedded"')
+    expect(markup).not.toContain('data-presentation="fixed"')
     expect(markup).not.toContain('data-component="task-grid"')
     expect(markup).not.toContain('role="tablist"')
   })

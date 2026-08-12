@@ -255,17 +255,28 @@ export default function App() {
               activeTaskByMode={activeTaskByMode}
               onActiveTaskChange={setActiveAgentTask}
               onModeChange={changeAgentMode}
+              composer={(
+                <InputBar
+                  presentation="embedded"
+                  layout="agent"
+                  agentMode={agentMode}
+                  agentCapabilities={agentCapabilities}
+                  onTaskSubmitted={(taskId) => setActiveAgentTask(agentMode, taskId)}
+                  agentConversationId={agentMode === 'chat' ? activeAgentConversationId : null}
+                />
+              )}
             />
           </div>
         </div>
       </main>
-      <InputBar
-        layout={workspaceMode === 'agent' ? 'agent' : 'default'}
-        agentMode={agentMode}
-        agentCapabilities={agentCapabilities}
-        onTaskSubmitted={workspaceMode === 'agent' ? (taskId) => setActiveAgentTask(agentMode, taskId) : undefined}
-        agentConversationId={workspaceMode === 'agent' && agentMode === 'chat' ? activeAgentConversationId : null}
-      />
+      {workspaceMode === 'gallery' && (
+        <InputBar
+          presentation="fixed"
+          layout="default"
+          agentMode={agentMode}
+          agentCapabilities={agentCapabilities}
+        />
+      )}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

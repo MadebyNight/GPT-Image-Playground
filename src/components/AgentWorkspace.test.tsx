@@ -51,7 +51,7 @@ import AgentWorkspace from './AgentWorkspace'
 import { getNextAgentTaskIdAfterRemoval } from './AgentWorkspace'
 
 describe('AgentWorkspace', () => {
-  it('renders mobile segments and desktop three-column regions for the selected task', () => {
+  it('renders the responsive shared shell with persisted desktop rails and mobile drawer triggers', () => {
     const markup = renderToStaticMarkup(
       <AgentWorkspace
         mode="chat"
@@ -62,18 +62,33 @@ describe('AgentWorkspace', () => {
       />,
     )
 
-    expect(markup).toContain('aria-label="Agent 工作台分段"')
-    expect(markup).toContain('历史')
-    expect(markup).toContain('工作区')
-    expect(markup).toContain('模板')
+    expect(markup).toContain('data-agent-mobile-drawer-trigger="history"')
+    expect(markup).toContain('data-agent-mobile-drawer-trigger="templates"')
     expect(markup).toContain('data-component="agent-history"')
     expect(markup).toContain('data-component="agent-main"')
-    expect(markup).toContain('data-component="agent-templates"')
     expect(markup).toContain('aria-label="Agent 模式"')
+    expect(markup).toContain('aria-controls="agent-chat-panel"')
     expect(markup).toContain('data-chat-task="task-old"')
     expect(markup).toContain('data-tool-task="task-new"')
-    expect(markup).toContain('grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)_minmax(18rem,22rem)]')
-    expect(markup).toContain('2xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)_minmax(19rem,23rem)]')
+    expect(markup).toContain('grid-cols-[15rem_minmax(0,1fr)_3rem]')
+    expect(markup).toContain('data-agent-history-expanded="true"')
+    expect(markup).toContain('data-agent-template-expanded="false"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('aria-expanded="false"')
+  })
+
+  it('renders the embedded composer inside the central column only while active', () => {
+    const props = {
+      mode: 'chat' as const,
+      capabilities: { chatAllowed: true, chatConfigured: true, chatUsable: true, tool: true, openShopTool: false, defaultMode: 'chat' as const, modeSwitching: true },
+      activeTaskByMode: { chat: 'task-old', tool: 'task-new' },
+      onActiveTaskChange: vi.fn(),
+      onModeChange: vi.fn(),
+      composer: <div data-component="embedded-composer" />,
+    }
+
+    expect(renderToStaticMarkup(<AgentWorkspace {...props} />)).toContain('data-component="embedded-composer"')
+    expect(renderToStaticMarkup(<AgentWorkspace {...props} active={false} />)).not.toContain('data-component="embedded-composer"')
   })
 
   it('single-capability mode hides the switcher and does not expose unavailable mode', () => {
