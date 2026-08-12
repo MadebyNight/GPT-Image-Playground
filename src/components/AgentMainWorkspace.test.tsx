@@ -149,14 +149,33 @@ describe('AgentMainWorkspace', () => {
     expect(markup).not.toContain('data-component="task-detail"')
   })
 
+  it('idle 是非实时流程的权威状态，不让残留状态覆盖历史任务', () => {
+    resetRestrictedState({ phase: 'idle', plan, error: '不应显示的残留错误' })
+    const historical = task('historical-idle-task')
+
+    const markup = renderToStaticMarkup(
+      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
+    )
+
+    expect(markup).toContain('execution-recorded')
+    expect(markup).toContain('生成一张蓝色产品海报')
+    expect(markup).not.toContain('不应显示的残留错误')
+  })
+
   it('只把当前 task 对应的 live execution 叠加进消息，历史任务不会串入状态', () => {
+    const livePlan = {
+      ...plan,
+      id: 'live-plan',
+      originalRequest: '不应串入历史的实时请求',
+      summary: '不应串入历史的实时计划',
+    }
     resetRestrictedState({
       phase: 'executing',
       taskId: 'live-task',
-      plan,
+      plan: livePlan,
       execution: {
         id: 'live-execution',
-        planId: plan.id,
+        planId: livePlan.id,
         status: 'executing',
         cancelRequested: false,
         error: null,
@@ -174,9 +193,72 @@ describe('AgentMainWorkspace', () => {
     )
 
     expect(markup).toContain('execution-recorded')
+    expect(markup).toContain('生成一张蓝色产品海报')
+    expect(markup).toContain('蓝色产品海报计划')
     expect(markup).not.toContain('live-execution')
+    expect(markup).not.toContain('不应串入历史的实时请求')
+    expect(markup).not.toContain('不应串入历史的实时计划')
     expect(markup).not.toContain('Gateway 正在执行已确认计划')
     expect(markup).not.toContain('尝试取消')
+  })
+
+  it('未绑定 task 的 planning 在选中历史任务时覆盖旧消息并显示当前草稿', () => {
+    resetRestrictedState({ phase: 'planning', taskId: null })
+    const historical = {
+      ...task('historical-planning-task'),
+      agentOriginalRequest: '不应显示的旧历史请求',
+    }
+
+    const markup = renderToStaticMarkup(
+      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
+    )
+
+    expect(markup).toContain('规划中的用户请求')
+    expect(markup).toContain('Planner 正在生成可审查的执行计划')
+    expect(markup).not.toContain('不应显示的旧历史请求')
+    expect(markup).not.toContain('任务完成')
+    expect(markup).not.toContain('data-agent-result-images')
+    expect(markup).not.toContain('data-task-action-row="agent"')
+  })
+
+  it('未绑定 task 的待确认计划在选中历史任务时显示新计划卡', () => {
+    resetRestrictedState({ phase: 'awaiting_confirmation', taskId: null, plan })
+    const historical = {
+      ...task('historical-confirmation-task'),
+      agentOriginalRequest: '不应显示的旧确认历史请求',
+    }
+
+    const markup = renderToStaticMarkup(
+      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
+    )
+
+    expect(markup).toContain(plan.originalRequest)
+    expect(markup).toContain('data-component="plan-card"')
+    expect(markup).toContain(plan.summary)
+    expect(markup).not.toContain('不应显示的旧确认历史请求')
+    expect(markup).not.toContain('任务完成')
+    expect(markup).not.toContain('execution-recorded')
+    expect(markup).not.toContain('data-task-action-row="agent"')
+  })
+
+  it('未绑定 task 的规划失败在选中历史任务时显示错误和恢复动作', () => {
+    resetRestrictedState({ phase: 'failed', taskId: null, error: '新规划服务不可用' })
+    const historical = {
+      ...task('historical-failed-task'),
+      agentOriginalRequest: '不应显示的旧失败历史请求',
+    }
+
+    const markup = renderToStaticMarkup(
+      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
+    )
+
+    expect(markup).toContain('规划中的用户请求')
+    expect(markup).toContain('新规划服务不可用')
+    expect(markup).toContain('返回修改')
+    expect(markup).not.toContain('不应显示的旧失败历史请求')
+    expect(markup).not.toContain('任务完成')
+    expect(markup).not.toContain('data-agent-result-images')
+    expect(markup).not.toContain('data-task-action-row="agent"')
   })
 
   it('planning、确认和 execution 在同一 Agent 回复位置演进，执行中直显取消动作', () => {

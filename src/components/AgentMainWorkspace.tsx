@@ -318,20 +318,21 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
   const setLightboxImageId = useStore((state) => state.setLightboxImageId)
 
-  const liveFlowMatchesSelection = !task || task.id === flowTaskId
-  const plan = liveFlowMatchesSelection ? livePlan ?? task?.agentPlanSnapshot ?? null : task?.agentPlanSnapshot ?? null
+  const liveFlowActive = phase !== 'idle'
+  const unboundLiveFlow = liveFlowActive && !flowTaskId
+  const liveFlowMatchesSelection = liveFlowActive && (unboundLiveFlow || !task || task.id === flowTaskId)
+  const displayedTask = unboundLiveFlow ? null : task
+  const plan = liveFlowMatchesSelection ? livePlan ?? displayedTask?.agentPlanSnapshot ?? null : displayedTask?.agentPlanSnapshot ?? null
   const execution = liveFlowMatchesSelection ? liveExecution : null
   const localRun = liveFlowMatchesSelection ? liveLocalRun : null
-  const hasLiveFlow = liveFlowMatchesSelection && (
-    phase !== 'idle' || Boolean(livePlan || liveExecution || liveLocalRun || liveError)
-  )
-  const hasConversation = Boolean(task || hasLiveFlow)
-  const liveDraftRequest = hasLiveFlow && !task && !livePlan
+  const hasLiveFlow = liveFlowMatchesSelection
+  const hasConversation = Boolean(displayedTask || hasLiveFlow)
+  const liveDraftRequest = hasLiveFlow && !displayedTask && !livePlan
     ? getComposerDraftSnapshot('tool').prompt.trim()
     : ''
   const requestText = hasLiveFlow
-    ? livePlan?.originalRequest || task?.agentOriginalRequest || task?.prompt || liveDraftRequest
-    : task?.agentOriginalRequest || task?.prompt || ''
+    ? livePlan?.originalRequest || displayedTask?.agentOriginalRequest || displayedTask?.prompt || liveDraftRequest
+    : displayedTask?.agentOriginalRequest || displayedTask?.prompt || ''
   const showPlanCard = Boolean(hasLiveFlow && livePlan && (
     phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale'
   ))
@@ -346,18 +347,18 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
         cancelExecution,
       })
     : {}
-  const taskStatus = task ? getTaskStatus(task) : undefined
+  const taskStatus = displayedTask ? getTaskStatus(displayedTask) : undefined
   const replyStatus = liveReply.status ?? taskStatus
-  const errorMessage = liveReply.errorMessage ?? (task?.status === 'error' ? task.error : undefined)
-  const completedImages = task?.status === 'done'
-    ? task.outputImages.map((imageId, index) => ({ id: imageId, alt: `生成结果 ${index + 1}` }))
+  const errorMessage = liveReply.errorMessage ?? (displayedTask?.status === 'error' ? displayedTask.error : undefined)
+  const completedImages = displayedTask?.status === 'done'
+    ? displayedTask.outputImages.map((imageId, index) => ({ id: imageId, alt: `生成结果 ${index + 1}` }))
     : []
-  const taskActionRow = task?.status === 'done'
-    ? <TaskActionRow task={task} presentation="agent" />
+  const taskActionRow = displayedTask?.status === 'done'
+    ? <TaskActionRow task={displayedTask} presentation="agent" />
     : undefined
-  const details = plan || task || execution || localRun ? (
+  const details = plan || displayedTask || execution || localRun ? (
     <ToolExecutionDetails
-      task={task}
+      task={displayedTask}
       plan={plan}
       execution={execution}
       localRun={localRun}
@@ -366,8 +367,8 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   ) : undefined
   const contentVersion = [
     phase,
-    task?.status,
-    task?.outputImages.length,
+    displayedTask?.status,
+    displayedTask?.outputImages.length,
     execution?.status,
     localRun?.status,
     localRun?.saveStatus,
@@ -376,7 +377,7 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
 
   return (
     <AgentConversationStream
-      conversationKey={task?.id ?? flowTaskId ?? 'tool-new'}
+      conversationKey={displayedTask?.id ?? flowTaskId ?? 'tool-new'}
       contentVersion={contentVersion}
       className="h-full"
       emptyState={(
