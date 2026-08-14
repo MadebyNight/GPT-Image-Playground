@@ -144,4 +144,39 @@ describe('agentConversation', () => {
     expect(filterAgentTasksByMode([chat, tool, gallery, openShop], 'chat').map((item) => item.id)).toEqual(['chat'])
     expect(filterAgentTasksByMode([chat, tool, gallery, openShop], 'tool').map((item) => item.id)).toEqual(['tool'])
   })
+
+  it('将新的 Responses 与 Gateway 回合按 agentConversationId 聚合', () => {
+    const responses = {
+      ...task('responses', 'unified-conversation', 1, '生成图片', '已生成'),
+      agentTurn: 1,
+      agentExecutionRoute: 'responses_image' as const,
+    }
+    const gateway = {
+      ...task('gateway', 'unified-conversation', 2, '导出横幅', '已导出'),
+      agentTurn: 2,
+      agentExecutionId: 'execution-1',
+      agentExecutionRoute: 'gateway_image_generate' as const,
+    }
+
+    expect(getConversationTasks([gateway, responses], 'unified-conversation').map((item) => item.id)).toEqual([
+      'responses',
+      'gateway',
+    ])
+  })
+
+  it('为旧 Tool 与 OpenShop 记录建立各自隔离的兼容会话', () => {
+    const legacyTool = {
+      ...task('legacy-tool', 'incorrect-shared-id', 1, '旧 Tool', '完成'),
+      origin: 'restricted-agent' as const,
+    }
+    const legacyOpenShop = {
+      ...task('legacy-openshop', 'incorrect-shared-id', 2, '旧 OpenShop', '完成'),
+      origin: 'openshop' as const,
+    }
+
+    expect(getAgentConversationId(legacyTool)).toBe('legacy-restricted-agent:legacy-tool')
+    expect(getAgentConversationId(legacyOpenShop)).toBe('legacy-openshop:legacy-openshop')
+    expect(getConversationTasks([legacyTool, legacyOpenShop], legacyTool).map((item) => item.id)).toEqual(['legacy-tool'])
+    expect(getConversationTasks([legacyTool, legacyOpenShop], legacyOpenShop).map((item) => item.id)).toEqual(['legacy-openshop'])
+  })
 })

@@ -243,6 +243,18 @@ export interface TaskRecord {
   agentConversationId?: string
   /** 默认 Agent 对话中的轮次，从 1 开始。 */
   agentTurn?: number
+  /** 路由器的不可变决策，用于确认实际执行路径符合用户约束。 */
+  agentRoute?: AgentRoute
+  /** 路由器选择该路径的面向用户原因。 */
+  agentRouteReason?: string
+  /** 本回合识别出的硬约束；命中时不得静默降级。 */
+  agentHardConstraints?: string[]
+  /** 本回合失败时是否禁止切换至近似的 Responses 路径。 */
+  agentFallbackForbidden?: boolean
+  /** Gateway 在完成前必须断言的最终图片规格。 */
+  agentFinalOutputSpec?: FinalOutputSpec
+  /** 实际执行该回合的后端路径，与路由决策分开记录。 */
+  agentExecutionRoute?: AgentExecutionRoute
   /** 默认 Agent 返回的文本；done 时是最终文本，error 时可保存非空流式 partial，仅用于恢复展示。 */
   agentAssistantText?: string
   /** OpenShop 编辑结果对应的源任务 ID。 */
@@ -251,6 +263,8 @@ export interface TaskRecord {
   agentPlanId?: string
   /** 受限 Agent 服务端执行 ID，用于刷新后恢复状态。 */
   agentExecutionId?: string
+  /** 受限 Agent 服务端执行的最后已知快照，用于刷新后的统一回合展示。 */
+  agentExecutionSnapshot?: RestrictedAgentExecution
   /** 用户在规划阶段提交的原始需求。 */
   agentOriginalRequest?: string
   /** 用户实际确认的不可变计划快照。 */

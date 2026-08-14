@@ -4,6 +4,8 @@ export const AGENT_CONTEXT_MAX_TURNS = 4
 export const AGENT_CONTEXT_MAX_CHARACTERS = 6_000
 
 const LEGACY_CONVERSATION_PREFIX = 'legacy-agent:'
+const LEGACY_RESTRICTED_AGENT_CONVERSATION_PREFIX = 'legacy-restricted-agent:'
+const LEGACY_OPENSHOP_CONVERSATION_PREFIX = 'legacy-openshop:'
 const CONTEXT_INTRO = '你正在延续同一位用户的图像创作对话。以下仅是已完成轮次的上下文，用于理解连续修改；不要复述它，优先完成本轮请求。'
 
 function truncateText(value: string, maxCharacters: number): string {
@@ -45,6 +47,8 @@ function createContextBlock(task: TaskRecord, turn: number, maxCharacters: numbe
  * 为没有会话元数据的旧任务提供稳定且隔离的兼容会话。
  */
 export function getAgentConversationId(task: TaskRecord): string {
+  if (task.origin === 'restricted-agent') return `${LEGACY_RESTRICTED_AGENT_CONVERSATION_PREFIX}${task.id}`
+  if (task.origin === 'openshop') return `${LEGACY_OPENSHOP_CONVERSATION_PREFIX}${task.id}`
   return task.agentConversationId?.trim() || `${LEGACY_CONVERSATION_PREFIX}${task.id}`
 }
 
@@ -65,10 +69,14 @@ export function filterAgentTasksByMode(tasks: TaskRecord[], mode: AgentMode): Ta
   return tasks.filter((task) => getAgentModeForTask(task) === mode)
 }
 
+function isAgentConversationTask(task: TaskRecord): boolean {
+  return task.origin === 'agent' || task.origin === 'restricted-agent' || task.origin === 'openshop'
+}
+
 export function getConversationTasks(tasks: TaskRecord[], anchor: TaskRecord | string): TaskRecord[] {
   const conversationId = typeof anchor === 'string' ? anchor : getAgentConversationId(anchor)
   return tasks
-    .filter((task) => getAgentModeForTask(task) === 'chat' && getAgentConversationId(task) === conversationId)
+    .filter((task) => isAgentConversationTask(task) && getAgentConversationId(task) === conversationId)
     .sort((a, b) => {
       const aTurn = a.agentTurn
       const bTurn = b.agentTurn
