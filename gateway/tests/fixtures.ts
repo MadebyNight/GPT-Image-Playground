@@ -199,9 +199,9 @@ export function createDeterministicPlannerFixture(action: 'generate' | 'edit' | 
 export function createDeterministicExecutorFixture(
   outputs: Buffer[],
   delayMs = 0,
-): ImageExecutor & { execute: ReturnType<typeof vi.fn> } {
+): ImageExecutor & { executeGeneration: ReturnType<typeof vi.fn> } {
   return {
-    execute: vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+    executeGeneration: vi.fn(async ({ signal }: { signal: AbortSignal }) => {
       if (delayMs) {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, delayMs)

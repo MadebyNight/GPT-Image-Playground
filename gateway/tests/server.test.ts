@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type GatewayConfig } from '../src/config.js';
+import { AssetStore } from '../src/assets.js';
 import { GatewayDatabase } from '../src/db.js';
 import { ExecutionEvents } from '../src/events.js';
 import type { ImageExecutor } from '../src/executor.js';
@@ -19,6 +20,7 @@ import {
 } from '../src/policy.js';
 import { ResponsesPlanner, type Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
+import { ExecutionWorker } from '../src/worker.js';
 import type {
   PlanInputView,
   RestrictedAgentPlanSnapshot,
@@ -129,7 +131,7 @@ async function makeConfig(overrides: Partial<GatewayConfig> = {}): Promise<Gatew
   };
 }
 
-function fakeExecutor(delayMs = 0, outputs: Buffer[] = [png]): ImageExecutor & { execute: ReturnType<typeof vi.fn> } {
+function fakeExecutor(delayMs = 0, outputs: Buffer[] = [png]): ImageExecutor & { executeGeneration: ReturnType<typeof vi.fn> } {
   return createDeterministicExecutorFixture(outputs, delayMs);
 }
 
@@ -460,7 +462,7 @@ describe('two phase gateway', () => {
     const response = await createPlan(context);
     expect(response.statusCode).toBe(201);
     const text = response.body;
-    expect(context.executor.execute).not.toHaveBeenCalled();
+    expect(context.executor.executeGeneration).not.toHaveBeenCalled();
     expect(text).not.toContain('planner-fixed');
     expect(text).not.toContain('image-fixed');
     expect(text).not.toContain('upstream.invalid');
@@ -561,7 +563,7 @@ describe('two phase gateway', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json().error.code).toBe('unknown_field');
     }
-    expect(context.executor.execute).not.toHaveBeenCalled();
+    expect(context.executor.executeGeneration).not.toHaveBeenCalled();
   });
 
   it('必须同源且 CSRF token 正确', async () => {
@@ -635,7 +637,7 @@ describe('two phase gateway', () => {
     });
     expect(plan.operation).not.toHaveProperty('inputBrowserImageId');
     expect(JSON.stringify(plan.operation)).not.toMatch(/objectId|layerId/);
-    expect(context.executor.execute).not.toHaveBeenCalled();
+    expect(context.executor.executeGeneration).not.toHaveBeenCalled();
   });
 
   it('拒绝 OpenShop 缺少单一已有图片、非法命令和超过五条命令', async () => {
@@ -824,7 +826,7 @@ describe('two phase gateway', () => {
     expect(first.json().data.id).toBe(second.json().data.id);
     const completed = await waitForTerminal(context.app, first.json().data.id, context.cookie);
     expect(normalizeRestrictedExecutionResponse(completed, plan.id)).toEqual(RESTRICTED_EXECUTION_RESPONSE_FIXTURE);
-    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(executor.executeGeneration).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -924,7 +926,7 @@ describe('two phase gateway', () => {
     });
     expect(unsupported.statusCode).toBe(409);
     expect(unsupported.json().error.code).toBe('client_operation_requires_browser');
-    expect(context.executor.execute).not.toHaveBeenCalled();
+    expect(context.executor.executeGeneration).not.toHaveBeenCalled();
 
     const repeated = await context.app.inject({
       method: 'POST', url: `/v1/plans/${plan.id}/execute`,
@@ -962,7 +964,7 @@ describe('two phase gateway', () => {
       headers: { ...context.mutationHeaders, 'if-match': '"1"', 'x-composer-snapshot-hash': plan.composerSnapshotHash },
     });
     expect([409, 410]).toContain(response.statusCode);
-    expect(context.executor.execute).not.toHaveBeenCalled();
+    expect(context.executor.executeGeneration).not.toHaveBeenCalled();
   });
 
   it('执行中取消不会自动重试', async () => {
@@ -981,7 +983,7 @@ describe('two phase gateway', () => {
     expect(['executing', 'cancelled']).toContain(cancelled.json().data.status);
     const terminal = await waitForTerminal(context.app, id, context.cookie);
     expect(terminal.status).toBe('cancelled');
-    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(executor.executeGeneration).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1216,6 +1218,369 @@ describe('v3 execution action persistence', () => {
       expect(db.getExecutionActions(failed.id, 'session').map((action) => action.status))
         .toEqual(['failed', 'cancelled', 'cancelled']);
     } finally {
+      db.close();
+    }
+  });
+});
+
+describe('v3 action Worker', () => {
+  function v3GenerationPlan(id: string): ToolAgentPlanV3Snapshot {
+    return decodeRestrictedAgentPlanSnapshot({
+      ...structuredClone(TOOL_AGENT_V3_PLAN_FIXTURE),
+      id,
+    }) as ToolAgentPlanV3Snapshot;
+  }
+
+  function v3TransformPlan(id: string, input: StoredAsset): ToolAgentPlanV3Snapshot {
+    const finalOutputSpec = {
+      width: 870,
+      height: 220,
+      fit: 'cover' as const,
+      position: 'center' as const,
+      rotate: 90 as const,
+      flip: 'horizontal' as const,
+      outputFormat: 'png' as const,
+      outputCompression: null,
+    };
+    return decodeRestrictedAgentPlanSnapshot({
+      schemaVersion: 3,
+      id,
+      version: 1,
+      status: 'queued',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      originalRequest: '将参考图旋转并输出严格尺寸',
+      composerSnapshotHash: 'c'.repeat(64),
+      summary: '确定性处理参考图',
+      inputs: [{
+        assetId: input.id,
+        role: 'reference',
+        sha256: input.sha256,
+        mimeType: input.mimeType,
+        width: input.width,
+        height: input.height,
+      }],
+      assumptions: [],
+      warnings: [],
+      policyVersion: 'tool-operation-v3',
+      finalOutputSpec,
+      actions: [
+        {
+          type: 'image.transform',
+          input: { kind: 'plan_input', assetId: input.id },
+          transform: finalOutputSpec,
+        },
+        {
+          type: 'metadata.assert',
+          input: { kind: 'action_output', actionIndex: 0 },
+          expected: finalOutputSpec,
+        },
+      ],
+    }) as ToolAgentPlanV3Snapshot;
+  }
+
+  async function createReferenceAsset(
+    config: GatewayConfig,
+    id: string,
+    bytes = png,
+    width = 2,
+    height = 2,
+  ): Promise<StoredAsset> {
+    const storagePath = path.join(config.assetsDir, `${id}.png`);
+    await writeFile(storagePath, bytes);
+    return {
+      id,
+      planId: null,
+      executionId: null,
+      sessionId: 'session',
+      direction: 'input',
+      role: 'reference',
+      mimeType: 'image/png',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      storagePath,
+      byteSize: bytes.byteLength,
+      width,
+      height,
+      expiresAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+    };
+  }
+
+  function actionExecutor(outputs: Buffer[], delayMs = 0): ImageExecutor & { executeGeneration: ReturnType<typeof vi.fn> } {
+    const executeGeneration = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      if (delayMs) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, delayMs);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          }, { once: true });
+        });
+      }
+      return outputs;
+    });
+    return { executeGeneration } as unknown as ImageExecutor & { executeGeneration: ReturnType<typeof vi.fn> };
+  }
+
+  async function waitForDatabaseTerminal(db: GatewayDatabase, executionId: string) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const execution = db.getExecution(executionId, 'session');
+      if (['completed', 'failed', 'cancelled', 'failed_unknown'].includes(execution.status)) return execution;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error('v3 execution did not finish');
+  }
+
+  async function waitForActionStatus(db: GatewayDatabase, executionId: string, status: string): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (db.getExecutionActions(executionId, 'session')[0]?.status === status) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`action did not reach ${status}`);
+  }
+
+  it('transform 按确定性顺序写入新资产，contain JPEG 默认白底，metadata.assert 读取真实文件', async () => {
+    const config = await makeConfig();
+    const store = new AssetStore(config);
+    await store.initialize();
+    const widePng = await sharp({
+      create: { width: 40, height: 20, channels: 4, background: '#ff0000ff' },
+    }).png().toBuffer();
+    const input = await createReferenceAsset(
+      config,
+      '11111111-1111-4111-8111-111111111111',
+      widePng,
+      40,
+      20,
+    );
+    const inputSha256 = createHash('sha256').update(readFileSync(input.storagePath)).digest('hex');
+
+    const transformed = await store.transform(input, {
+      sessionId: 'session',
+      planId: '22222222-2222-4222-8222-222222222222',
+      executionId: '33333333-3333-4333-8333-333333333333',
+    }, {
+      width: 40,
+      height: 40,
+      fit: 'contain',
+      position: 'center',
+      crop: { x: 0, y: 0, width: 40, height: 20 },
+      rotate: 90,
+      flip: 'horizontal',
+      outputFormat: 'jpeg',
+      outputCompression: 90,
+    });
+
+    expect(transformed.id).not.toBe(input.id);
+    expect(transformed.storagePath).not.toBe(input.storagePath);
+    expect(createHash('sha256').update(readFileSync(input.storagePath)).digest('hex')).toBe(inputSha256);
+    await expect(sharp(transformed.storagePath).metadata()).resolves.toMatchObject({ format: 'jpeg', width: 40, height: 40 });
+    const raw = await sharp(transformed.storagePath).raw().toBuffer();
+    expect(raw[0]).toBeGreaterThan(240);
+    expect(raw[1]).toBeGreaterThan(240);
+    expect(raw[2]).toBeGreaterThan(240);
+    await expect(store.assertMetadata(transformed, { width: 40, height: 40, outputFormat: 'jpeg' })).resolves.toBeUndefined();
+
+    const filled = await store.transform(input, {
+      sessionId: 'session',
+      planId: '22222222-2222-4222-8222-222222222222',
+      executionId: '33333333-3333-4333-8333-333333333333',
+    }, {
+      width: 30,
+      height: 10,
+      fit: 'fill',
+      outputFormat: 'webp',
+      outputCompression: 90,
+    });
+    await expect(sharp(readFileSync(filled.storagePath)).metadata()).resolves.toMatchObject({ format: 'webp', width: 30, height: 10 });
+
+    await writeFile(transformed.storagePath, png);
+    await expect(store.assertMetadata(transformed, { width: 40, height: 40, outputFormat: 'jpeg' }))
+      .rejects.toMatchObject({ code: 'metadata_assertion_failed' });
+  });
+
+  it('生成 → transform → assert 按 action 顺序执行，并只在 assert 后发布最终资产', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const store = new AssetStore(config);
+    const events = new ExecutionEvents();
+    const executor = actionExecutor([png]);
+    const worker = new ExecutionWorker(db, store, executor, events);
+    const progressEvents: string[] = [];
+    let unsubscribe: (() => void) | undefined;
+    try {
+      await store.initialize();
+      const execution = db.insertAutoPlanAndExecution(v3GenerationPlan('44444444-4444-4444-8444-444444444444'), 'session', []).execution;
+      unsubscribe = events.subscribe(execution.id, (event, data) => {
+        if (event.startsWith('action.')) {
+          const action = data as { type: string };
+          progressEvents.push(`${event}:${action.type}`);
+        } else if (event === 'asset.ready') {
+          progressEvents.push(event);
+        }
+      });
+      worker.start();
+      const terminal = await waitForDatabaseTerminal(db, execution.id);
+
+      expect(terminal).toMatchObject({
+        status: 'completed',
+        outputAssets: [expect.objectContaining({ width: 870, height: 220, mimeType: 'image/png' })],
+      });
+      expect(executor.executeGeneration).toHaveBeenCalledTimes(1);
+      expect(progressEvents).toEqual([
+        'action.started:image.generate',
+        'action.completed:image.generate',
+        'action.started:image.transform',
+        'action.completed:image.transform',
+        'action.started:metadata.assert',
+        'action.completed:metadata.assert',
+        'asset.ready',
+      ]);
+    } finally {
+      unsubscribe?.();
+      await worker.shutdown();
+      db.close();
+    }
+  });
+
+  it('纯 transform → assert 不调用 Images executor，取消会终止当前及后续 action', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const store = new AssetStore(config);
+    const events = new ExecutionEvents();
+    const executor = actionExecutor([png]);
+    const worker = new ExecutionWorker(db, store, executor, events);
+    let delayedWorker: ExecutionWorker | undefined;
+    try {
+      await store.initialize();
+      const input = await createReferenceAsset(config, '55555555-5555-4555-8555-555555555555');
+      const execution = db.insertAutoPlanAndExecution(v3TransformPlan('66666666-6666-4666-8666-666666666666', input), 'session', [input]).execution;
+      worker.start();
+      const terminal = await waitForDatabaseTerminal(db, execution.id);
+      expect(terminal).toMatchObject({
+        status: 'completed',
+        outputAssets: [expect.objectContaining({ width: 870, height: 220, mimeType: 'image/png' })],
+      });
+      expect(executor.executeGeneration).not.toHaveBeenCalled();
+
+      delayedWorker = new ExecutionWorker(db, store, actionExecutor([png], 500), events);
+      const delayed = db.insertAutoPlanAndExecution(v3GenerationPlan('77777777-7777-4777-8777-777777777777'), 'session', []).execution;
+      delayedWorker.start();
+      await waitForActionStatus(db, delayed.id, 'executing');
+      const cancellation = db.requestCancellation(delayed.id, 'session');
+      delayedWorker.abort(delayed.id);
+      const cancelled = await waitForDatabaseTerminal(db, delayed.id);
+      expect(cancellation.status).toBe('executing');
+      expect(cancelled.status).toBe('cancelled');
+      expect(db.getExecutionActions(delayed.id, 'session').map((action) => action.status))
+        .toEqual(['cancelled', 'cancelled', 'cancelled']);
+    } finally {
+      await delayedWorker?.shutdown();
+      await worker.shutdown();
+      db.close();
+    }
+  });
+
+  it('shutdown 将当前 v3 action 标为 failed_unknown，并阻止 transform 完成后误报成功', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const store = new AssetStore(config);
+    const events = new ExecutionEvents();
+    const worker = new ExecutionWorker(db, store, actionExecutor([png]), events);
+    const actualTransform = store.transform.bind(store);
+    const failedUnknown = vi.fn();
+    let resolveTransformStarted!: () => void;
+    const transformStarted = new Promise<void>((resolve) => {
+      resolveTransformStarted = resolve;
+    });
+    let releaseTransform: (() => void) | undefined;
+    let unsubscribe: (() => void) | undefined;
+    vi.spyOn(store, 'transform').mockImplementation(async (input, context, transform) => {
+      resolveTransformStarted();
+      await new Promise<void>((resolve) => {
+        releaseTransform = resolve;
+      });
+      return actualTransform(input, context, transform);
+    });
+    try {
+      await store.initialize();
+      const input = await createReferenceAsset(config, '88888888-8888-4888-8888-888888888888');
+      const execution = db.insertAutoPlanAndExecution(
+        v3TransformPlan('99999999-9999-4999-8999-999999999999', input),
+        'session',
+        [input],
+      ).execution;
+      unsubscribe = events.subscribe(execution.id, (event, data) => {
+        if (event === 'action.failed_unknown') failedUnknown(data);
+      });
+      worker.start();
+      await transformStarted;
+
+      const shutdown = worker.shutdown();
+      releaseTransform?.();
+      await shutdown;
+
+      const terminal = db.getExecution(execution.id, 'session');
+      expect(terminal).toMatchObject({
+        status: 'failed_unknown',
+        error: expect.objectContaining({ code: 'gateway_shutdown' }),
+        outputAssets: [],
+      });
+      expect(db.getExecutionActions(execution.id, 'session').map((action) => action.status))
+        .toEqual(['failed_unknown', 'cancelled']);
+      expect(failedUnknown).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'image.transform',
+        status: 'failed_unknown',
+        error: expect.objectContaining({ code: 'gateway_shutdown' }),
+      }));
+    } finally {
+      unsubscribe?.();
+      releaseTransform?.();
+      await worker.shutdown();
+      db.close();
+    }
+  });
+
+  it('metadata.assert 读取被篡改的实际文件并令 v3 execution 失败，不发布最终资产', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const store = new AssetStore(config);
+    const events = new ExecutionEvents();
+    const executor = actionExecutor([png]);
+    const worker = new ExecutionWorker(db, store, executor, events);
+    const actualTransform = store.transform.bind(store);
+    const assetReady = vi.fn();
+    let unsubscribe: (() => void) | undefined;
+    vi.spyOn(store, 'transform').mockImplementation(async (input, context, transform) => {
+      const output = await actualTransform(input, context, transform);
+      await writeFile(output.storagePath, jpeg);
+      return output;
+    });
+    try {
+      await store.initialize();
+      const input = await createReferenceAsset(config, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      const execution = db.insertAutoPlanAndExecution(
+        v3TransformPlan('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input),
+        'session',
+        [input],
+      ).execution;
+      unsubscribe = events.subscribe(execution.id, (event) => {
+        if (event === 'asset.ready') assetReady();
+      });
+      worker.start();
+      const terminal = await waitForDatabaseTerminal(db, execution.id);
+
+      expect(terminal).toMatchObject({
+        status: 'failed',
+        error: expect.objectContaining({ code: 'metadata_assertion_failed' }),
+        outputAssets: [],
+      });
+      expect(db.getExecutionActions(execution.id, 'session').map((action) => action.status))
+        .toEqual(['completed', 'failed']);
+      expect(executor.executeGeneration).not.toHaveBeenCalled();
+      expect(assetReady).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe?.();
+      await worker.shutdown();
       db.close();
     }
   });

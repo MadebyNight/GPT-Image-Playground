@@ -385,6 +385,59 @@ export class GatewayDatabase {
     })();
   }
 
+  /**
+   * Gateway 关闭时，当前 action 的外部副作用是否已完成无法确定。
+   * 该 action 与 execution 必须在同一事务中进入 failed_unknown，避免恢复时留下 executing 孤儿步骤。
+   */
+  failExecutingActionUnknown(
+    executionId: string,
+    error: { code: string; message: string },
+    now = Date.now(),
+  ): ExecutionActionView | null {
+    return this.raw.transaction(() => {
+      const execution = this.getExecutionRow(executionId);
+      const action = this.raw.prepare(`SELECT * FROM execution_actions
+        WHERE execution_id = ? AND status = 'executing'
+        ORDER BY action_index
+        LIMIT 1`)
+        .get(executionId) as ExecutionActionRow | undefined;
+      if (!action) return null;
+
+      this.raw.prepare(`UPDATE execution_actions
+        SET status = 'failed_unknown', error_code = ?, error_message = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'executing'`)
+        .run(error.code, error.message, now, now, action.id);
+      this.audit(execution.session_id, 'execution_action', action.id, 'action.failed_unknown', {
+        executionId,
+        actionIndex: action.action_index,
+        type: action.type,
+        errorCode: error.code,
+      }, now);
+      this.finishExecutionRow(execution, 'failed_unknown', error, now);
+      return this.mapExecutionAction(this.getExecutionActionRow(action.id));
+    })();
+  }
+
+  cancelAction(actionId: string, now = Date.now()): ExecutionActionView {
+    return this.raw.transaction(() => {
+      const action = this.getExecutionActionRow(actionId);
+      if (['completed', 'failed', 'cancelled', 'failed_unknown'].includes(action.status)) return this.mapExecutionAction(action);
+      const execution = this.getExecutionRow(action.execution_id);
+      this.raw.prepare(`UPDATE execution_actions
+        SET status = 'cancelled', error_code = 'execution_cancelled', error_message = ?,
+          completed_at = ?, updated_at = ?
+        WHERE id = ? AND status IN ('queued', 'executing')`)
+        .run('执行已取消', now, now, action.id);
+      this.audit(execution.session_id, 'execution_action', action.id, 'action.cancelled', {
+        executionId: execution.id,
+        actionIndex: action.action_index,
+        reason: 'execution_cancelled',
+      }, now);
+      this.finishExecutionRow(execution, 'cancelled', undefined, now);
+      return this.mapExecutionAction(this.getExecutionActionRow(action.id));
+    })();
+  }
+
   getPlan(id: string, sessionId: string, now = Date.now()): RestrictedAgentPlanSnapshot {
     let row = this.raw.prepare('SELECT * FROM plans WHERE id = ? AND session_id = ?').get(id, sessionId) as PlanRow | undefined;
     if (!row) throw new AppError(404, 'plan_not_found', '计划不存在');

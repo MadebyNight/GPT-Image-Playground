@@ -1,17 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import type { GatewayConfig } from './config.js';
 import { AppError } from './errors.js';
-import { requireImageGeneration } from './plan.js';
-import type { RestrictedAgentPlanSnapshot, StoredAsset } from './types.js';
+import type { GenerationPlan, StoredAsset } from './types.js';
 
-export interface ExecutorInput {
-  plan: RestrictedAgentPlanSnapshot;
+export interface GenerationExecutorInput {
+  generation: GenerationPlan;
   assets: StoredAsset[];
   signal: AbortSignal;
 }
 
 export interface ImageExecutor {
-  execute(input: ExecutorInput): Promise<Buffer[]>;
+  executeGeneration(input: GenerationExecutorInput): Promise<Buffer[]>;
 }
 
 interface ImagesResponse {
@@ -21,8 +20,7 @@ interface ImagesResponse {
 export class DeterministicImagesExecutor implements ImageExecutor {
   constructor(private readonly config: GatewayConfig) {}
 
-  async execute({ plan, assets, signal }: ExecutorInput): Promise<Buffer[]> {
-    const generation = requireImageGeneration(plan);
+  async executeGeneration({ generation, assets, signal }: GenerationExecutorInput): Promise<Buffer[]> {
     const timeoutSignal = AbortSignal.timeout(this.config.executorTimeoutMs);
     const combinedSignal = AbortSignal.any([signal, timeoutSignal]);
     const endpoint = generation.action === 'generate' ? '/images/generations' : '/images/edits';
