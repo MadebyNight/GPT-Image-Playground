@@ -80,6 +80,63 @@ export interface GenerationPlan {
   imageCount: number;
 }
 
+/**
+ * 用户可见的最终交付规格。它独立于 Images API 的候选尺寸，供 v3
+ * transform 与 metadata.assert 使用。
+ */
+export interface FinalOutputSpec {
+  width?: number;
+  height?: number;
+  fit?: 'cover' | 'contain' | 'fill';
+  position?: 'center' | 'left' | 'right' | 'top' | 'bottom';
+  crop?: { x: number; y: number; width: number; height: number };
+  rotate?: 90 | -90 | 180 | -180;
+  flip?: 'horizontal' | 'vertical';
+  outputFormat?: 'png' | 'jpeg' | 'webp';
+  transparent?: boolean;
+  background?: string;
+  outputCompression?: number | null;
+}
+
+/** Gateway 的确定性图片变换参数。 */
+export interface ImageTransform {
+  width?: number;
+  height?: number;
+  fit?: 'cover' | 'contain' | 'fill';
+  position?: 'center' | 'left' | 'right' | 'top' | 'bottom';
+  crop?: { x: number; y: number; width: number; height: number };
+  rotate?: 90 | -90 | 180 | -180;
+  flip?: 'horizontal' | 'vertical';
+  background?: string;
+  outputFormat: 'png' | 'jpeg' | 'webp';
+  outputCompression?: number | null;
+}
+
+/** v3 action 之间唯一允许的资产引用；浏览器侧 ID 永不进入该合同。 */
+export type ArtifactRef =
+  | { kind: 'plan_input'; assetId: string }
+  | { kind: 'action_output'; actionIndex: number };
+
+export type ToolAction =
+  | { type: 'image.generate'; generation: GenerationPlan & { action: 'generate' } }
+  | { type: 'image.edit'; generation: GenerationPlan & { action: 'edit' } }
+  | { type: 'image.transform'; input: ArtifactRef; transform: ImageTransform }
+  | { type: 'metadata.assert'; input: ArtifactRef; expected: FinalOutputSpec };
+
+/**
+ * Planner 只能按输入顺序引用资产。Gateway 将它解析为 ArtifactRef，
+ * 因而 Planner 永远不能提交 Gateway asset UUID。
+ */
+export type PlannerArtifactRef =
+  | { kind: 'plan_input'; inputIndex: number }
+  | { kind: 'action_output'; actionIndex: number };
+
+export type ToolAgentPlannerAction =
+  | { type: 'image.generate'; generation: GenerationPlan & { action: 'generate' } }
+  | { type: 'image.edit'; generation: GenerationPlan & { action: 'edit' } }
+  | { type: 'image.transform'; input: PlannerArtifactRef; transform: ImageTransform }
+  | { type: 'metadata.assert'; input: PlannerArtifactRef; expected: FinalOutputSpec };
+
 export interface OpenShopCropCommand {
   schemaVersion: 1;
   id: 'canvas.crop';
@@ -128,7 +185,7 @@ export interface OpenShopEditOperation {
 
 export type ToolOperation = ImageToolOperation | OpenShopEditOperation;
 
-interface RestrictedAgentPlanSnapshotBase {
+export interface RestrictedAgentPlanSnapshotBase {
   id: string;
   version: number;
   status: PlanStatus;
@@ -159,7 +216,24 @@ export interface ToolAgentPlanSnapshot extends RestrictedAgentPlanSnapshotBase {
   actions?: never;
 }
 
-export type RestrictedAgentPlanSnapshot = LegacyRestrictedAgentPlanSnapshot | ToolAgentPlanSnapshot;
+/**
+ * v3 仅描述受限的 Gateway action 链。它不能进入旧版单 operation
+ * 执行入口；自动执行、action 持久化与 Worker 会在后续任务接入。
+ */
+export interface ToolAgentPlanV3Snapshot extends RestrictedAgentPlanSnapshotBase {
+  schemaVersion: 3;
+  composerSnapshotHash: string;
+  finalOutputSpec: FinalOutputSpec | null;
+  actions: ToolAction[];
+  steps?: never;
+  generation?: never;
+  operation?: never;
+}
+
+export type RestrictedAgentPlanSnapshot =
+  | LegacyRestrictedAgentPlanSnapshot
+  | ToolAgentPlanSnapshot
+  | ToolAgentPlanV3Snapshot;
 
 export interface ExecutionView {
   id: string;
@@ -192,6 +266,23 @@ export interface PlannerDraft {
         commands: OpenShopCanvasCommand[];
         outputFormat: 'png';
       };
+  assumptions: string[];
+  warnings: string[];
+}
+
+/** Planner 的 v3 输出；Gateway 策略会校验并规范化其变换与断言参数。 */
+export interface ToolAgentPlannerDraft {
+  summary: string;
+  actions: ToolAgentPlannerAction[];
+  assumptions: string[];
+  warnings: string[];
+}
+
+/** 已完成白名单、顺序、引用与输出规格归一化的 v3 Planner 输出。 */
+export interface ConstrainedToolAgentPlannerDraft {
+  summary: string;
+  actions: ToolAction[];
+  finalOutputSpec: FinalOutputSpec;
   assumptions: string[];
   warnings: string[];
 }

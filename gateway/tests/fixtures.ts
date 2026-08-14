@@ -29,6 +29,68 @@ export const RESTRICTED_PLAN_RESPONSE_FIXTURE = {
   policyVersion: 'tool-operation-v2',
 } as const
 
+/** v3 action 链的稳定快照，仅供合同解码与策略测试使用。 */
+export const TOOL_AGENT_V3_PLAN_FIXTURE = {
+  schemaVersion: 3,
+  id: '33333333-3333-4333-8333-333333333333',
+  version: 1,
+  status: 'queued',
+  expiresAt: '2099-01-01T00:00:00.000Z',
+  originalRequest: '生成一张 870×220 的夏日咖啡横幅',
+  composerSnapshotHash: 'a7230805750d5b6731760b0bb4ed54bb305692369f8bc0059e868e7bf3d06f31',
+  summary: '生成并输出严格尺寸横幅',
+  inputs: [],
+  assumptions: [],
+  warnings: [],
+  policyVersion: 'tool-operation-v3',
+  finalOutputSpec: {
+    width: 870,
+    height: 220,
+    fit: 'cover',
+    position: 'center',
+    outputFormat: 'png',
+    outputCompression: null,
+  },
+  actions: [
+    {
+      type: 'image.generate',
+      generation: {
+        exactPrompt: '夏日咖啡横幅，主体位于右侧，为横幅裁切预留安全区域',
+        action: 'generate',
+        size: '1536x1024',
+        quality: 'medium',
+        outputFormat: 'png',
+        outputCompression: null,
+        imageCount: 1,
+      },
+    },
+    {
+      type: 'image.transform',
+      input: { kind: 'action_output', actionIndex: 0 },
+      transform: {
+        width: 870,
+        height: 220,
+        fit: 'cover',
+        position: 'center',
+        outputFormat: 'png',
+        outputCompression: null,
+      },
+    },
+    {
+      type: 'metadata.assert',
+      input: { kind: 'action_output', actionIndex: 1 },
+      expected: {
+        width: 870,
+        height: 220,
+        fit: 'cover',
+        position: 'center',
+        outputFormat: 'png',
+        outputCompression: null,
+      },
+    },
+  ],
+} as const
+
 export const RESTRICTED_EXECUTION_RESPONSE_FIXTURE = {
   id: '<execution-id>',
   planId: '<plan-id>',

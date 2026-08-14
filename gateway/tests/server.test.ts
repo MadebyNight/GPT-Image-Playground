@@ -10,15 +10,21 @@ import { loadConfig, type GatewayConfig } from '../src/config.js';
 import { GatewayDatabase } from '../src/db.js';
 import { ExecutionEvents } from '../src/events.js';
 import type { ImageExecutor } from '../src/executor.js';
-import { decodeRestrictedAgentPlanSnapshot } from '../src/plan.js';
-import { hashComposerSnapshot, plannerJsonSchema } from '../src/policy.js';
+import { decodeRestrictedAgentPlanSnapshot, getPlanOperation } from '../src/plan.js';
+import {
+  hashComposerSnapshot,
+  plannerJsonSchema,
+  toolAgentPlannerJsonSchema,
+  validateAndConstrainToolAgentDraft,
+} from '../src/policy.js';
 import { ResponsesPlanner, type Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
-import type { RestrictedAgentPlanSnapshot } from '../src/types.js';
+import type { PlanInputView, RestrictedAgentPlanSnapshot } from '../src/types.js';
 import type { WebSearchService } from '../src/webSearch.js';
 import {
   RESTRICTED_EXECUTION_RESPONSE_FIXTURE,
   RESTRICTED_PLAN_RESPONSE_FIXTURE,
+  TOOL_AGENT_V3_PLAN_FIXTURE,
   createDeterministicExecutorFixture,
   createDeterministicPlannerFixture,
   normalizeRestrictedExecutionResponse,
@@ -278,6 +284,165 @@ describe('fail-closed config', () => {
   });
 });
 
+describe('v3 Gateway action contract', () => {
+  type MutablePlan = {
+    actions: Array<Record<string, unknown>>;
+    finalOutputSpec: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+
+  const cloneV3Plan = (): MutablePlan => JSON.parse(JSON.stringify(TOOL_AGENT_V3_PLAN_FIXTURE)) as MutablePlan;
+  const expectInvalidPlan = (plan: unknown) => {
+    expect(() => decodeRestrictedAgentPlanSnapshot(plan))
+      .toThrowError(expect.objectContaining({ code: 'invalid_plan_snapshot' }));
+  };
+
+  it('解码合法 v3 action 链，同时保持 v1/v2 快照兼容', () => {
+    const v3 = decodeRestrictedAgentPlanSnapshot(cloneV3Plan());
+    expect(v3).toMatchObject({
+      schemaVersion: 3,
+      actions: [{ type: 'image.generate' }, { type: 'image.transform' }, { type: 'metadata.assert' }],
+    });
+    expect(() => getPlanOperation(v3)).toThrowError(expect.objectContaining({ code: 'v3_actions_require_auto_execution' }));
+    expect(decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.tool))).toMatchObject({ schemaVersion: 2 });
+    expect(decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.legacy))).not.toHaveProperty('schemaVersion');
+  });
+
+  it('拒绝超过三步、错误顺序、前向引用、生成后多图与不成对尺寸', () => {
+    const tooManyActions = cloneV3Plan();
+    tooManyActions.actions.push(structuredClone(tooManyActions.actions[2]!));
+    expectInvalidPlan(tooManyActions);
+
+    const wrongOrder = cloneV3Plan();
+    [wrongOrder.actions[1], wrongOrder.actions[2]] = [wrongOrder.actions[2]!, wrongOrder.actions[1]!];
+    expectInvalidPlan(wrongOrder);
+
+    const forwardReference = cloneV3Plan();
+    ((forwardReference.actions[1]!.input as Record<string, unknown>).actionIndex) = 1;
+    expectInvalidPlan(forwardReference);
+
+    const multipleGeneratedImages = cloneV3Plan();
+    (((multipleGeneratedImages.actions[0]!.generation as Record<string, unknown>).imageCount)) = 2;
+    expectInvalidPlan(multipleGeneratedImages);
+
+    const missingHeight = cloneV3Plan();
+    delete missingHeight.finalOutputSpec.height;
+    delete (missingHeight.actions[1]!.transform as Record<string, unknown>).height;
+    delete (missingHeight.actions[2]!.expected as Record<string, unknown>).height;
+    expectInvalidPlan(missingHeight);
+  });
+
+  it('对透明 JPEG 与 Planner asset UUID fail closed', () => {
+    const transparentJpeg = cloneV3Plan();
+    transparentJpeg.finalOutputSpec.outputFormat = 'jpeg';
+    transparentJpeg.finalOutputSpec.transparent = true;
+    (transparentJpeg.actions[1]!.transform as Record<string, unknown>).outputFormat = 'jpeg';
+    (transparentJpeg.actions[2]!.expected as Record<string, unknown>).outputFormat = 'jpeg';
+    (transparentJpeg.actions[2]!.expected as Record<string, unknown>).transparent = true;
+    expectInvalidPlan(transparentJpeg);
+
+    expect(JSON.stringify(toolAgentPlannerJsonSchema)).not.toContain('assetId');
+    expect(findStrictObjectSchemaIssues(toolAgentPlannerJsonSchema)).toEqual([]);
+  });
+
+  it('v3 Planner 使用 action 链 schema，并要求 transform 与 assert 参数', async () => {
+    const config = await makeConfig();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output_text: JSON.stringify({
+        summary: '严格尺寸生成',
+        actions: [
+          {
+            type: 'image.generate',
+            generation: {
+              exactPrompt: '生成横幅', action: 'generate', size: '1536x1024', quality: 'medium',
+              outputFormat: 'png', outputCompression: null, imageCount: 1,
+            },
+          },
+          {
+            type: 'image.transform', input: { kind: 'action_output', actionIndex: 0 },
+            transform: {
+              width: 870, height: 220, fit: 'cover', position: 'center', crop: null, rotate: null, flip: null,
+              background: null, outputFormat: 'png', outputCompression: null,
+            },
+          },
+          {
+            type: 'metadata.assert', input: { kind: 'action_output', actionIndex: 1 },
+            expected: {
+              width: 870, height: 220, fit: 'cover', position: 'center', crop: null, rotate: null, flip: null,
+              outputFormat: 'png', transparent: null, background: null, outputCompression: null,
+            },
+          },
+        ],
+        assumptions: [], warnings: [],
+      }),
+    }), { status: 200 }));
+    const finalOutputSpec = { width: 870, height: 220, fit: 'cover' as const, position: 'center' as const };
+    await new ResponsesPlanner(config).createDraft({
+      request: '生成横幅', preferences: {}, assets: [], allowOpenShop: true,
+      outputSchemaVersion: 3, finalOutputSpec,
+    });
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.text.format).toMatchObject({
+      name: 'tool_agent_action_chain_plan', strict: true, schema: toolAgentPlannerJsonSchema,
+    });
+    expect(requestBody.input[0].content[0].text).toContain('不得输出 assetId');
+    expect(requestBody.input[0].content[0].text).toContain('"width":870');
+  });
+
+  it('约束纯 transform 为 transform → assert，并规范化 JPEG contain 白底', async () => {
+    const config = await makeConfig();
+    const inputAsset: PlanInputView = {
+      assetId: '55555555-5555-4555-8555-555555555555',
+      role: 'reference',
+      sha256: 'a'.repeat(64),
+      mimeType: 'image/png',
+      width: 1600,
+      height: 900,
+    };
+    const finalOutputSpec = {
+      width: 870,
+      height: 220,
+      fit: 'contain',
+      position: 'center',
+      outputFormat: 'jpeg',
+    };
+    const draft = {
+      summary: '缩放已有图片',
+      actions: [
+        {
+          type: 'image.transform',
+          input: { kind: 'plan_input', inputIndex: 0 },
+          transform: {
+            width: 870, height: 220, fit: 'contain', position: 'center', crop: null, rotate: null, flip: null,
+            background: '#ffffff', outputFormat: 'jpeg', outputCompression: 90,
+          },
+        },
+        {
+          type: 'metadata.assert',
+          input: { kind: 'action_output', actionIndex: 0 },
+          expected: {
+            width: 870, height: 220, fit: 'contain', position: 'center', crop: null, rotate: null, flip: null,
+            outputFormat: 'jpeg', transparent: null, background: '#ffffff', outputCompression: 90,
+          },
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+    };
+    const constrained = validateAndConstrainToolAgentDraft(draft, {}, [inputAsset], config, finalOutputSpec);
+    expect(constrained.actions.map((action) => action.type)).toEqual(['image.transform', 'metadata.assert']);
+    expect(constrained.finalOutputSpec).toMatchObject({ outputFormat: 'jpeg', background: '#ffffff', outputCompression: 90 });
+    expect(constrained.assumptions).toContain('JPEG contain 输出未指定背景，已使用白色背景。');
+
+    const transparentJpeg = {
+      ...finalOutputSpec,
+      transparent: true,
+    };
+    expect(() => validateAndConstrainToolAgentDraft(draft, {}, [inputAsset], config, transparentJpeg))
+      .toThrowError(expect.objectContaining({ code: 'transparent_jpeg_conflict' }));
+  });
+});
+
 describe('two phase gateway', () => {
   it('只注册 Nginx 去前缀后的 /v1 内部路由', async () => {
     const context = await setup();
@@ -361,7 +526,7 @@ describe('two phase gateway', () => {
     const context = await setup();
     const plan = (await createPlan(context)).json().data;
     for (const invalid of [
-      { ...plan, schemaVersion: 3 },
+      { ...plan, schemaVersion: 4 },
       { ...plan, actions: [] },
       { ...plan, generation: plan.operation.generation },
       {
