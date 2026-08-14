@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useStore, addImageFromUrl, ensureImageCached } from '../store'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { downloadImageSource, downloadOriginalImage } from '../lib/imageDownload'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 
 export function shouldUseNativeImageContextMenu(target: EventTarget | null): boolean {
@@ -82,7 +83,9 @@ export default function ImageContextMenu() {
 
   const getOriginalImageSrc = async () => {
     if (!menuInfo.imageId) return menuInfo.src
-    return await ensureImageCached(menuInfo.imageId) ?? menuInfo.src
+    const source = await ensureImageCached(menuInfo.imageId)
+    if (!source) throw new Error('未找到原图，它可能已被清理或不在当前浏览器中。')
+    return source
   }
 
   const handleCopy = async (e: React.MouseEvent) => {
@@ -104,18 +107,8 @@ export default function ImageContextMenu() {
     e.stopPropagation()
     setMenuInfo(null)
     try {
-      const src = await getOriginalImageSrc()
-      const res = await fetch(src)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const ext = blob.type.split('/')[1] || 'png'
-      a.download = `image-${Date.now()}.${ext}`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      if (menuInfo.imageId) await downloadOriginalImage(menuInfo.imageId)
+      else await downloadImageSource(menuInfo.src)
       showToast('开始下载', 'success')
     } catch (err) {
       console.error(err)

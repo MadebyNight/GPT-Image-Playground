@@ -3,6 +3,7 @@ import {
   OPENSHOP_PROTOCOL_VERSION,
   OPENSHOP_TOOL_MAX_COMMANDS,
   createOpenShopRequestId,
+  getOpenShopEmbedFrameUrl,
   getOpenShopFrameUrl,
   getOpenShopTargetOrigin,
   hasExpectedImageMagic,
@@ -22,6 +23,17 @@ describe('OpenShop bridge protocol', () => {
 
     expect(frameUrl).toBe('https://example.test/image-playground/openshop/index.html')
     expect(getOpenShopTargetOrigin(frameUrl)).toBe('https://example.test')
+  })
+
+  it('adds controlled embed modes without changing the standalone URL or other query params', () => {
+    const pageUrl = 'https://example.test/image-playground/#/openshop/image-1'
+
+    expect(getOpenShopFrameUrl(pageUrl, 'manual')).toBe('https://example.test/image-playground/openshop/index.html?embed=manual')
+    expect(getOpenShopFrameUrl(pageUrl, 'tool')).toBe('https://example.test/image-playground/openshop/index.html?embed=tool')
+    expect(getOpenShopEmbedFrameUrl(
+      'https://example.test/image-playground/openshop/index.html?theme=dark&embed=manual',
+      'tool',
+    )).toBe('https://example.test/image-playground/openshop/index.html?theme=dark&embed=tool')
   })
 
   it('accepts only the supported protocol messages', () => {
