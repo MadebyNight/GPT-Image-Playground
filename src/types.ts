@@ -367,6 +367,46 @@ export type RestrictedAgentToolOperation =
       outputFormat: 'png'
     }
 
+/** v3 action 链的资产引用；不会暴露浏览器 IndexedDB 图片 ID。 */
+export type RestrictedAgentArtifactReference =
+  | { kind: 'plan_input'; assetId: string }
+  | { kind: 'action_output'; actionIndex: number }
+
+/** Gateway 确定性图片处理所需的完整变换参数。 */
+export interface RestrictedAgentImageTransform {
+  width?: number
+  height?: number
+  fit?: 'cover' | 'contain' | 'fill'
+  position?: 'center' | 'left' | 'right' | 'top' | 'bottom'
+  crop?: { x: number; y: number; width: number; height: number }
+  rotate?: 90 | -90 | 180 | -180
+  flip?: 'horizontal' | 'vertical'
+  background?: string
+  outputFormat: NonNullable<FinalOutputSpec['outputFormat']>
+  outputCompression?: number | null
+}
+
+/** 自动执行接口唯一接受的受限 action 目录。 */
+export type RestrictedAgentToolAction =
+  | {
+      type: 'image.generate'
+      generation: RestrictedAgentPlanGeneration & { action: 'generate' }
+    }
+  | {
+      type: 'image.edit'
+      generation: RestrictedAgentPlanGeneration & { action: 'edit' }
+    }
+  | {
+      type: 'image.transform'
+      input: RestrictedAgentArtifactReference
+      transform: RestrictedAgentImageTransform
+    }
+  | {
+      type: 'metadata.assert'
+      input: RestrictedAgentArtifactReference
+      expected: FinalOutputSpec
+    }
+
 export interface LegacyRestrictedAgentPlan extends RestrictedAgentPlanBase {
   schemaVersion?: never
   composerSnapshotHash?: never
@@ -384,7 +424,18 @@ export interface ToolAgentPlan extends RestrictedAgentPlanBase {
   actions?: never
 }
 
-export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan
+/** v3 计划只经自动提交接口创建；最终规格与 action 链均不可变。 */
+export interface ToolAgentPlanV3 extends RestrictedAgentPlanBase {
+  schemaVersion: 3
+  composerSnapshotHash: string
+  finalOutputSpec: FinalOutputSpec
+  actions: RestrictedAgentToolAction[]
+  steps?: never
+  generation?: never
+  operation?: never
+}
+
+export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan | ToolAgentPlanV3
 
 export type OpenShopToolLocalRunStatus =
   | 'running'
@@ -480,6 +531,26 @@ export interface RestrictedAgentOutputAsset {
   byteSize: number
 }
 
+/** 与 Gateway action 持久化状态一一对应的前端进度快照。 */
+export type RestrictedAgentExecutionActionStatus = RestrictedAgentExecutionStatus
+
+export interface RestrictedAgentExecutionAction {
+  id: string
+  executionId: string
+  actionIndex: number
+  type: RestrictedAgentToolAction['type']
+  normalizedParams: RestrictedAgentToolAction
+  status: RestrictedAgentExecutionActionStatus
+  idempotencyKey: string
+  error: { code: string; message: string } | null
+  inputAssets: RestrictedAgentOutputAsset[]
+  outputAssets: RestrictedAgentOutputAsset[]
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  updatedAt: string
+}
+
 export interface RestrictedAgentExecution {
   id: string
   planId: string
@@ -487,6 +558,8 @@ export interface RestrictedAgentExecution {
   cancelRequested: boolean
   error: { code: string; message: string } | null
   outputAssets: RestrictedAgentOutputAsset[]
+  /** 旧 Gateway v1/v2 响应可缺失；严格 decoder 会将其规范化为空数组。 */
+  actions?: RestrictedAgentExecutionAction[]
   createdAt: string
   startedAt: string | null
   completedAt: string | null
@@ -498,7 +571,7 @@ export interface RestrictedAgentCapabilities {
   csrfToken: string
   policyVersion?: string
   planSchemaVersions?: number[]
-  operationTypes?: RestrictedAgentToolOperation['type'][]
+  operationTypes?: Array<RestrictedAgentToolOperation['type'] | RestrictedAgentToolAction['type']>
   limits?: {
     maxReferenceImages?: number
     maxFileBytes?: number

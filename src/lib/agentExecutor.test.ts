@@ -147,7 +147,7 @@ describe('restricted Agent gateway client', () => {
   it('确认 v2 计划只发送 plan version 与当前 Composer hash', async () => {
     const plan = await createPlanFixture()
     const execution: RestrictedAgentExecution = {
-      id: 'execution-1', planId: plan.id, status: 'queued', cancelRequested: false, error: null,
+      id: '33333333-3333-4333-8333-333333333333', planId: plan.id, status: 'queued', cancelRequested: false, error: null,
       outputAssets: [], createdAt: '2026-07-16T00:00:00.000Z', startedAt: null,
       completedAt: null, updatedAt: '2026-07-16T00:00:00.000Z',
     }
@@ -156,7 +156,7 @@ describe('restricted Agent gateway client', () => {
 
     const result = await executeRestrictedAgentPlan(plan, plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
 
-    expect(result).toEqual(execution)
+    expect(result).toEqual({ ...execution, actions: [] })
     const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('/agent-api/v1/plans/11111111-1111-4111-8111-111111111111/execute')
     expect(init?.method).toBe('POST')
