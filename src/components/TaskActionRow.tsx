@@ -60,7 +60,8 @@ export function shouldShowTaskRetry(
   alwaysShowRetry = false,
 ) {
   if (task.origin === 'restricted-agent' || task.origin === 'openshop') return false
-  if (isUnifiedGatewayTask(task)) return task.status === 'error'
+  // v3 Pipeline 的 Agent 对话中，计划卡是唯一的恢复入口，避免重复的“重试”按钮。
+  if (isUnifiedGatewayTask(task)) return presentation !== 'agent' && task.status === 'error'
   if (presentation !== 'compact') return true
   return (task.status === 'error' && !task.falRecoverable && !task.customRecoverable) || alwaysShowRetry
 }

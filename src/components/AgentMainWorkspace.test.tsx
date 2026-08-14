@@ -2,361 +2,229 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   DEFAULT_PARAMS,
+  type RestrictedAgentExecution,
   type TaskRecord,
   type ToolAgentPlan,
+  type ToolAgentPlanV3,
 } from '../types'
 
 const mocks = vi.hoisted(() => ({
-  restrictedState: {} as Record<string, unknown>,
   setLightboxImageId: vi.fn(),
+  cancel: vi.fn(),
+  retry: vi.fn(),
 }))
 
-vi.mock('../restrictedAgentStore', () => ({
-  useRestrictedAgentStore: <T,>(selector: (state: Record<string, unknown>) => T) => selector(mocks.restrictedState),
-}))
 vi.mock('../store', () => ({
   useStore: <T,>(selector: (state: Record<string, unknown>) => T) => selector({
     setLightboxImageId: mocks.setLightboxImageId,
   }),
-  getComposerDraftSnapshot: vi.fn(() => ({ prompt: '规划中的用户请求' })),
   ensureImageThumbnailCached: vi.fn(() => Promise.resolve(undefined)),
   subscribeImageThumbnail: vi.fn(() => () => undefined),
 }))
-vi.mock('./LegacyAgentMainWorkspace', () => ({
-  default: ({ task }: { task: TaskRecord | null }) => <div data-component="chat-main" data-task={task?.id ?? ''} />,
-}))
-vi.mock('./AgentPlanCard', () => ({
-  default: ({ plan }: { plan: ToolAgentPlan }) => <div data-component="plan-card">{plan.summary}</div>,
+vi.mock('../lib/agentExecutor', () => ({
+  cancelUnifiedAgentTask: mocks.cancel,
+  retryUnifiedAgentTask: mocks.retry,
+  cancelAgentTask: mocks.cancel,
+  subscribeAgentProgress: vi.fn(() => () => undefined),
 }))
 vi.mock('./TaskActionRow', () => ({
-  default: ({ presentation }: { presentation: string }) => <div data-task-action-row={presentation}>任务操作</div>,
+  default: ({ task, presentation }: { task: TaskRecord; presentation: string }) => (
+    <div data-task-action-row={presentation} data-task-id={task.id}>任务操作</div>
+  ),
 }))
 
 import AgentMainWorkspace from './AgentMainWorkspace'
 
-const plan: ToolAgentPlan = {
-  schemaVersion: 2,
+const v3Plan: ToolAgentPlanV3 = {
+  schemaVersion: 3,
   composerSnapshotHash: 'a'.repeat(64),
-  id: 'plan-1',
-  version: 2,
-  status: 'awaiting_confirmation',
+  id: 'plan-v3',
+  version: 3,
+  status: 'executing',
   expiresAt: '2099-01-01T00:00:00.000Z',
-  originalRequest: '生成一张蓝色产品海报',
-  summary: '蓝色产品海报计划',
-  operation: {
-    type: 'image.generate',
-    generation: {
-      exactPrompt: '极简蓝色产品发布海报',
-      action: 'generate',
-      size: '1024x1024',
-      quality: 'high',
-      outputFormat: 'png',
-      outputCompression: null,
-      imageCount: 1,
-    },
-  },
+  originalRequest: '生成 870×220 横幅',
+  summary: '严格产品横幅',
+  finalOutputSpec: { width: 870, height: 220, outputFormat: 'png' },
+  actions: [
+    { type: 'image.generate', generation: { exactPrompt: '蓝色产品横幅', action: 'generate', size: '1536x1024', quality: 'high', outputFormat: 'png', outputCompression: null, imageCount: 1 } },
+    { type: 'image.transform', input: { kind: 'action_output', actionIndex: 0 }, transform: { width: 870, height: 220, outputFormat: 'png' } },
+    { type: 'metadata.assert', input: { kind: 'action_output', actionIndex: 1 }, expected: { width: 870, height: 220, outputFormat: 'png' } },
+  ],
   inputs: [],
   assumptions: [],
   warnings: [],
-  policyVersion: 'policy-v2',
+  policyVersion: 'tool-action-v3',
 }
 
-function task(id: string, origin: TaskRecord['origin'] = 'restricted-agent'): TaskRecord {
+const v3Execution: RestrictedAgentExecution = {
+  id: 'execution-v3',
+  planId: v3Plan.id,
+  status: 'executing',
+  cancelRequested: false,
+  error: null,
+  outputAssets: [],
+  actions: v3Plan.actions.map((action, actionIndex) => ({
+    id: `action-${actionIndex}`,
+    executionId: 'execution-v3',
+    actionIndex,
+    type: action.type,
+    normalizedParams: action,
+    status: actionIndex === 1 ? 'executing' : actionIndex === 0 ? 'completed' : 'queued',
+    idempotencyKey: `idempotency-${actionIndex}`,
+    error: null,
+    inputAssets: [],
+    outputAssets: [],
+    createdAt: '2026-08-14T00:00:00.000Z',
+    startedAt: actionIndex === 1 ? '2026-08-14T00:00:01.000Z' : null,
+    completedAt: actionIndex === 0 ? '2026-08-14T00:00:01.000Z' : null,
+    updatedAt: '2026-08-14T00:00:02.000Z',
+  })),
+  createdAt: '2026-08-14T00:00:00.000Z',
+  startedAt: '2026-08-14T00:00:01.000Z',
+  completedAt: null,
+  updatedAt: '2026-08-14T00:00:02.000Z',
+}
+
+function task(id: string, patch: Partial<TaskRecord> = {}): TaskRecord {
   return {
     id,
-    prompt: `任务 Prompt ${id}`,
-    params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'high' },
-    inputImageIds: ['reference-1'],
-    outputImages: ['output-1', 'output-2'],
-    rawImageUrls: ['https://example.com/output.png'],
-    rawResponsePayload: '{"status":"completed"}',
-    revisedPromptByImage: { 'output-1': '修订后的产品海报 Prompt' },
+    prompt: `任务 ${id}`,
+    params: { ...DEFAULT_PARAMS },
+    inputImageIds: [],
+    outputImages: [],
     status: 'done',
     error: null,
     createdAt: 1,
     finishedAt: 2,
     elapsed: 1,
-    origin,
-    agentOriginalRequest: '生成一张蓝色产品海报',
-    agentPlanId: plan.id,
-    agentExecutionId: 'execution-recorded',
-    agentPlanSnapshot: plan,
+    origin: 'agent',
+    agentConversationId: 'conversation-a',
+    agentTurn: 1,
+    ...patch,
   }
 }
 
-function resetRestrictedState(overrides: Record<string, unknown> = {}) {
-  mocks.restrictedState = {
-    phase: 'idle',
-    plan: null,
-    execution: null,
-    taskId: null,
-    error: null,
-    assetBindings: [],
-    localRun: null,
-    confirmAndExecute: vi.fn(),
-    retryOpenShopSave: vi.fn(),
-    returnToEditing: vi.fn(),
-    cancelExecution: vi.fn(),
-    ...overrides,
-  }
+const legacyPlan: ToolAgentPlan = {
+  schemaVersion: 2,
+  composerSnapshotHash: 'b'.repeat(64),
+  id: 'legacy-plan',
+  version: 2,
+  status: 'awaiting_confirmation',
+  expiresAt: '2099-01-01T00:00:00.000Z',
+  originalRequest: '旧版计划',
+  summary: '旧版 Tool 计划',
+  operation: { type: 'image.generate', generation: { exactPrompt: '旧版图', action: 'generate', size: '1024x1024', quality: 'high', outputFormat: 'png', outputCompression: null, imageCount: 1 } },
+  inputs: [],
+  assumptions: [],
+  warnings: [],
+  policyVersion: 'tool-operation-v2',
 }
 
 describe('AgentMainWorkspace', () => {
   beforeEach(() => {
     mocks.setLightboxImageId.mockReset()
-    resetRestrictedState()
+    mocks.cancel.mockReset()
+    mocks.retry.mockReset()
   })
 
-  it('同时挂载 Chat 与 Tool，并用稳定 panel id 切换可见性', () => {
-    const chatTask = task('chat-task', 'agent')
-    const toolTask = task('tool-task')
+  it('renders mixed Responses and Gateway turns in turn order in one conversation', () => {
+    const responseTurn = task('responses-turn', {
+      prompt: '先生成一张产品海报',
+      outputImages: ['response-output'],
+      agentAssistantText: '图片已生成。',
+      agentTurn: 1,
+    })
+    const pipelineTurn = task('pipeline-turn', {
+      prompt: '改成 870×220 横幅',
+      status: 'running',
+      finishedAt: null,
+      elapsed: null,
+      agentTurn: 2,
+      agentPlanSnapshot: v3Plan,
+      agentExecutionSnapshot: v3Execution,
+      agentExecutionId: v3Execution.id,
+      agentRoute: 'tool_pipeline',
+    })
+
     const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={chatTask} chatConversationTasks={[chatTask]} toolTask={toolTask} />,
+      <AgentMainWorkspace task={responseTurn} conversationTasks={[pipelineTurn, responseTurn]} />,
     )
 
-    expect(markup).toContain('id="agent-chat-panel"')
-    expect(markup).toContain('id="agent-tool-panel"')
-    expect(markup).toContain('data-agent-main-mode="chat"')
-    expect(markup).toContain('data-agent-main-mode="tool"')
-    expect(markup).toContain('data-component="chat-main"')
-    expect(markup).toContain('data-task="chat-task"')
-    expect(markup).toContain('aria-hidden="true"')
-    expect(markup).toContain('aria-hidden="false"')
+    const responseIndex = markup.indexOf('data-agent-conversation-turn="responses-turn"')
+    const pipelineIndex = markup.indexOf('data-agent-conversation-turn="pipeline-turn"')
+    expect(responseIndex).toBeGreaterThan(-1)
+    expect(pipelineIndex).toBeGreaterThan(responseIndex)
+    expect(markup).toContain('图片生成')
+    expect(markup).toContain('严格尺寸处理')
+    expect(markup).toContain('输出规格校验')
+    expect(markup).toContain('aria-label="取消执行"')
+    expect(markup).not.toContain('agent-chat-panel')
+    expect(markup).not.toContain('agent-tool-panel')
+    expect(markup).not.toMatch(/>Chat</)
+    expect(markup).not.toMatch(/>Tool</)
   })
 
-  it('从旧 TaskRecord 恢复为共享消息流、160px 结果、动作行和折叠详情', () => {
-    const completed = task('completed-task')
+  it('keeps a selected conversation isolated from another background execution', () => {
+    const selected = task('selected', { agentConversationId: 'conversation-selected' })
+    const background = task('background', {
+      prompt: '不应抢占的后台任务',
+      agentConversationId: 'conversation-background',
+      agentPlanSnapshot: v3Plan,
+      agentExecutionSnapshot: v3Execution,
+      status: 'running',
+    })
+
     const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={completed} />,
+      <AgentMainWorkspace task={selected} conversationTasks={[selected]} />,
     )
 
-    expect(markup).toContain('data-agent-conversation-stream')
-    expect(markup).toContain('data-agent-tool-user-message')
-    expect(markup).toContain('justify-end')
-    expect(markup).toContain('生成一张蓝色产品海报')
-    expect(markup).toContain('data-agent-tool-response')
-    expect(markup).toContain('data-agent-result-reply')
-    expect(markup).toContain('data-agent-result-images')
-    expect(markup).toContain('w-40')
-    expect(markup).toContain('data-lightbox-image-list="output-1 output-2"')
+    expect(markup).toContain('任务 selected')
+    expect(markup).not.toContain(background.prompt)
+    expect(markup).not.toContain('execution-v3')
+  })
+
+  it('keeps a failed v3 Pipeline retry on the plan card only', () => {
+    const failedExecution: RestrictedAgentExecution = {
+      ...v3Execution,
+      status: 'failed',
+      error: { code: 'ASSERT_FAILED', message: '输出规格校验失败' },
+      actions: v3Execution.actions?.map((action) => ({
+        ...action,
+        status: action.actionIndex === 2 ? 'failed' : action.status,
+        error: action.actionIndex === 2 ? { code: 'ASSERT_FAILED', message: '输出规格校验失败' } : null,
+      })),
+    }
+    const failedTask = task('pipeline-failed', {
+      status: 'error',
+      error: '输出规格校验失败',
+      agentPlanSnapshot: v3Plan,
+      agentExecutionSnapshot: failedExecution,
+      agentExecutionId: failedExecution.id,
+      agentRoute: 'tool_pipeline',
+    })
+
+    const markup = renderToStaticMarkup(
+      <AgentMainWorkspace task={failedTask} conversationTasks={[failedTask]} />,
+    )
+
     expect(markup).toContain('data-task-action-row="agent"')
-    expect(markup).toContain('data-agent-execution-details')
-    expect(markup).toContain('蓝色产品海报计划')
-    expect(markup).toContain('policy-v2')
-    expect(markup).toContain('execution-recorded')
-    expect(markup).toContain('https://example.com/output.png')
-    expect(markup).toContain('data-selectable-text')
-    expect(markup).not.toContain('data-component="task-detail"')
+    expect(markup.match(/aria-label="重试"/g)).toHaveLength(1)
+    expect(markup).not.toContain('aria-label="重试任务"')
   })
 
-  it('idle 是非实时流程的权威状态，不让残留状态覆盖历史任务', () => {
-    resetRestrictedState({ phase: 'idle', plan, error: '不应显示的残留错误' })
-    const historical = task('historical-idle-task')
-
-    const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
-    )
-
-    expect(markup).toContain('execution-recorded')
-    expect(markup).toContain('生成一张蓝色产品海报')
-    expect(markup).not.toContain('不应显示的残留错误')
-  })
-
-  it('只把当前 task 对应的 live execution 叠加进消息，历史任务不会串入状态', () => {
-    const livePlan = {
-      ...plan,
-      id: 'live-plan',
-      originalRequest: '不应串入历史的实时请求',
-      summary: '不应串入历史的实时计划',
-    }
-    resetRestrictedState({
-      phase: 'executing',
-      taskId: 'live-task',
-      plan: livePlan,
-      execution: {
-        id: 'live-execution',
-        planId: livePlan.id,
-        status: 'executing',
-        cancelRequested: false,
-        error: null,
-        outputAssets: [],
-        createdAt: '2026-08-12T00:00:00.000Z',
-        startedAt: '2026-08-12T00:00:01.000Z',
-        completedAt: null,
-        updatedAt: '2026-08-12T00:00:02.000Z',
-      },
+  it('renders legacy v1/v2 Tool records read-only without confirmation controls', () => {
+    const legacyTask = task('legacy-tool', {
+      origin: 'restricted-agent',
+      agentPlanSnapshot: legacyPlan,
+      agentOriginalRequest: '读取旧版 Tool 结果',
     })
 
-    const historical = task('historical-task')
     const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
+      <AgentMainWorkspace task={legacyTask} conversationTasks={[legacyTask]} />,
     )
 
-    expect(markup).toContain('execution-recorded')
-    expect(markup).toContain('生成一张蓝色产品海报')
-    expect(markup).toContain('蓝色产品海报计划')
-    expect(markup).not.toContain('live-execution')
-    expect(markup).not.toContain('不应串入历史的实时请求')
-    expect(markup).not.toContain('不应串入历史的实时计划')
-    expect(markup).not.toContain('Gateway 正在执行已确认计划')
-    expect(markup).not.toContain('尝试取消')
-  })
-
-  it('未绑定 task 的 planning 在选中历史任务时覆盖旧消息并显示当前草稿', () => {
-    resetRestrictedState({ phase: 'planning', taskId: null })
-    const historical = {
-      ...task('historical-planning-task'),
-      agentOriginalRequest: '不应显示的旧历史请求',
-    }
-
-    const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
-    )
-
-    expect(markup).toContain('规划中的用户请求')
-    expect(markup).toContain('Planner 正在生成可审查的执行计划')
-    expect(markup).not.toContain('不应显示的旧历史请求')
-    expect(markup).not.toContain('任务完成')
-    expect(markup).not.toContain('data-agent-result-images')
-    expect(markup).not.toContain('data-task-action-row="agent"')
-  })
-
-  it('未绑定 task 的待确认计划在选中历史任务时显示新计划卡', () => {
-    resetRestrictedState({ phase: 'awaiting_confirmation', taskId: null, plan })
-    const historical = {
-      ...task('historical-confirmation-task'),
-      agentOriginalRequest: '不应显示的旧确认历史请求',
-    }
-
-    const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
-    )
-
-    expect(markup).toContain(plan.originalRequest)
-    expect(markup).toContain('data-component="plan-card"')
-    expect(markup).toContain(plan.summary)
-    expect(markup).not.toContain('不应显示的旧确认历史请求')
-    expect(markup).not.toContain('任务完成')
-    expect(markup).not.toContain('execution-recorded')
-    expect(markup).not.toContain('data-task-action-row="agent"')
-  })
-
-  it('未绑定 task 的规划失败在选中历史任务时显示错误和恢复动作', () => {
-    resetRestrictedState({ phase: 'failed', taskId: null, error: '新规划服务不可用' })
-    const historical = {
-      ...task('historical-failed-task'),
-      agentOriginalRequest: '不应显示的旧失败历史请求',
-    }
-
-    const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={historical} />,
-    )
-
-    expect(markup).toContain('规划中的用户请求')
-    expect(markup).toContain('新规划服务不可用')
-    expect(markup).toContain('返回修改')
-    expect(markup).not.toContain('不应显示的旧失败历史请求')
-    expect(markup).not.toContain('任务完成')
-    expect(markup).not.toContain('data-agent-result-images')
-    expect(markup).not.toContain('data-task-action-row="agent"')
-  })
-
-  it('planning、确认和 execution 在同一 Agent 回复位置演进，执行中直显取消动作', () => {
-    resetRestrictedState({ phase: 'planning' })
-    const planningMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
-    )
-    expect(planningMarkup).toContain('data-agent-tool-response')
-    expect(planningMarkup).toContain('data-agent-tool-user-message')
-    expect(planningMarkup).toContain('规划中的用户请求')
-    expect(planningMarkup).toContain('Planner 正在生成可审查的执行计划')
-
-    resetRestrictedState({ phase: 'awaiting_confirmation', plan })
-    const confirmationMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
-    )
-    expect(confirmationMarkup).toContain('data-agent-tool-user-message')
-    expect(confirmationMarkup).toContain('data-agent-tool-response')
-    expect(confirmationMarkup).toContain('data-component="plan-card"')
-
-    resetRestrictedState({
-      phase: 'executing',
-      plan,
-      taskId: 'live-task',
-      execution: {
-        id: 'execution-live',
-        planId: plan.id,
-        status: 'executing',
-        cancelRequested: false,
-        error: null,
-        outputAssets: [],
-        createdAt: '2026-08-12T00:00:00.000Z',
-        startedAt: '2026-08-12T00:00:01.000Z',
-        completedAt: null,
-        updatedAt: '2026-08-12T00:00:02.000Z',
-      },
-    })
-    const runningTask = { ...task('live-task'), status: 'running' as const, outputImages: [], finishedAt: null, elapsed: null }
-    const executionMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={runningTask} />,
-    )
-    expect(executionMarkup).toContain('data-agent-tool-response')
-    expect(executionMarkup).toContain('Gateway 正在执行已确认计划')
-    expect(executionMarkup).toContain('尝试取消')
-    expect(executionMarkup).toContain('execution-live')
-  })
-
-  it('OpenShop 导出等待保存时只直显重试保存，并将 Run 信息放入详情', () => {
-    resetRestrictedState({
-      phase: 'failed',
-      plan,
-      taskId: 'openshop-task',
-      error: 'OpenShop 已导出结果等待重试保存',
-      localRun: {
-        id: 'local-run-1',
-        taskId: 'openshop-task',
-        status: 'exported',
-        saveStatus: 'failed',
-        error: { code: 'SAVE_FAILED', message: '保存服务暂时不可用', retryable: true },
-      },
-    })
-    const exportedTask = {
-      ...task('openshop-task'),
-      status: 'error' as const,
-      error: '保存服务暂时不可用',
-      outputImages: [],
-      agentLocalRunId: 'local-run-1',
-      agentRunId: 'local-run-1',
-      agentLocalRunStatus: 'exported' as const,
-      agentLocalSaveStatus: 'failed' as const,
-    }
-
-    const markup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={exportedTask} />,
-    )
-
-    expect(markup).toContain('OpenShop 已导出结果，等待保存')
-    expect(markup).toContain('保存服务暂时不可用')
-    expect(markup).toContain('仅重试保存')
-    expect(markup).not.toContain('返回修改并重新规划')
-    expect(markup).toContain('local-run-1')
-    expect(markup).toContain('执行与 Run')
-    expect(markup).toContain('data-openshop-local-run-status="exported"')
-  })
-
-  it('失败、取消、过期和 stale 的恢复动作保持直接可见', () => {
-    resetRestrictedState({ phase: 'failed', error: '规划服务不可用' })
-    const failedMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
-    )
-    expect(failedMarkup).toContain('规划服务不可用')
-    expect(failedMarkup).toContain('返回修改')
-
-    resetRestrictedState({ phase: 'stale', plan, error: '输入已变化' })
-    const staleMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
-    )
-    expect(staleMarkup).toContain('输入已变化')
-    expect(staleMarkup).toContain('data-component="plan-card"')
+    expect(markup).toContain('旧版 Tool 计划')
+    expect(markup).toContain('只读兼容')
+    expect(markup).not.toMatch(/确认|返回修改/)
   })
 })

@@ -130,7 +130,9 @@ describe('TaskActionRow', () => {
     })
 
     expect(shouldShowUnifiedAgentCancel(failedTask)).toBe(false)
-    expect(shouldShowTaskRetry(failedTask, 'agent')).toBe(true)
+    expect(shouldShowTaskRetry(failedTask, 'agent')).toBe(false)
+    expect(shouldShowTaskRetry(failedTask, 'workspace')).toBe(true)
+    expect(renderToStaticMarkup(<TaskActionRow task={failedTask} presentation="agent" />)).not.toContain('aria-label="重试任务"')
     failedActions.retry()
     expect(unifiedExecutorMocks.retryUnifiedAgentTask).toHaveBeenCalledWith(failedTask)
   })

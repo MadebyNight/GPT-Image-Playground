@@ -943,24 +943,35 @@ export function decodeRestrictedAgentAssetBindings(
   if (bindings.length !== plan.inputs.length) throw new Error('计划 asset binding 数量不一致')
   const gatewayAssetIds = new Set<string>()
   const browserImageIds = new Set<string>()
-  const ordinalByRole = new Map<RestrictedAgentPlanInput['role'], number>()
+  const inputCountByRole = new Map<RestrictedAgentPlanInput['role'], number>()
+  const bindingOrdinalsByRole = new Map<RestrictedAgentPlanInput['role'], Set<number>>()
   for (const [index, input] of plan.inputs.entries()) {
-    const ordinal = ordinalByRole.get(input.role) ?? 0
-    ordinalByRole.set(input.role, ordinal + 1)
+    inputCountByRole.set(input.role, (inputCountByRole.get(input.role) ?? 0) + 1)
     const binding = bindings[index]
+    const roleOrdinals = bindingOrdinalsByRole.get(input.role) ?? new Set<number>()
     if (!binding
       || binding.gatewayAssetId !== input.assetId
       || binding.role !== input.role
-      || binding.ordinal !== ordinal
       || (input.role === 'mask'
         ? binding.browserImageId !== null || binding.sourceTaskId !== null
         : binding.browserImageId === null)
       || gatewayAssetIds.has(binding.gatewayAssetId)
-      || (binding.browserImageId !== null && browserImageIds.has(binding.browserImageId))) {
+      || (binding.browserImageId !== null && browserImageIds.has(binding.browserImageId))
+      || roleOrdinals.has(binding.ordinal)) {
       throw new Error('计划 asset binding 与计划输入不一致')
     }
     gatewayAssetIds.add(binding.gatewayAssetId)
     if (binding.browserImageId !== null) browserImageIds.add(binding.browserImageId)
+    roleOrdinals.add(binding.ordinal)
+    bindingOrdinalsByRole.set(input.role, roleOrdinals)
+  }
+  for (const [role, inputCount] of inputCountByRole) {
+    const ordinals = bindingOrdinalsByRole.get(role)
+    if (!ordinals
+      || ordinals.size !== inputCount
+      || [...ordinals].some((ordinal) => ordinal >= inputCount)) {
+      throw new Error('计划 asset binding 与计划输入不一致')
+    }
   }
   if (plan.schemaVersion === 2) {
     const operation = getRestrictedAgentPlanOperation(plan)
@@ -1075,15 +1086,16 @@ export async function computeRestrictedAgentConfirmationHash(
   return hashComposerSnapshotManifest(await createComposerSnapshotManifest(input))
 }
 
-export async function getRestrictedAgentCapabilities(options: { refresh?: boolean } = {}) {
+export async function getRestrictedAgentCapabilities(options: { refresh?: boolean; signal?: AbortSignal } = {}) {
   if (!options.refresh && capabilities) return capabilities
-  if (!options.refresh && capabilitiesPromise) return capabilitiesPromise
+  if (!options.refresh && capabilitiesPromise && !options.signal) return capabilitiesPromise
 
-  capabilitiesPromise = fetch(`${getAgentApiBase()}/capabilities`, {
+  const request = fetch(`${getAgentApiBase()}/capabilities`, {
     method: 'GET',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { Accept: 'application/json' },
+    signal: options.signal,
   })
     .then((response) => readEnvelope<RestrictedAgentCapabilities>(response))
     .then((next) => {
@@ -1092,11 +1104,18 @@ export async function getRestrictedAgentCapabilities(options: { refresh?: boolea
       capabilities = next
       return next
     })
-    .finally(() => {
-      capabilitiesPromise = null
-    })
 
-  return capabilitiesPromise
+  // 带 signal 的探测归属于单个交互回合。不能将它登记为全局 pending promise，
+  // 否则该回合取消会让并发的普通 Gateway 请求收到同一个 AbortError。
+  if (options.signal) return request
+
+  let pending: Promise<RestrictedAgentCapabilities>
+  pending = request.finally(() => {
+    // 并发 refresh 可能已登记了更新的请求，旧请求完成时不能清空它。
+    if (capabilitiesPromise === pending) capabilitiesPromise = null
+  })
+  capabilitiesPromise = pending
+  return pending
 }
 
 async function postWithCsrf<T>(path: string, init: Omit<RequestInit, 'method'> = {}) {

@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AppSettings, type TaskRecord } from '../types'
 import { DEFAULT_SETTINGS } from './apiProfiles'
-import { getEffectiveSettings, initializeRuntimeConfig } from './serverApiConfig'
+import {
+  getAgentCapabilities,
+  getChatUnavailableMessage,
+  getEffectiveSettings,
+  initializeRuntimeConfig,
+  RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE,
+} from './serverApiConfig'
 import {
   LEGACY_AGENT_ASSISTANT_TEXT,
   LEGACY_AGENT_COMPLETED_RESPONSE,
@@ -45,6 +51,15 @@ const storeMock = vi.hoisted(() => {
     retryTaskWithExecution: vi.fn(),
   }
 })
+
+function createResponsesSettings(): AppSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    apiMode: 'responses',
+    apiKey: 'test-key',
+    profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
+  }
+}
 
 vi.mock('../store', () => ({
   submitTask: storeMock.submitTask,
@@ -155,6 +170,15 @@ describe('storeBackedAgentExecutor', () => {
   })
 
   it('calls Responses API without the prompt rewrite guard in agent mode', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: { enabled: false },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -212,6 +236,27 @@ describe('storeBackedAgentExecutor', () => {
     })
   })
 
+  it('在 BYOK 直连 Responses 路径保留既有历史上下文拼接', async () => {
+    initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
+    const conversationContext = '上一轮已按 870×220 px 交付横幅，保留深蓝夜景。'
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callAgentResponsesImageApi({
+      settings: storeMock.state.settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+      agentConversationContext: conversationContext,
+    }, { stream: false, imageCount: 1 })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.input).toBe(`${conversationContext}\n\n本轮请求：\n${LEGACY_AGENT_PROMPT}`)
+    expect(body).not.toHaveProperty('conversationContext')
+  })
+
   it.each([
     ['严格尺寸', '生成一张 870×220 px 的夏日咖啡横幅', '检测到严格输出或确定性编辑要求：精确尺寸 870×220px。'],
     ['未绑定历史图片', '编辑上一张图', '历史图片尚未显式绑定'],
@@ -227,6 +272,7 @@ describe('storeBackedAgentExecutor', () => {
     }, { stream: false, imageCount: 1 })).rejects.toThrow(reason)
 
     expect(fetchMock).not.toHaveBeenCalled()
+    expect(getAgentCapabilities(storeMock.state.settings).responsesUsable).toBe(true)
   })
 
   it('uses the same-origin Gateway proxy contract without browser credentials', async () => {
@@ -259,6 +305,206 @@ describe('storeBackedAgentExecutor', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/gateway-proxy/responses')
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ 'Content-Type': 'application/json' })
+  })
+
+  it('Gateway capabilities 不可达时保留服务端同源 Responses 代理', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('Gateway 不可达'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    await callAgentResponsesImageApi({
+      settings: getEffectiveSettings(DEFAULT_SETTINGS),
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/agent-api/v1/capabilities')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/gateway-proxy/responses')
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({ 'Content-Type': 'application/json' })
+  })
+
+  it('取消 Gateway capabilities 探测时不回退到直连 Responses', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
+    let capabilitySignal: AbortSignal | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      capabilitySignal = init?.signal ?? undefined
+      return new Promise<Response>((_resolve, reject) => {
+        capabilitySignal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        }, { once: true })
+      })
+    })
+
+    const request = callAgentResponsesImageApi({
+      settings: getEffectiveSettings(DEFAULT_SETTINGS),
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1, taskId: 'cancel-capabilities-probe' })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/agent-api/v1/capabilities')
+    expect(capabilitySignal).toBeInstanceOf(AbortSignal)
+    expect(cancelAgentTask('cancel-capabilities-probe')).toBe(true)
+    await expect(request).rejects.toMatchObject({ message: 'Agent 请求已取消' })
+    expect(capabilitySignal?.aborted).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('服务端托管 Responses 且 Gateway 可达时走受控 relay，并保持 SSE 解析', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { enabled: true, csrfToken: 'relay-csrf-token' },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(createLegacyAgentSseFixture(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+      }))
+
+    const conversationContext = '上一轮已严格输出 870×220 px 的横幅；本轮无需沿用该规格。'
+
+    const result = await callAgentResponsesImageApi({
+      settings: getEffectiveSettings(DEFAULT_SETTINGS),
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+      agentConversationContext: conversationContext,
+    }, { stream: true, imageCount: 1, taskId: 'gateway-relay-stream' })
+
+    expect(result.images).toEqual([`data:image/png;base64,${LEGACY_AGENT_IMAGE_BASE64}`])
+    expect(result.assistantText).toBe(LEGACY_AGENT_ASSISTANT_TEXT)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/agent-api/v1/capabilities')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/agent-api/v1/responses/image')
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': 'relay-csrf-token',
+    })
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      request: LEGACY_AGENT_PROMPT,
+      input: LEGACY_AGENT_PROMPT,
+      conversationContext,
+      stream: true,
+      imageTool: {
+        type: 'image_generation',
+        action: 'generate',
+        size: DEFAULT_PARAMS.size,
+        quality: DEFAULT_PARAMS.quality,
+        output_format: DEFAULT_PARAMS.output_format,
+      },
+    })
+  })
+
+  it('Relay POST 断连不会打开 Responses breaker', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
+    const settings = getEffectiveSettings(DEFAULT_SETTINGS)
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { enabled: true, csrfToken: 'relay-csrf-token' },
+      }), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('Relay 连接中断'))
+
+    await expect(callAgentResponsesImageApi({
+      settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow('Relay 连接中断')
+
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
   })
 
   it('固定 Chat Responses 请求体与流事件契约', async () => {
@@ -514,6 +760,7 @@ describe('storeBackedAgentExecutor', () => {
   })
 
   it('rejects HTTP errors without manufacturing assistant partial text', async () => {
+    const settings = createResponsesSettings()
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       error: { message: '上游拒绝请求' },
     }), {
@@ -522,18 +769,158 @@ describe('storeBackedAgentExecutor', () => {
     }))
 
     await expect(callAgentResponsesImageApi({
-      settings: {
-        ...DEFAULT_SETTINGS,
-        apiMode: 'responses',
-        apiKey: 'test-key',
-        profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
-      },
+      settings,
       prompt: '测试 HTTP 错误',
       params: { ...DEFAULT_PARAMS },
       inputImageDataUrls: [],
     }, { stream: true, imageCount: 1, taskId: 'http-error-task' })).rejects.toMatchObject({
       message: '上游拒绝请求',
     })
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
+  })
+
+  it('不把用户 400 视为 Responses 服务故障', async () => {
+    const settings = createResponsesSettings()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { message: '请求参数无效' },
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow('请求参数无效')
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
+  })
+
+  it.each([502, 504])('在 Responses HTTP %i 后熔断 Agent，并由随后成功的普通请求恢复', async (status) => {
+    const settings = createResponsesSettings()
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: { enabled: false },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    })
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: `上游 ${status}` } }), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(LEGACY_AGENT_COMPLETED_RESPONSE), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    await expect(callAgentResponsesImageApi({
+      settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1, taskId: `runtime-${status}` })).rejects.toThrow(`上游 ${status}`)
+
+    expect(getAgentCapabilities(settings)).toMatchObject({
+      agentUsable: false,
+      responsesUsable: false,
+      toolPipelineUsable: true,
+    })
+    expect(getChatUnavailableMessage(settings)).toBe(RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE)
+
+    const failedTask: TaskRecord = {
+      id: `failed-runtime-${status}`,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageIds: [],
+      outputImages: [],
+      status: 'error',
+      error: `上游 ${status}`,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      origin: 'agent',
+      agentConversationId: `runtime-${status}`,
+      agentTurn: 1,
+    }
+    expect(await retryAgentTask(failedTask)).toBeNull()
+    expect(storeMock.retryTaskWithExecution).not.toHaveBeenCalled()
+
+    await expect(callAgentResponsesImageApi({
+      settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1, taskId: `runtime-recover-${status}` })).resolves.toMatchObject({
+      images: [expect.any(String)],
+    })
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
+  })
+
+  it('在实际 Responses 网络失败后打开 breaker', async () => {
+    const settings = createResponsesSettings()
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('网络不可达'))
+
+    await expect(callAgentResponsesImageApi({
+      settings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow('网络不可达')
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(false)
+  })
+
+  it('只对服务端托管 Responses 的凭据失败打开 breaker，不把用户 4xx 当作服务故障', async () => {
+    initializeRuntimeConfig({
+      version: 1,
+      serverApi: {
+        enabled: true,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
+        modelOptions: ['gpt-5.5'],
+        apiModeOptions: ['responses'],
+        codexCli: false,
+        responseFormatB64Json: false,
+        timeoutSeconds: 60,
+        proxyPath: '/gateway-proxy',
+      },
+    })
+    const managedSettings = getEffectiveSettings(DEFAULT_SETTINGS)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { message: '服务端 API Key 无效' },
+    }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(callAgentResponsesImageApi({
+      settings: managedSettings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow('服务端 API Key 无效')
+    expect(getAgentCapabilities(managedSettings).responsesUsable).toBe(false)
+
+    initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
+    const userSettings = createResponsesSettings()
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: { message: '用户 API Key 无效' },
+    }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    await expect(callAgentResponsesImageApi({
+      settings: userSettings,
+      prompt: LEGACY_AGENT_PROMPT,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow('用户 API Key 无效')
+    expect(getAgentCapabilities(userSettings).responsesUsable).toBe(true)
   })
 
   it('uses response.failed terminal details and persists preceding partial text', async () => {
@@ -686,6 +1073,7 @@ describe('storeBackedAgentExecutor', () => {
   })
 
   it('cancels an active stream and retains the emitted assistant partial', async () => {
+    const settings = createResponsesSettings()
     let partialSeen!: () => void
     const sawPartial = new Promise<void>((resolve) => { partialSeen = resolve })
     const unsubscribe = subscribeAgentProgress((event) => {
@@ -703,12 +1091,7 @@ describe('storeBackedAgentExecutor', () => {
 
     try {
       const request = callAgentResponsesImageApi({
-        settings: {
-          ...DEFAULT_SETTINGS,
-          apiMode: 'responses',
-          apiKey: 'test-key',
-          profiles: [{ ...DEFAULT_SETTINGS.profiles[0], apiMode: 'responses', apiKey: 'test-key' }],
-        },
+        settings,
         prompt: '测试取消',
         params: { ...DEFAULT_PARAMS },
         inputImageDataUrls: [],
@@ -720,6 +1103,7 @@ describe('storeBackedAgentExecutor', () => {
         message: 'Agent 请求已取消',
         agentAssistantText: '取消前 partial',
       })
+      expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
     } finally {
       unsubscribe()
     }

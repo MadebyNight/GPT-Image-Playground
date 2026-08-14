@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore } from '../store'
-import { filterAgentTasksByMode, getConversationTasks } from '../lib/agentConversation'
+import { getAgentConversationId, getConversationTasks } from '../lib/agentConversation'
 import { getAgentLayoutPreferences, setAgentLayoutPreferences } from '../lib/agentLayoutPreferences'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
-import type { AgentCapabilities, AgentMode, TaskRecord } from '../types'
+import type { AgentCapabilities, TaskRecord } from '../types'
 import AgentHistoryPanel from './AgentHistoryPanel'
 import AgentMainWorkspace from './AgentMainWorkspace'
 import AgentTemplateRail from './AgentTemplateRail'
@@ -26,89 +26,79 @@ export function getNextAgentTaskIdAfterRemoval(previousTaskIds: string[], curren
   return currentTaskIds[previousIndex] ?? currentTaskIds[previousIndex - 1] ?? null
 }
 
+/** 仅在 Agent 实际可见时初始化历史选择，避免隐藏挂载提前耗尽初始化时机。 */
+export function getInitialAgentTaskId(active: boolean, activeTaskId: string | null, taskIds: string[]): string | null {
+  if (!active || !taskIds.length) return null
+  return activeTaskId && taskIds.includes(activeTaskId) ? activeTaskId : taskIds[0]
+}
+
 interface AgentWorkspaceProps {
-  mode: AgentMode
   capabilities: AgentCapabilities
-  activeTaskByMode: Record<AgentMode, string | null>
-  onActiveTaskChange: (mode: AgentMode, taskId: string | null) => void
-  onModeChange: (mode: AgentMode) => void
+  activeTaskId: string | null
+  onActiveTaskChange: (taskId: string | null) => void
   composer?: ReactNode
-  /** 隐藏时仍保持两个 Main Workspace 挂载，但不自动改写选中项。 */
+  /** 隐藏时仍保持工作区挂载，但不会自行改写当前选择。 */
   active?: boolean
+}
+
+function isAgentHistoryTask(task: TaskRecord) {
+  return task.origin === 'agent' || task.origin === 'restricted-agent' || task.origin === 'openshop'
 }
 
 function sortTasks(tasks: TaskRecord[]) {
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
 }
 
+function isAgentUsable(capabilities: AgentCapabilities) {
+  return capabilities.agentUsable ?? capabilities.responsesUsable ?? capabilities.chatUsable
+}
+
 export default function AgentWorkspace({
-  mode,
   capabilities,
-  activeTaskByMode,
+  activeTaskId,
   onActiveTaskChange,
-  onModeChange,
   composer,
   active = true,
 }: AgentWorkspaceProps) {
   const tasks = useStore((state) => state.tasks)
   const [layoutPreferences, setLayoutPreferences] = useState(getAgentLayoutPreferences)
   const [mobileDrawer, setMobileDrawer] = useState<AgentMobileDrawer>(null)
-  const [isStartingNewConversation, setIsStartingNewConversation] = useState(false)
-  const previousTaskIdsRef = useRef<Partial<Record<AgentMode, string[]>>>({})
+  const previousTaskIdsRef = useRef<string[] | null>(null)
+  const selectionInitializedRef = useRef(false)
   const drawerRef = useRef<HTMLDivElement>(null)
   const historyTriggerRef = useRef<HTMLButtonElement>(null)
   const templateTriggerRef = useRef<HTMLButtonElement>(null)
 
-  const tasksByMode = useMemo<Record<AgentMode, TaskRecord[]>>(() => ({
-    chat: sortTasks(filterAgentTasksByMode(tasks, 'chat')),
-    tool: sortTasks(filterAgentTasksByMode(tasks, 'tool')),
-  }), [tasks])
-  const selectedTaskByMode = useMemo<Record<AgentMode, TaskRecord | null>>(() => ({
-    chat: tasksByMode.chat.find((task) => task.id === activeTaskByMode.chat) ?? null,
-    tool: tasksByMode.tool.find((task) => task.id === activeTaskByMode.tool) ?? null,
-  }), [activeTaskByMode, tasksByMode])
-  const chatConversationTasks = useMemo(
-    () => selectedTaskByMode.chat ? getConversationTasks(tasksByMode.chat, selectedTaskByMode.chat) : [],
-    [selectedTaskByMode.chat, tasksByMode.chat],
+  const agentTasks = useMemo(
+    () => sortTasks(tasks.filter(isAgentHistoryTask)),
+    [tasks],
   )
-  const chatTask = chatConversationTasks[chatConversationTasks.length - 1] ?? selectedTaskByMode.chat
+  const selectedTask = useMemo(
+    () => agentTasks.find((task) => task.id === activeTaskId) ?? null,
+    [activeTaskId, agentTasks],
+  )
+  const conversationTasks = useMemo(
+    () => selectedTask ? getConversationTasks(tasks, selectedTask) : [],
+    [selectedTask, tasks],
+  )
 
   useEffect(() => {
-    for (const candidateMode of ['chat', 'tool'] as const) {
-      const currentTaskIds = tasksByMode[candidateMode].map((task) => task.id)
-      const previousTaskIds = previousTaskIdsRef.current[candidateMode]
-      previousTaskIdsRef.current[candidateMode] = currentTaskIds
-      if (!active) continue
+    const currentTaskIds = agentTasks.map((task) => task.id)
+    const previousTaskIds = previousTaskIdsRef.current
+    previousTaskIdsRef.current = currentTaskIds
 
-      const activeTaskId = activeTaskByMode[candidateMode]
-      const startingNewChat = candidateMode === 'chat' && isStartingNewConversation
-      if (!previousTaskIds) {
-        if (!activeTaskId && currentTaskIds[0] && !startingNewChat) {
-          onActiveTaskChange(candidateMode, currentTaskIds[0])
-        }
-        continue
-      }
-
-      const latestTaskId = currentTaskIds[0] ?? null
-      const hasNewLatestTask = Boolean(latestTaskId && !previousTaskIds.includes(latestTaskId))
-      if (hasNewLatestTask && latestTaskId) {
-        onActiveTaskChange(candidateMode, latestTaskId)
-        if (candidateMode === 'chat') setIsStartingNewConversation(false)
-        if (candidateMode === mode) setMobileDrawer(null)
-        continue
-      }
-
-      if (activeTaskId && !currentTaskIds.includes(activeTaskId)) {
-        onActiveTaskChange(
-          candidateMode,
-          getNextAgentTaskIdAfterRemoval(previousTaskIds, currentTaskIds, activeTaskId),
-        )
-        continue
-      }
-
-      if (!activeTaskId && latestTaskId && !startingNewChat) onActiveTaskChange(candidateMode, latestTaskId)
+    // 初始化仅选择一次最近的已有会话。之后任何后台新增或完成都不得抢占用户选择。
+    if (!selectionInitializedRef.current) {
+      const initialTaskId = getInitialAgentTaskId(active, activeTaskId, currentTaskIds)
+      if (!initialTaskId) return
+      selectionInitializedRef.current = true
+      if (initialTaskId !== activeTaskId) onActiveTaskChange(initialTaskId)
+      return
     }
-  }, [active, activeTaskByMode, isStartingNewConversation, mode, onActiveTaskChange, tasksByMode])
+
+    if (!active || !activeTaskId || currentTaskIds.includes(activeTaskId)) return
+    onActiveTaskChange(getNextAgentTaskIdAfterRemoval(previousTaskIds ?? [], currentTaskIds, activeTaskId))
+  }, [active, activeTaskId, agentTasks, onActiveTaskChange])
 
   const updateDesktopPreferences = (patch: Partial<typeof layoutPreferences>) => {
     setLayoutPreferences((current) => {
@@ -127,23 +117,20 @@ export default function AgentWorkspace({
   }, [])
 
   const handleSelectTask = (taskId: string) => {
-    if (mode === 'chat') setIsStartingNewConversation(false)
-    onActiveTaskChange(mode, taskId)
+    selectionInitializedRef.current = true
+    onActiveTaskChange(taskId)
     closeMobileDrawer()
   }
 
   const handleNewConversation = () => {
-    setIsStartingNewConversation(true)
-    onActiveTaskChange('chat', null)
+    selectionInitializedRef.current = true
+    onActiveTaskChange(null)
     closeMobileDrawer()
+    focusComposer()
   }
 
   useCloseOnEscape(Boolean(mobileDrawer), closeMobileDrawer)
   usePreventBackgroundScroll(Boolean(mobileDrawer), drawerRef)
-
-  useEffect(() => {
-    setMobileDrawer(null)
-  }, [mode])
 
   useEffect(() => {
     const drawer = drawerRef.current
@@ -171,29 +158,17 @@ export default function AgentWorkspace({
     return () => drawer.removeEventListener('keydown', keepFocusInside)
   }, [mobileDrawer])
 
-  const focusComposer = () => {
+  function focusComposer() {
     requestAnimationFrame(() => {
       document.querySelector<HTMLElement>('[data-input-bar-presentation="embedded"] [contenteditable="true"]')?.focus()
     })
   }
 
-  const handleModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-    event.preventDefault()
-    const nextMode: AgentMode = event.key === 'ArrowLeft' || event.key === 'Home' ? 'chat' : 'tool'
-    const tabList = event.currentTarget.closest('[role="tablist"]')
-    setMobileDrawer(null)
-    onModeChange(nextMode)
-    requestAnimationFrame(() => {
-      tabList?.querySelector<HTMLButtonElement>(`[data-agent-mode-tab="${nextMode}"]`)?.focus()
-    })
-  }
-
-  if (!capabilities.defaultMode) {
+  if (!isAgentUsable(capabilities)) {
     return (
       <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-        <h2 className="font-semibold">Agent 尚不可用</h2>
-        <p className="mt-2 leading-6">请配置 OpenAI-compatible Responses API，或由部署管理员启用 Tool Agent Gateway。</p>
+        <h2 className="font-semibold">Agent 当前不可用</h2>
+        <p className="mt-2 leading-6">Responses 服务不可用，Tool Pipeline 不会单独启用。请先恢复 Responses 服务后再试。</p>
       </section>
     )
   }
@@ -214,26 +189,7 @@ export default function AgentWorkspace({
           <HistoryIcon className="h-5 w-5" aria-hidden="true" />
           <span className="sr-only">打开历史记录</span>
         </button>
-        {capabilities.modeSwitching ? (
-          <div className="inline-flex rounded-xl bg-gray-100 p-1 dark:bg-white/[0.05]" role="tablist" aria-label="Agent 模式">
-            {(['chat', 'tool'] as const).map((candidateMode) => (
-              <button
-                key={candidateMode}
-                type="button"
-                role="tab"
-                data-agent-mode-tab={candidateMode}
-                aria-selected={mode === candidateMode}
-                aria-controls={`agent-${candidateMode}-panel`}
-                tabIndex={mode === candidateMode ? 0 : -1}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${mode === candidateMode ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
-                onClick={() => onModeChange(candidateMode)}
-                onKeyDown={handleModeKeyDown}
-              >
-                {candidateMode === 'chat' ? 'Chat' : 'Tool'}
-              </button>
-            ))}
-          </div>
-        ) : <span className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">{mode} agent</span>}
+        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">Agent</span>
         <button
           ref={templateTriggerRef}
           type="button"
@@ -264,7 +220,7 @@ export default function AgentWorkspace({
                   <span className="sr-only">收起历史记录</span>
                 </button>
               </div>
-              <div id="agent-desktop-history" className="min-h-0 flex-1"><AgentHistoryPanel mode={mode} activeTaskId={activeTaskByMode[mode]} onSelectTask={handleSelectTask} onNewConversation={mode === 'chat' ? handleNewConversation : undefined} /></div>
+              <div id="agent-desktop-history" className="min-h-0 flex-1"><AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} onNewConversation={handleNewConversation} /></div>
             </div>
           ) : (
             <button type="button" aria-expanded="false" aria-controls="agent-desktop-history" className="flex h-full w-full flex-col items-center gap-3 pt-3 text-gray-400 transition hover:bg-gray-100/80 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:hover:bg-white/[0.04] dark:hover:text-gray-200" onClick={() => updateDesktopPreferences({ historyExpanded: true })} title="展开历史记录">
@@ -275,33 +231,7 @@ export default function AgentWorkspace({
           )}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col bg-white dark:bg-gray-950">
-          <div data-agent-desktop-mode-header className="hidden h-12 shrink-0 items-center justify-center border-b border-gray-200/80 xl:flex dark:border-white/[0.08]">
-            {capabilities.modeSwitching ? (
-              <div data-agent-mode-switcher className="inline-flex rounded-xl border border-gray-200 bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/[0.08] dark:bg-gray-900/90" role="tablist" aria-label="Agent 模式">
-                {(['chat', 'tool'] as const).map((candidateMode) => (
-                  <button
-                    key={candidateMode}
-                    type="button"
-                    role="tab"
-                    data-agent-mode-tab={candidateMode}
-                    aria-selected={mode === candidateMode}
-                    aria-controls={`agent-${candidateMode}-panel`}
-                    tabIndex={mode === candidateMode ? 0 : -1}
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                      mode === candidateMode
-                        ? 'bg-blue-500 text-white shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'
-                    }`}
-                    onClick={() => onModeChange(candidateMode)}
-                    onKeyDown={handleModeKeyDown}
-                  >
-                    {candidateMode === 'chat' ? 'Chat' : 'Tool'}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <div className="min-h-0 flex-1"><AgentMainWorkspace mode={mode} chatTask={chatTask} chatConversationTasks={chatConversationTasks} toolTask={selectedTaskByMode.tool} /></div>
+          <div className="min-h-0 flex-1"><AgentMainWorkspace task={selectedTask} conversationTasks={conversationTasks} /></div>
           {active ? composer : null}
         </div>
         <div className="min-h-0 border-l border-gray-200/80 bg-gray-50/80 dark:border-white/[0.08] dark:bg-black/10">
@@ -317,7 +247,7 @@ export default function AgentWorkspace({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col xl:hidden">
-        <div className="min-h-0 flex-1"><AgentMainWorkspace mode={mode} chatTask={chatTask} chatConversationTasks={chatConversationTasks} toolTask={selectedTaskByMode.tool} /></div>
+        <div className="min-h-0 flex-1"><AgentMainWorkspace task={selectedTask} conversationTasks={conversationTasks} /></div>
         {active ? composer : null}
       </div>
 
@@ -330,7 +260,7 @@ export default function AgentWorkspace({
               <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-gray-400 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-white/[0.06]" onClick={closeMobileDrawer} aria-label="关闭侧栏"><CloseIcon className="h-5 w-5" aria-hidden="true" /></button>
             </div>
             <div className="min-h-0 flex-1">
-              {mobileDrawer === 'history' ? <AgentHistoryPanel mode={mode} activeTaskId={activeTaskByMode[mode]} onSelectTask={handleSelectTask} onNewConversation={mode === 'chat' ? handleNewConversation : undefined} /> : <AgentTemplateRail onTemplateApplied={() => { closeMobileDrawer(); focusComposer() }} />}
+              {mobileDrawer === 'history' ? <AgentHistoryPanel activeTaskId={activeTaskId} onSelectTask={handleSelectTask} onNewConversation={handleNewConversation} /> : <AgentTemplateRail onTemplateApplied={() => { closeMobileDrawer(); focusComposer() }} />}
             </div>
           </div>
         </div>

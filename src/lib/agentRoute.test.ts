@@ -57,6 +57,24 @@ describe('routeAgentTurn', () => {
       route: 'tool_pipeline',
       finalOutputSpec: { outputFormat: 'webp' },
     })
+
+    expect(routeAgentTurn({ prompt: '生成一张透明图片' })).toMatchObject({
+      route: 'tool_pipeline',
+      hardConstraints: expect.arrayContaining(['透明背景']),
+    })
+
+    expect(routeAgentTurn({ prompt: '生成 GIF 格式图片' })).toMatchObject({
+      route: 'unsupported',
+      fallbackForbidden: true,
+    })
+  })
+
+  it('将严格语境中的非常见比例锁定到 Tool Pipeline', () => {
+    expect(routeAgentTurn({ prompt: '严格按照 2.35:1 生成电影感横幅' })).toMatchObject({
+      route: 'tool_pipeline',
+      fallbackForbidden: true,
+      hardConstraints: expect.arrayContaining(['固定比例 2.35:1']),
+    })
   })
 
   it('将明确工具要求锁定到 Tool Pipeline', () => {
@@ -64,6 +82,20 @@ describe('routeAgentTurn', () => {
       route: 'tool_pipeline',
       fallbackForbidden: true,
       hardConstraints: expect.arrayContaining(['明确要求 Tool Pipeline']),
+    })
+  })
+
+  it.each([
+    '请用 Photoshop 完成这张图',
+    '使用 Gimp 编辑这张图片',
+    '请使用 Figma 制作这个横幅',
+    '用 Canva 生成社交媒体配图',
+    '请用美图秀秀处理这张照片',
+  ])('将具名工具要求锁定到 Tool Pipeline：%s', (prompt) => {
+    expect(routeAgentTurn({ prompt })).toMatchObject({
+      route: 'tool_pipeline',
+      fallbackForbidden: true,
+      hardConstraints: expect.arrayContaining(['明确要求工具']),
     })
   })
 

@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { TaskRecord } from '../types'
+import type { AgentCapabilities, TaskRecord } from '../types'
 import { DEFAULT_PARAMS } from '../types'
 
 const tasks: TaskRecord[] = [
   {
-    id: 'task-new',
-    prompt: '新任务',
+    id: 'task-background',
+    prompt: '后台严格尺寸任务',
     params: { ...DEFAULT_PARAMS },
     inputImageIds: [],
     outputImages: [],
@@ -15,11 +15,13 @@ const tasks: TaskRecord[] = [
     createdAt: 2,
     finishedAt: null,
     elapsed: null,
-    origin: 'restricted-agent',
+    origin: 'agent',
+    agentConversationId: 'conversation-a',
+    agentTurn: 2,
   },
   {
-    id: 'task-old',
-    prompt: '旧任务',
+    id: 'task-selected',
+    prompt: '当前会话任务',
     params: { ...DEFAULT_PARAMS },
     inputImageIds: [],
     outputImages: [],
@@ -29,6 +31,8 @@ const tasks: TaskRecord[] = [
     finishedAt: 2,
     elapsed: 1,
     origin: 'agent',
+    agentConversationId: 'conversation-a',
+    agentTurn: 1,
   },
 ]
 
@@ -36,57 +40,64 @@ vi.mock('../store', () => ({
   useStore: <T,>(selector: (state: { tasks: TaskRecord[] }) => T) => selector({ tasks }),
 }))
 vi.mock('./AgentHistoryPanel', () => ({
-  default: ({ mode, activeTaskId }: { mode: string; activeTaskId: string | null }) => <div data-component="agent-history" data-mode={mode} data-active-task={activeTaskId ?? ''} />,
+  default: ({ activeTaskId }: { activeTaskId: string | null }) => <div data-component="agent-history" data-active-task={activeTaskId ?? ''} />,
 }))
 vi.mock('./AgentMainWorkspace', () => ({
-  default: ({ mode, chatTask, toolTask }: { mode: string; chatTask: TaskRecord | null; toolTask: TaskRecord | null }) => (
-    <div data-component="agent-main" data-mode={mode} data-chat-task={chatTask?.id ?? ''} data-tool-task={toolTask?.id ?? ''} />
+  default: ({ task, conversationTasks }: { task: TaskRecord | null; conversationTasks: TaskRecord[] }) => (
+    <div
+      data-component="agent-main"
+      data-task={task?.id ?? ''}
+      data-turns={conversationTasks.map((item) => item.id).join(' ')}
+    />
   ),
 }))
 vi.mock('./AgentTemplateRail', () => ({
   default: () => <div data-component="agent-templates" />,
 }))
 
-import AgentWorkspace from './AgentWorkspace'
-import { getNextAgentTaskIdAfterRemoval } from './AgentWorkspace'
+import AgentWorkspace, { getInitialAgentTaskId, getNextAgentTaskIdAfterRemoval } from './AgentWorkspace'
+
+const capabilities: AgentCapabilities = {
+  agentUsable: true,
+  responsesUsable: true,
+  toolPipelineUsable: true,
+  chatAllowed: true,
+  chatConfigured: true,
+  chatUsable: true,
+  tool: true,
+  openShopTool: false,
+  defaultMode: 'chat',
+  modeSwitching: false,
+}
 
 describe('AgentWorkspace', () => {
-  it('renders the responsive shared shell with persisted desktop rails and mobile drawer triggers', () => {
+  it('renders one responsive Agent shell without Chat or Tool selectors', () => {
     const markup = renderToStaticMarkup(
       <AgentWorkspace
-        mode="chat"
-        capabilities={{ chatAllowed: true, chatConfigured: true, chatUsable: true, tool: true, openShopTool: false, defaultMode: 'chat', modeSwitching: true }}
-        activeTaskByMode={{ chat: 'task-old', tool: 'task-new' }}
+        capabilities={capabilities}
+        activeTaskId="task-selected"
         onActiveTaskChange={vi.fn()}
-        onModeChange={vi.fn()}
       />,
     )
 
     expect(markup).toContain('data-agent-mobile-drawer-trigger="history"')
     expect(markup).toContain('data-agent-mobile-drawer-trigger="templates"')
-    expect(markup).toContain('data-agent-desktop-mode-header="true"')
-    expect(markup).toContain('data-agent-mode-switcher="true" class="inline-flex')
-    expect(markup).not.toContain('data-agent-mode-switcher="true" class="absolute')
     expect(markup).toContain('data-component="agent-history"')
     expect(markup).toContain('data-component="agent-main"')
-    expect(markup).toContain('aria-label="Agent 模式"')
-    expect(markup).toContain('aria-controls="agent-chat-panel"')
-    expect(markup).toContain('data-chat-task="task-old"')
-    expect(markup).toContain('data-tool-task="task-new"')
+    expect(markup).toContain('data-task="task-selected"')
+    expect(markup).toContain('data-turns="task-selected task-background"')
+    expect(markup).not.toContain('data-agent-mode-switcher')
+    expect(markup).not.toContain('aria-label="Agent 模式"')
+    expect(markup).not.toMatch(/>Chat</)
+    expect(markup).not.toMatch(/>Tool</)
     expect(markup).toContain('grid-cols-[15rem_minmax(0,1fr)_3rem]')
-    expect(markup).toContain('data-agent-history-expanded="true"')
-    expect(markup).toContain('data-agent-template-expanded="false"')
-    expect(markup).toContain('aria-expanded="true"')
-    expect(markup).toContain('aria-expanded="false"')
   })
 
-  it('renders the embedded composer inside the central column only while active', () => {
+  it('renders the embedded composer in the single central workspace only while active', () => {
     const props = {
-      mode: 'chat' as const,
-      capabilities: { chatAllowed: true, chatConfigured: true, chatUsable: true, tool: true, openShopTool: false, defaultMode: 'chat' as const, modeSwitching: true },
-      activeTaskByMode: { chat: 'task-old', tool: 'task-new' },
+      capabilities,
+      activeTaskId: 'task-selected',
       onActiveTaskChange: vi.fn(),
-      onModeChange: vi.fn(),
       composer: <div data-component="embedded-composer" />,
     }
 
@@ -94,19 +105,18 @@ describe('AgentWorkspace', () => {
     expect(renderToStaticMarkup(<AgentWorkspace {...props} active={false} />)).not.toContain('data-component="embedded-composer"')
   })
 
-  it('single-capability mode hides the switcher and does not expose unavailable mode', () => {
+  it('blocks the whole Agent when Responses is unavailable even if the pipeline is enabled', () => {
     const markup = renderToStaticMarkup(
       <AgentWorkspace
-        mode="tool"
-        capabilities={{ chatAllowed: true, chatConfigured: false, chatUsable: false, tool: true, openShopTool: false, defaultMode: 'tool', modeSwitching: false }}
-        activeTaskByMode={{ chat: null, tool: 'task-new' }}
+        capabilities={{ ...capabilities, agentUsable: false, responsesUsable: false, toolPipelineUsable: true, chatUsable: false, tool: true, defaultMode: null }}
+        activeTaskId={null}
         onActiveTaskChange={vi.fn()}
-        onModeChange={vi.fn()}
       />,
     )
 
-    expect(markup).not.toContain('aria-label="Agent 模式"')
-    expect(markup).toContain('data-mode="tool"')
+    expect(markup).toContain('Agent 当前不可用')
+    expect(markup).toContain('Responses 服务不可用')
+    expect(markup).toContain('不会单独启用')
   })
 
   it('selects the adjacent task after the active task is removed', () => {
@@ -114,5 +124,14 @@ describe('AgentWorkspace', () => {
     expect(getNextAgentTaskIdAfterRemoval(['a', 'b', 'c'], ['a', 'c'], 'b')).toBe('c')
     expect(getNextAgentTaskIdAfterRemoval(['a', 'b', 'c'], ['a', 'b'], 'c')).toBe('b')
     expect(getNextAgentTaskIdAfterRemoval(['a'], [], 'a')).toBeNull()
+  })
+
+  it('initializes the latest history only after the hidden workspace becomes active', () => {
+    const taskIds = ['task-background', 'task-selected']
+
+    expect(getInitialAgentTaskId(false, null, taskIds)).toBeNull()
+    expect(getInitialAgentTaskId(true, null, taskIds)).toBe('task-background')
+    expect(getInitialAgentTaskId(true, 'task-selected', taskIds)).toBe('task-selected')
+    expect(getInitialAgentTaskId(true, 'removed-task', taskIds)).toBe('task-background')
   })
 })

@@ -193,6 +193,49 @@ describe('unified Agent executor', () => {
     expect(mocks.responsesSubmit).not.toHaveBeenCalled()
   })
 
+  it('Responses runtime breaker 打开后会在路由前阻断严格回合，不创建 Tool Pipeline', async () => {
+    mocks.responsesUsable = false
+    setDraft('生成一张 870×220 的夏日咖啡横幅')
+
+    await expect(submitUnifiedAgentTurn({ conversationId: 'conversation-1' })).resolves.toBeNull()
+
+    expect(mocks.createAutoPipeline).not.toHaveBeenCalled()
+    expect(mocks.responsesSubmit).not.toHaveBeenCalled()
+    expect(mocks.appState.showToast).toHaveBeenCalledWith(
+      'Agent 当前不可用：Responses 服务不可用，Tool Pipeline 也不会单独启用。',
+      'error',
+    )
+  })
+
+  it('Responses runtime breaker 打开后也会阻断严格回合重试', async () => {
+    mocks.responsesUsable = false
+    const failedTask: TaskRecord = {
+      id: 'failed-strict-task',
+      prompt: '生成一张 870×220 的夏日咖啡横幅',
+      params: { ...DEFAULT_PARAMS },
+      inputImageIds: [],
+      outputImages: [],
+      status: 'error',
+      error: 'Responses 502',
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      origin: 'agent',
+      agentConversationId: 'conversation-1',
+      agentTurn: 1,
+      agentRoute: 'tool_pipeline',
+      agentRouteReason: '精确尺寸 870×220px',
+      agentHardConstraints: ['精确尺寸 870×220px'],
+      agentFallbackForbidden: true,
+      agentFinalOutputSpec: { width: 870, height: 220, fit: 'cover', position: 'center', outputFormat: 'png', outputCompression: null },
+    }
+
+    await expect(retryUnifiedAgentTask(failedTask)).resolves.toBeNull()
+
+    expect(mocks.createAutoPipeline).not.toHaveBeenCalled()
+    expect(mocks.responsesSubmit).not.toHaveBeenCalled()
+  })
+
   it('普通生成仍委托给带流式能力的 Responses 执行器，并冻结路由审计', async () => {
     mocks.responsesSubmit.mockImplementation(async () => {
       const task: TaskRecord = {

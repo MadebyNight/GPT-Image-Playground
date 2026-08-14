@@ -36,6 +36,9 @@ interface FlipParseResult {
 const PIXEL_SIZE_RE = /(?<!\d)(\d{1,6})\s*(?:×|x|\*)\s*(\d{1,6})(?:\s*(?:px|像素))?(?!\d)/giu
 const NAMED_PIXEL_SIZE_RE = /宽(?:度)?\s*[=:：]?\s*(\d{1,6})\s*(?:px|像素)?\s*[,，;；\s]+高(?:度)?\s*[=:：]?\s*(\d{1,6})\s*(?:px|像素)?/giu
 const ASPECT_RATIO_RE = /(\d+(?:\.\d+)?)\s*(?:[:：]|比|\/)\s*(\d+(?:\.\d+)?)/gu
+// 与 Gateway agentRoute 的具名工具守卫保持同构，防止前端先选 Responses relay、
+// 再由 Gateway 以 hard constraint 返回 409。
+const EXPLICIT_NAMED_TOOL_RE = /(?:请(?:你)?\s*)?(?:使用|用)\s*(?:(?:adobe\s+)?photoshop|illustrator|lightroom|gimp|figma|canva|procreate|krita|affinity(?:\s+photo)?|blender|comfyui|stable\s*diffusion|midjourney|dall[·-]?e|firefly|美图秀秀|醒图|可画|稿定设计)/iu
 
 const FORMAT_LABELS: Record<OutputFormat, string> = {
   png: 'PNG 格式',
@@ -420,6 +423,7 @@ function hasTransparencyRequirement(prompt: string): boolean {
 }
 
 function getExplicitToolRequirement(prompt: string): string | null {
+  if (EXPLICIT_NAMED_TOOL_RE.test(prompt)) return '明确要求工具'
   if (/\btool\s*pipeline\b|工具链/iu.test(prompt)) return '明确要求 Tool Pipeline'
   if (/\bgateway\b|网关/iu.test(prompt)) return '明确要求 Gateway'
   if (/\bsharp\b/iu.test(prompt)) return '明确要求 Sharp'

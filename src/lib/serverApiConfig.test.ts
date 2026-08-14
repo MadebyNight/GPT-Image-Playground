@@ -5,6 +5,7 @@ import {
   getAgentCapabilities,
   getAgentModePreference,
   getChatCapabilities,
+  getChatUnavailableMessage,
   getEffectiveApiProfile,
   getEffectiveSettings,
   getRestrictedAgentBasePath,
@@ -18,6 +19,9 @@ import {
   isServerApiConfigEnabled,
   isServerApiConfigUsable,
   loadRuntimeConfig,
+  markResponsesRuntimeAvailable,
+  markResponsesRuntimeUnavailable,
+  RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE,
   resolveAgentMode,
   setAgentModePreference,
   sanitizeSettingsPatchForServerMode,
@@ -410,6 +414,46 @@ describe('initializeRuntimeConfig', () => {
       modeSwitching: false,
     })
     expect(resolveAgentMode(unavailable, 'tool')).toBeNull()
+  })
+
+  it('将当前页面的 Responses 运行时失败纳入统一 Agent 总开关，成功或重新加载配置后恢复', () => {
+    const runtimeConfig = {
+      ...enabledRuntimeConfig,
+      serverApi: {
+        ...enabledRuntimeConfig.serverApi,
+        apiMode: 'responses' as const,
+        apiModeOptions: ['responses'] as const,
+      },
+      restrictedAgent: {
+        enabled: true,
+        basePath: '/agent-api/v1',
+        agentOnly: false,
+      },
+    }
+    const settings: AppSettings = { ...DEFAULT_SETTINGS, apiMode: 'responses' }
+
+    initializeRuntimeConfig(runtimeConfig)
+    expect(getAgentCapabilities(settings)).toMatchObject({
+      agentUsable: true,
+      responsesUsable: true,
+      toolPipelineUsable: true,
+    })
+
+    markResponsesRuntimeUnavailable()
+    expect(getAgentCapabilities(settings)).toMatchObject({
+      agentUsable: false,
+      responsesUsable: false,
+      toolPipelineUsable: true,
+      chatUsable: false,
+    })
+    expect(getChatUnavailableMessage(settings)).toBe(RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE)
+
+    markResponsesRuntimeAvailable()
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
+
+    markResponsesRuntimeUnavailable()
+    initializeRuntimeConfig(runtimeConfig)
+    expect(getAgentCapabilities(settings).responsesUsable).toBe(true)
   })
 
   it('不再读取或写入 Chat/Tool 偏好，避免它参与路由决策', () => {
