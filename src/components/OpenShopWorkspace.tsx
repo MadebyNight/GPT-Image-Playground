@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   createOpenShopRequestId,
   dataUrlToOpenShopDocument,
+  getOpenShopFrameUrl,
   getOpenShopTargetOrigin,
   isOpenShopMessageFromFrame,
   isOpenShopRequestIdMatch,
@@ -91,7 +92,9 @@ export default function OpenShopWorkspace({
   const [fullscreenNotice, setFullscreenNotice] = useState<string | null>(null)
   const [status, setStatus] = useState(sourceDataUrl ? '正在加载 OpenShop…' : '正在读取原图…')
   const [error, setError] = useState<string | null>(null)
-  const frameSrc = `${import.meta.env.BASE_URL}openshop/`
+  const frameSrc = typeof window === 'undefined'
+    ? `${import.meta.env.BASE_URL}openshop/index.html?embed=manual`
+    : getOpenShopFrameUrl(window.location.href, 'manual')
   const targetOrigin = useMemo(() => {
     if (typeof window === 'undefined') return ''
     return getOpenShopTargetOrigin(new URL(frameSrc, window.location.href).toString())
@@ -385,7 +388,7 @@ export default function OpenShopWorkspace({
         {editor ?? (
           <iframe
             title="OpenShop 高级编辑器"
-            src={`${import.meta.env.BASE_URL}openshop/`}
+            src={frameSrc}
             ref={frameRef}
             className="absolute inset-0 h-full w-full border-0 bg-white"
             data-openshop-frame

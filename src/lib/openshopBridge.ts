@@ -67,6 +67,7 @@ export interface OpenShopToolDocumentDescriptor {
 }
 
 export type OpenShopExportFormat = 'png'
+export type OpenShopEmbedMode = 'manual' | 'tool'
 
 export interface OpenShopDocument {
   blob: Blob
@@ -188,8 +189,18 @@ const TOOL_ERROR_CODES = new Set<OpenShopToolErrorCode>([
 
 const TOOL_MESSAGE_BASE_KEYS = ['version', 'type', 'id', 'requestId', 'sessionId'] as const
 
-export function getOpenShopFrameUrl(pageUrl = window.location.href): string {
-  return new URL('openshop/index.html', pageUrl).toString()
+export function getOpenShopFrameUrl(
+  pageUrl = window.location.href,
+  embedMode?: OpenShopEmbedMode,
+): string {
+  return getOpenShopEmbedFrameUrl(new URL('openshop/index.html', pageUrl).toString(), embedMode)
+}
+
+export function getOpenShopEmbedFrameUrl(frameUrl: string, embedMode?: OpenShopEmbedMode): string {
+  if (!embedMode) return frameUrl
+  const url = new URL(frameUrl)
+  url.searchParams.set('embed', embedMode)
+  return url.toString()
 }
 
 export function getOpenShopTargetOrigin(frameUrl: string): string {

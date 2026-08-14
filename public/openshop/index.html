@@ -10,7 +10,7 @@
 <meta property="og:description" content="在浏览器中完成专业图像编辑：图层、AI 工具、选区、滤镜与 PSD 导入，无需安装。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0c10">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-p7wJ1Vq4fkpiKgIlMXwiynzoeLFoeYzxzvK2aPUMzgA=' 'sha256-UgdPuzX31snB0lzph2BttFa0qM7z6scPTiDPphO/pRs=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'none'; script-src 'self' 'sha256-p7wJ1Vq4fkpiKgIlMXwiynzoeLFoeYzxzvK2aPUMzgA=' 'sha256-Av2g26oEJiMigIz7WkLihWDQ7leg0Yd1qUZ8JFshYdE=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.hf.co blob:; worker-src 'self' blob:; frame-src 'none';">
 <title>OpenShop v0.24.0-host.6 — 在线图像编辑器</title>
 <script>
 // Keep existing project files and editing commands stable across Fabric's
@@ -4842,8 +4842,10 @@ const OS = {
         // PWA manifest
         this.initPWA();
         this._initEmbedBridge();
-        // Auto-save recovery check
-        this._initAutoSave();
+        // Auto-save recovery is intentionally independent-only. Embedded sessions
+        // must not read, write, or delete the host's shared OPFS recovery state.
+        const embedMode = new URLSearchParams(window.location.search).get('embed');
+        if (embedMode !== 'manual' && embedMode !== 'tool') this._initAutoSave();
         // Phase 6
         this.initColorWheel();
         this.updateHistogram();

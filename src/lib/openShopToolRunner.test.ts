@@ -386,9 +386,21 @@ describe('openShopToolRunner', () => {
     )
     expect(harness.frame.style.width).toBe('1280px')
     expect(harness.frame.style.height).toBe('900px')
+    expect(harness.frame.src).toBe('https://example.test/openshop/index.html?embed=tool')
     expect(harness.frame.remove).toHaveBeenCalledOnce()
     expect(harness.messageListeners.get('message')?.size ?? 0).toBe(0)
     expect(harness.frameListeners.get('load')?.size ?? 0).toBe(0)
+  })
+
+  it('保留显式 iframe URL 的 query，并强制使用 tool recovery 隔离', async () => {
+    const harness = createRunnerHarness()
+
+    await runWithHarness(harness, {
+      saveOutput: false,
+      frameUrl: 'https://example.test/openshop/index.html?theme=dark&embed=manual',
+    })
+
+    expect(harness.frame.src).toBe('https://example.test/openshop/index.html?theme=dark&embed=tool')
   })
 
   it('从入口总 deadline 取消卡住的 loadInput，迟到 resolve 不创建 iframe', async () => {

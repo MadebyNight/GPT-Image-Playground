@@ -17,6 +17,13 @@ const AG_PSD_FIXTURE_BODY = 'globalThis.__openShopPsdMockLoads=(globalThis.__ope
 const JSPDF_FIXTURE_BODY = 'globalThis.__openShopPdfMockLoads=(globalThis.__openShopPdfMockLoads||0)+1;globalThis.jspdf={jsPDF:function jsPDF(){}};'
 const AG_PSD_FIXTURE_INTEGRITY = 'sha384-3BKWre/l+OYXTMC9FFzBZwnJe2x5f54QYYjx/wE0gK8qFfb/MZKJUbi5/jcy5/ub'
 const JSPDF_FIXTURE_INTEGRITY = 'sha384-Nz2WYWCgWk9ZkssCY29dWTj3DKZb/ZUJhbI2W0mEdo8n7Ly7iDwhs5WPItb++MWo'
+const OPENSHOP_E2E_ORIGIN = 'http://127.0.0.1:4173'
+
+interface OpenShopRasterFixture {
+  width: number
+  height: number
+  rgba: number[]
+}
 
 interface ComposerSnapshotFixture {
   schemaVersion: 2
@@ -174,19 +181,26 @@ async function seedLegacyV2Database(page: Page, keepConnectionOpen = false) {
   }, { keepOpen: keepConnectionOpen })
 }
 
-async function seedOpenShopHistory(page: Page) {
+async function seedOpenShopHistory(page: Page, raster?: OpenShopRasterFixture) {
   await gotoGallery(page)
-  return page.evaluate(async ({ sourceTaskId, sourceImageId }) => {
+  return page.evaluate(async ({ sourceTaskId, sourceImageId, raster: fixture }) => {
     const canvas = document.createElement('canvas')
-    canvas.width = 3
-    canvas.height = 2
+    canvas.width = fixture?.width ?? 3
+    canvas.height = fixture?.height ?? 2
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Canvas unavailable')
-    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffffff', '#000000', '#ffff00']
-    colors.forEach((color, index) => {
-      context.fillStyle = color
-      context.fillRect(index % 3, Math.floor(index / 3), 1, 1)
-    })
+    if (fixture) {
+      if (fixture.rgba.length !== fixture.width * fixture.height * 4) {
+        throw new Error('Invalid OpenShop raster fixture')
+      }
+      context.putImageData(new ImageData(new Uint8ClampedArray(fixture.rgba), fixture.width, fixture.height), 0, 0)
+    } else {
+      const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffffff', '#000000', '#ffff00']
+      colors.forEach((color, index) => {
+        context.fillStyle = color
+        context.fillRect(index % 3, Math.floor(index / 3), 1, 1)
+      })
+    }
     const sourceDataUrl = canvas.toDataURL('image/png')
     const request = indexedDB.open('gpt-image-playground', 3)
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -207,8 +221,8 @@ async function seedOpenShopHistory(page: Page) {
       dataUrl: sourceDataUrl,
       createdAt: 1,
       source: 'generated',
-      width: 3,
-      height: 2,
+      width: canvas.width,
+      height: canvas.height,
     })
     transaction.objectStore('tasks').put({
       id: sourceTaskId,
@@ -238,12 +252,125 @@ async function seedOpenShopHistory(page: Page) {
     })
     db.close()
     return sourceDataUrl
-  }, { sourceTaskId: SOURCE_TASK_ID, sourceImageId: SOURCE_IMAGE_ID })
+  }, { sourceTaskId: SOURCE_TASK_ID, sourceImageId: SOURCE_IMAGE_ID, raster: raster ?? null })
+}
+
+async function blockExternalRequests(page: Page) {
+  await page.route('**/*', async (route) => {
+    const requestUrl = new URL(route.request().url())
+    const isInlineResource = requestUrl.protocol === 'data:' || requestUrl.protocol === 'blob:'
+    const isLocalHttp = (requestUrl.protocol === 'http:' || requestUrl.protocol === 'https:')
+      && (requestUrl.hostname === '127.0.0.1' || requestUrl.hostname === 'localhost')
+    if (isInlineResource || isLocalHttp) {
+      await route.continue()
+      return
+    }
+    await route.abort('blockedbyclient')
+  })
+}
+
+async function clearOpenShopOrigin(page: Page) {
+  const devtools = await page.context().newCDPSession(page)
+  await devtools.send('Network.enable')
+  await devtools.send('Network.clearBrowserCache')
+  await devtools.send('Storage.clearDataForOrigin', {
+    origin: OPENSHOP_E2E_ORIGIN,
+    storageTypes: 'all',
+  })
+}
+
+async function seedOpenShopRecovery(page: Page) {
+  const response = await page.goto('/openshop/index.html', { waitUntil: 'domcontentloaded' })
+  expect(response?.ok()).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.osBoot)).toBe('ready')
+  const recovery = await page.evaluate(async () => {
+    if (!navigator.storage?.getDirectory) throw new Error('OPFS unavailable')
+    const openShop = Function('return OS')() as {
+      _captureDocumentState: () => unknown
+      _persistRecoveryPayload: (payloadText: string, metadata?: Record<string, unknown>) => Promise<{
+        filename: string
+        valid: boolean
+      }>
+      _getRecoveryInfo: () => Promise<{ recoverable: { filename: string; valid: boolean } | null }>
+    }
+    const record = await openShop._persistRecoveryPayload(JSON.stringify(openShop._captureDocumentState()), {
+      name: 'E2E embedded recovery',
+      label: 'E2E embedded recovery',
+    })
+    const info = await openShop._getRecoveryInfo()
+    return {
+      filename: record.filename,
+      valid: record.valid,
+      recoverable: info.recoverable,
+    }
+  })
+  expect(recovery).toMatchObject({
+    filename: expect.any(String),
+    valid: true,
+    recoverable: { filename: recovery.filename, valid: true },
+  })
+  return recovery
+}
+
+async function waitForEmbeddedOpenShopFrame(page: Page, mode: 'manual' | 'tool') {
+  const hasExpectedFrame = () => page.frames().some((candidate) => {
+    try {
+      const url = new URL(candidate.url())
+      return url.origin === OPENSHOP_E2E_ORIGIN
+        && (url.pathname === '/openshop/' || url.pathname === '/openshop/index.html')
+        && url.searchParams.get('embed') === mode
+    } catch {
+      return false
+    }
+  })
+  await expect.poll(hasExpectedFrame, { timeout: 15_000 }).toBe(true)
+  const frame = page.frames().find((candidate) => {
+    try {
+      const url = new URL(candidate.url())
+      return url.origin === OPENSHOP_E2E_ORIGIN
+        && (url.pathname === '/openshop/' || url.pathname === '/openshop/index.html')
+        && url.searchParams.get('embed') === mode
+    } catch {
+      return false
+    }
+  })
+  if (!frame) throw new Error(`OpenShop ${mode} iframe was not created`)
+  return frame
+}
+
+async function watchForRecoveryOverlay(
+  frame: Awaited<ReturnType<typeof waitForEmbeddedOpenShopFrame>>,
+  marker: string,
+) {
+  await frame.evaluate((recoveryMarker) => {
+    const host = window.top as typeof window & {
+      __e2eRecoveryOverlayObserved?: Record<string, boolean>
+      __e2eRecoveryOverlayObservers?: MutationObserver[]
+    }
+    host.__e2eRecoveryOverlayObserved ??= {}
+    host.__e2eRecoveryOverlayObservers ??= []
+    const observe = () => {
+      if (document.querySelector('.recovery-overlay')) {
+        host.__e2eRecoveryOverlayObserved![recoveryMarker] = true
+      }
+    }
+    observe()
+    const observer = new MutationObserver(observe)
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+    host.__e2eRecoveryOverlayObservers.push(observer)
+  }, marker)
+}
+
+async function expectNoRecoveryOverlay(page: Page, marker: string) {
+  const observed = await page.evaluate((recoveryMarker) => Boolean((window as typeof window & {
+    __e2eRecoveryOverlayObserved?: Record<string, boolean>
+  }).__e2eRecoveryOverlayObserved?.[recoveryMarker]), marker)
+  expect(observed).toBe(false)
 }
 
 async function installOpenShopToolFixture(page: Page, options: { executeDelayMs?: number } = {}) {
   let frameLoads = 0
-  await page.route('**/openshop/index.html', async (route) => {
+  await page.route('**/openshop/index.html*', async (route) => {
     frameLoads += 1
     await route.fulfill({
       status: 200,
@@ -999,7 +1126,7 @@ test('IndexedDB v3 upgrade 被 v2 连接阻塞时保持等待，旧连接关闭�
 
 test('OpenShop 宿主拒绝错误消息来源并持久化像素等价的新历史', async ({ page }) => {
   const sourceDataUrl = await seedOpenShopHistory(page)
-  await page.route('**/openshop/', async (route) => {
+  await page.route('**/openshop/index.html*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'text/html',
@@ -1042,7 +1169,10 @@ test('OpenShop 宿主拒绝错误消息来源并持久化像素等价的新历�
   await expect(page.getByRole('heading', { name: '高级编辑' })).toBeVisible()
   const editorFrame = page.frameLocator('[data-openshop-frame]')
   await expect(editorFrame.locator('html')).toBeVisible()
-  const frame = page.frames().find((candidate) => candidate.url().endsWith('/openshop/'))
+  const frame = page.frames().find((candidate) => {
+    const url = new URL(candidate.url())
+    return url.pathname === '/openshop/index.html' && url.searchParams.get('embed') === 'manual'
+  })
   if (!frame) throw new Error('OpenShop iframe was not created')
 
   await expect.poll(() => frame.evaluate(() => (window as typeof window & { __getConfiguredId?: () => string | null }).__getConfiguredId?.() ?? null)).not.toBeNull()
@@ -1208,7 +1338,12 @@ test('真实 public OpenShop 在全新离线 Chromium 中连续执行并原子�
     await expect(realToolFrame).toHaveCount(1)
     await expect(realToolFrame).toHaveCSS('width', '1280px')
     await expect(realToolFrame).toHaveCSS('height', '900px')
-    await expect(realToolFrame).toHaveAttribute('src', /\/openshop\/index\.html$/)
+    await expect.poll(async () => {
+      const src = await realToolFrame.getAttribute('src')
+      if (!src) return null
+      const url = new URL(src, realPage.url())
+      return { pathname: url.pathname, embed: url.searchParams.get('embed') }
+    }).toEqual({ pathname: '/openshop/index.html', embed: 'tool' })
     const firstResult = await realPage.evaluate(async () => {
       const result = await (window as typeof window & {
         __realOpenShopToolRun: Promise<{
@@ -1323,6 +1458,184 @@ test('真实 public OpenShop 在全新离线 Chromium 中连续执行并原子�
     })
     expect(externalRequests.some((url) => /fabric@7\.4\.0|ag-psd@22\.0\.2|jspdf@4\.2\.1/.test(url))).toBe(false)
     console.log(`[OpenShop real cold start] ${firstResult.coldStartMs.toFixed(1)} ms; second run ${secondResult.elapsedMs.toFixed(1)} ms`)
+  } finally {
+    await context.close()
+  }
+})
+
+test('真实 public OpenShop 高级编辑保存透明 PNG 时保留 alpha 通道', async ({ browser }) => {
+  const context = await browser.newContext()
+  const realPage = await context.newPage()
+  await blockExternalRequests(realPage)
+
+  try {
+    await clearOpenShopOrigin(realPage)
+    await seedOpenShopHistory(realPage, {
+      width: 2,
+      height: 2,
+      rgba: [
+        255, 0, 0, 0,
+        0, 255, 0, 128,
+        0, 0, 255, 255,
+        255, 255, 0, 255,
+      ],
+    })
+
+    const response = await realPage.goto(`/?e2e=openshop#/openshop/${SOURCE_IMAGE_ID}?task=${SOURCE_TASK_ID}`, {
+      waitUntil: 'domcontentloaded',
+    })
+    expect(response?.ok()).toBe(true)
+    await expect(realPage.getByRole('heading', { name: '高级编辑' })).toBeVisible()
+
+    const manualFrameElement = realPage.locator('[data-openshop-frame]')
+    await expect(manualFrameElement).toHaveCount(1)
+    await expect.poll(async () => {
+      const src = await manualFrameElement.getAttribute('src')
+      return src ? new URL(src, realPage.url()).searchParams.get('embed') : null
+    }).toBe('manual')
+    await waitForEmbeddedOpenShopFrame(realPage, 'manual')
+
+    const saveButton = realPage.getByRole('button', { name: '保存到历史' })
+    await expect(saveButton).toBeEnabled()
+    await saveButton.click()
+    await expect(realPage.getByText('已保存为新的编辑历史记录')).toBeVisible()
+
+    const outputDataUrl = await realPage.evaluate(async ({ sourceTaskId }) => {
+      const request = indexedDB.open('gpt-image-playground', 3)
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const read = <T>(store: string, key?: IDBValidKey) => new Promise<T>((resolve, reject) => {
+        const objectStore = db.transaction(store, 'readonly').objectStore(store)
+        const operation = key == null ? objectStore.getAll() : objectStore.get(key)
+        operation.onsuccess = () => resolve(operation.result as T)
+        operation.onerror = () => reject(operation.error)
+      })
+      const tasks = await read<Array<Record<string, unknown>>>('tasks')
+      const task = tasks.find((candidate) => candidate.origin === 'openshop' && candidate.sourceTaskId === sourceTaskId)
+      if (!task) throw new Error('OpenShop output task was not persisted')
+      const outputImageId = (task.outputImages as string[])[0]
+      const output = await read<{ dataUrl: string }>('images', outputImageId)
+      db.close()
+      return output.dataUrl
+    }, { sourceTaskId: SOURCE_TASK_ID })
+
+    expect(outputDataUrl).toMatch(/^data:image\/png;base64,/)
+    const output = await realPage.evaluate(async (dataUrl) => {
+      const image = new Image()
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('OpenShop output decode failed'))
+        image.src = dataUrl
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas unavailable')
+      context.drawImage(image, 0, 0)
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        rgba: Array.from(context.getImageData(0, 0, canvas.width, canvas.height).data),
+      }
+    }, outputDataUrl)
+
+    expect(output.width).toBe(2)
+    expect(output.height).toBe(2)
+    expect(output.rgba.filter((_, index) => index % 4 === 3)).toEqual([0, 128, 255, 255])
+  } finally {
+    await context.close()
+  }
+})
+
+test('预置 recovery 不阻塞 OpenShop manual 与 tool 嵌入会话', async ({ browser }) => {
+  const context = await browser.newContext()
+  const realPage = await context.newPage()
+  await blockExternalRequests(realPage)
+
+  try {
+    await clearOpenShopOrigin(realPage)
+    await seedOpenShopHistory(realPage)
+    await seedOpenShopRecovery(realPage)
+
+    const response = await realPage.goto(`/?e2e=openshop#/openshop/${SOURCE_IMAGE_ID}?task=${SOURCE_TASK_ID}`, {
+      waitUntil: 'domcontentloaded',
+    })
+    expect(response?.ok()).toBe(true)
+    const manualFrameElement = realPage.locator('[data-openshop-frame]')
+    await expect(manualFrameElement).toHaveCount(1)
+    await expect.poll(async () => {
+      const src = await manualFrameElement.getAttribute('src')
+      return src ? new URL(src, realPage.url()).searchParams.get('embed') : null
+    }).toBe('manual')
+    const manualFrame = await waitForEmbeddedOpenShopFrame(realPage, 'manual')
+    await watchForRecoveryOverlay(manualFrame, 'manual')
+    const saveButton = realPage.getByRole('button', { name: '保存到历史' })
+    await expect(saveButton).toBeEnabled()
+    await expectNoRecoveryOverlay(realPage, 'manual')
+    await saveButton.click()
+    await expect(realPage.getByText('已保存为新的编辑历史记录')).toBeVisible()
+    await expectNoRecoveryOverlay(realPage, 'manual')
+
+    await gotoGallery(realPage, '/?e2e=openshop')
+    await realPage.evaluate(async ({ sourceTaskId, sourceImageId }) => {
+      const loadModule = new Function('path', 'return import(path)') as (path: string) => Promise<Record<string, unknown>>
+      const [{ openShopToolRunner }, { useStore }] = await Promise.all([
+        loadModule('/src/lib/openShopToolRunner.ts'),
+        loadModule('/src/store.ts'),
+      ]) as [
+        { openShopToolRunner: (options: Record<string, unknown>) => Promise<Record<string, unknown>> },
+        { useStore: { setState: (state: Record<string, unknown>) => void } },
+      ]
+      const request = indexedDB.open('gpt-image-playground', 3)
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const sourceTask = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const operation = db.transaction('tasks', 'readonly').objectStore('tasks').get(sourceTaskId)
+        operation.onsuccess = () => resolve(operation.result)
+        operation.onerror = () => reject(operation.error)
+      })
+      db.close()
+      useStore.setState({ tasks: [sourceTask] })
+      ;(window as typeof window & { __e2eOpenShopRecoveryToolRun?: Promise<Record<string, unknown>> }).__e2eOpenShopRecoveryToolRun = openShopToolRunner({
+        sourceTaskId,
+        inputAssetId: sourceImageId,
+        commands: [{ schemaVersion: 1, id: 'canvas.flip', target: 'document', args: { axis: 'h' } }],
+        outputFormat: 'png',
+        saveOutput: false,
+      })
+    }, { sourceTaskId: SOURCE_TASK_ID, sourceImageId: SOURCE_IMAGE_ID })
+
+    const toolFrameElement = realPage.locator('[data-openshop-tool-frame]')
+    await expect(toolFrameElement).toHaveCount(1)
+    await expect.poll(async () => {
+      const src = await toolFrameElement.getAttribute('src')
+      return src ? new URL(src, realPage.url()).searchParams.get('embed') : null
+    }).toBe('tool')
+    const toolFrame = await waitForEmbeddedOpenShopFrame(realPage, 'tool')
+    await watchForRecoveryOverlay(toolFrame, 'tool')
+    await expectNoRecoveryOverlay(realPage, 'tool')
+
+    const toolResult = await realPage.evaluate(async () => {
+      const result = await (window as typeof window & {
+        __e2eOpenShopRecoveryToolRun: Promise<{
+          blob: Blob
+          document: { canvas: { width: number; height: number } }
+        }>
+      }).__e2eOpenShopRecoveryToolRun
+      return {
+        mime: result.blob.type,
+        width: result.document.canvas.width,
+        height: result.document.canvas.height,
+      }
+    })
+    expect(toolResult).toEqual({ mime: 'image/png', width: 3, height: 2 })
+    await expectNoRecoveryOverlay(realPage, 'tool')
+    await expect(toolFrameElement).toHaveCount(0)
   } finally {
     await context.close()
   }

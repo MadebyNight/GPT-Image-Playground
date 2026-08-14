@@ -7,6 +7,7 @@ import {
   blobHasExpectedImageMagic,
   createOpenShopRequestId,
   dataUrlToOpenShopDocument,
+  getOpenShopEmbedFrameUrl,
   getOpenShopFrameUrl,
   getOpenShopTargetOrigin,
   isOpenShopToolResponseMessage,
@@ -610,7 +611,10 @@ export async function openShopToolRunner(
     }
     await validateInputImage(input, deadline)
 
-    const frameUrl = options.frameUrl ?? getOpenShopFrameUrl(dependencies.hostWindow.location.href)
+    const frameUrl = getOpenShopEmbedFrameUrl(
+      options.frameUrl ?? getOpenShopFrameUrl(dependencies.hostWindow.location.href),
+      'tool',
+    )
     const targetOrigin = getOpenShopTargetOrigin(frameUrl)
     if (targetOrigin !== dependencies.hostWindow.location.origin) {
       throw new OpenShopToolRunnerError('INVALID_REQUEST', 'OpenShop Tool 只允许同源 iframe')

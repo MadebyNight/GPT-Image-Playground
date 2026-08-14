@@ -38,6 +38,7 @@ describe('OpenShopWorkspace', () => {
     expect(markup).toContain('全屏显示')
     expect(markup).toContain('aria-pressed="false"')
     expect(markup).toContain('allow="clipboard-read; clipboard-write; fullscreen"')
+    expect(markup).toMatch(/src="[^"]*openshop\/index\.html\?embed=manual"/)
   })
 
   it('waits for the embedded editor readiness before sending the source image', () => {

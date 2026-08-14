@@ -15,9 +15,11 @@ vi.mock('../store', () => ({
   useStore: <T,>(selector: (state: {
     setMaskEditorImageId: () => void
     setConfirmDialog: () => void
+    showToast: () => void
   }) => T) => selector({
     setMaskEditorImageId: vi.fn(),
     setConfirmDialog: vi.fn(),
+    showToast: vi.fn(),
   }),
   ...storeMocks,
 }))
@@ -46,6 +48,7 @@ describe('TaskActionRow', () => {
     expect(markup).toContain('flex-wrap')
     expect(markup).toContain('复用')
     expect(markup).toContain('编辑输出')
+    expect(markup).toContain('下载原图')
     expect(markup).toContain('高级编辑')
     expect(markup).toContain('遮罩编辑')
     expect(markup).toContain('收藏')
@@ -59,6 +62,7 @@ describe('TaskActionRow', () => {
     )
 
     expect(markup).toMatch(/title="编辑输出"[^>]*disabled=""/)
+    expect(markup).toMatch(/title="下载原图"[^>]*disabled=""/)
     expect(markup).toMatch(/title="在 OpenShop 中高级编辑"[^>]*disabled=""/)
     expect(markup).toMatch(/title="遮罩编辑"[^>]*disabled=""/)
   })
@@ -152,6 +156,25 @@ describe('TaskActionRow', () => {
 
     expect(onAdvancedEdit).toHaveBeenCalledWith('output-a', 'task-a')
     expect(setMaskEditorImageId).toHaveBeenCalledWith('output-a')
+    expect(onRequestClose).not.toHaveBeenCalled()
+  })
+
+  it('下载动作只传递当前输出图片 ID，且不会关闭 modal', () => {
+    const onRequestClose = vi.fn()
+    const onDownload = vi.fn()
+    const actions = createTaskActionCallbacks({
+      task,
+      presentation: 'modal',
+      onDownload,
+      onRequestClose,
+      setMaskEditorImageId: vi.fn(),
+      setConfirmDialog: vi.fn(),
+      focusInputEditor: vi.fn(),
+    })
+
+    actions.download()
+
+    expect(onDownload).toHaveBeenCalledWith('output-a')
     expect(onRequestClose).not.toHaveBeenCalled()
   })
 })

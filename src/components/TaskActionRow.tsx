@@ -7,9 +7,11 @@ import {
   updateTaskInStore,
   useStore,
 } from '../store'
+import { downloadOriginalImage } from '../lib/imageDownload'
 import { getOpenShopHash } from '../lib/openshopRoute'
 import { getRuntimeConfigState, isServerApiConfigEnabled } from '../lib/serverApiConfig'
 import {
+  DownloadIcon,
   EditIcon,
   ExternalLinkIcon,
   MaskEditIcon,
@@ -29,6 +31,7 @@ interface TaskActionRowProps {
   alwaysShowRetry?: boolean
   onReuse?: () => MaybePromise
   onEditOutputs?: () => MaybePromise
+  onDownload?: (imageId: string) => MaybePromise
   onAdvancedEdit?: (imageId: string, taskId: string) => MaybePromise
   onMaskEdit?: (imageId: string) => MaybePromise
   onRetry?: () => MaybePromise
@@ -72,6 +75,7 @@ export function createTaskActionCallbacks({
   outputImageId = task.outputImages[0] ?? '',
   onReuse,
   onEditOutputs,
+  onDownload,
   onAdvancedEdit,
   onMaskEdit,
   onRetry,
@@ -93,6 +97,10 @@ export function createTaskActionCallbacks({
   return {
     reuse: () => focusAfter(onReuse ?? (() => reuseConfig(task))),
     editOutputs: () => focusAfter(onEditOutputs ?? (() => editOutputs(task))),
+    download: () => {
+      if (!outputImageId || !onDownload) return
+      void onDownload(outputImageId)
+    },
     advancedEdit: () => {
       if (!outputImageId) return
       if (onAdvancedEdit) {
@@ -138,6 +146,7 @@ export default function TaskActionRow({
   alwaysShowRetry = false,
   onReuse,
   onEditOutputs,
+  onDownload,
   onAdvancedEdit,
   onMaskEdit,
   onRetry,
@@ -148,6 +157,16 @@ export default function TaskActionRow({
 }: TaskActionRowProps) {
   const setMaskEditorImageId = useStore((state) => state.setMaskEditorImageId)
   const setConfirmDialog = useStore((state) => state.setConfirmDialog)
+  const showToast = useStore((state) => state.showToast)
+  const handleDownload = async (imageId: string) => {
+    try {
+      await downloadOriginalImage(imageId)
+      showToast('开始下载', 'success')
+    } catch (error) {
+      console.error(error)
+      showToast('下载失败', 'error')
+    }
+  }
   const actions = createTaskActionCallbacks({
     task,
     presentation,
@@ -155,6 +174,7 @@ export default function TaskActionRow({
     alwaysShowRetry,
     onReuse,
     onEditOutputs,
+    onDownload: onDownload ?? handleDownload,
     onAdvancedEdit,
     onMaskEdit,
     onRetry,
@@ -229,6 +249,10 @@ export default function TaskActionRow({
       <button type="button" className={buttonClass('green')} title="编辑输出" aria-label="编辑输出" disabled={!hasOutput} onClick={actions.editOutputs}>
         <EditIcon className="h-4 w-4" aria-hidden="true" />
         {showLabels && <span>编辑输出</span>}
+      </button>
+      <button type="button" className={buttonClass('blue')} title="下载原图" aria-label="下载原图" disabled={!hasOutput} onClick={actions.download}>
+        <DownloadIcon className="h-4 w-4" aria-hidden="true" />
+        {showLabels && <span>下载原图</span>}
       </button>
       <button type="button" className={buttonClass('violet')} title="在 OpenShop 中高级编辑" aria-label="在 OpenShop 中高级编辑" disabled={!hasOutput} onClick={actions.advancedEdit}>
         <ExternalLinkIcon className="h-4 w-4" aria-hidden="true" />
