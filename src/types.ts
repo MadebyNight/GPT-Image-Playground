@@ -113,13 +113,62 @@ export const DEFAULT_PARAMS: TaskParams = {
 
 export type AgentMode = 'chat' | 'tool'
 
+/** 用户回合的统一图片 Agent 路由结果。 */
+export type AgentRoute = 'responses_image' | 'tool_pipeline' | 'clarify' | 'unsupported'
+
+/** 实际执行该 Agent 回合的后端路径，用于任务审计。 */
+export type AgentExecutionRoute =
+  | 'responses_image'
+  | 'gateway_image_generate'
+  | 'gateway_image_edit'
+  | 'image_transform'
+  | 'openshop'
+
+/** 由 Gateway 在最终发布前校验的严格图片输出规格。 */
+export interface FinalOutputSpec {
+  width?: number
+  height?: number
+  fit?: 'cover' | 'contain' | 'fill'
+  position?: 'center' | 'left' | 'right' | 'top' | 'bottom'
+  crop?: { x: number; y: number; width: number; height: number }
+  rotate?: 90 | -90 | 180 | -180
+  flip?: 'horizontal' | 'vertical'
+  outputFormat?: 'png' | 'jpeg' | 'webp'
+  transparent?: boolean
+  background?: string
+  outputCompression?: number | null
+}
+
+/** 路由器输出的不可变审计快照。 */
+export interface AgentRouteDecision {
+  route: AgentRoute
+  routeReason: string
+  hardConstraints: string[]
+  fallbackForbidden: boolean
+  finalOutputSpec: FinalOutputSpec | null
+}
+
 export interface AgentCapabilities {
+  /**
+   * 统一 Agent 的新能力字段。当前仍有旧 Chat/Tool 界面消费者，先以可选字段
+   * 保持它们可读；可用性收敛任务会由唯一生产方填充并改用这三个字段。
+   */
+  agentUsable?: boolean
+  responsesUsable?: boolean
+  toolPipelineUsable?: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatAllowed: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatConfigured: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatUsable: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   tool: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   openShopTool: boolean
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   defaultMode: AgentMode | null
+  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   modeSwitching: boolean
 }
 
