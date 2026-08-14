@@ -1,4 +1,5 @@
 import type { TaskRecord } from '../types'
+import { CircleStop as CircleStopIcon } from 'lucide-react'
 import {
   editOutputs,
   removeTask,
@@ -7,6 +8,7 @@ import {
   updateTaskInStore,
   useStore,
 } from '../store'
+import { cancelUnifiedAgentTask, retryUnifiedAgentTask } from '../lib/agentExecutor'
 import { downloadOriginalImage } from '../lib/imageDownload'
 import { getOpenShopHash } from '../lib/openshopRoute'
 import { getRuntimeConfigState, isServerApiConfigEnabled } from '../lib/serverApiConfig'
@@ -35,6 +37,7 @@ interface TaskActionRowProps {
   onAdvancedEdit?: (imageId: string, taskId: string) => MaybePromise
   onMaskEdit?: (imageId: string) => MaybePromise
   onRetry?: () => MaybePromise
+  onCancel?: () => MaybePromise
   onDelete?: () => MaybePromise
   onRequestClose?: () => void
   onDeleteCommitted?: () => void
@@ -57,8 +60,21 @@ export function shouldShowTaskRetry(
   alwaysShowRetry = false,
 ) {
   if (task.origin === 'restricted-agent' || task.origin === 'openshop') return false
+  if (isUnifiedGatewayTask(task)) return task.status === 'error'
   if (presentation !== 'compact') return true
   return (task.status === 'error' && !task.falRecoverable && !task.customRecoverable) || alwaysShowRetry
+}
+
+export function isUnifiedGatewayTask(task: TaskRecord) {
+  return task.origin === 'agent' && task.agentPlanSnapshot?.schemaVersion === 3
+}
+
+export function shouldShowUnifiedAgentCancel(task: TaskRecord) {
+  return isUnifiedGatewayTask(task) && task.status === 'running' && Boolean(task.agentExecutionId)
+}
+
+function shouldUseUnifiedAgentRetry(task: TaskRecord) {
+  return task.origin === 'agent' && Boolean(task.agentRoute || isUnifiedGatewayTask(task))
 }
 
 function focusComposerInput() {
@@ -79,6 +95,7 @@ export function createTaskActionCallbacks({
   onAdvancedEdit,
   onMaskEdit,
   onRetry,
+  onCancel,
   onDelete,
   onRequestClose,
   onDeleteCommitted,
@@ -119,7 +136,13 @@ export function createTaskActionCallbacks({
     toggleFavorite: () => updateTaskInStore(task.id, { isFavorite: !task.isFavorite }),
     retry: () => {
       if (onRetry) void onRetry()
+      else if (shouldUseUnifiedAgentRetry(task)) void retryUnifiedAgentTask(task)
       else void retryTask(task)
+      closeIfModal()
+    },
+    cancel: () => {
+      if (onCancel) void onCancel()
+      else void cancelUnifiedAgentTask(task)
       closeIfModal()
     },
     deleteTask: () => {
@@ -150,6 +173,7 @@ export default function TaskActionRow({
   onAdvancedEdit,
   onMaskEdit,
   onRetry,
+  onCancel,
   onDelete,
   onRequestClose,
   onDeleteCommitted,
@@ -178,6 +202,7 @@ export default function TaskActionRow({
     onAdvancedEdit,
     onMaskEdit,
     onRetry,
+    onCancel,
     onDelete,
     onRequestClose,
     onDeleteCommitted,
@@ -230,6 +255,12 @@ export default function TaskActionRow({
         <button type="button" className={buttonClass('blue')} title="重试任务" aria-label="重试任务" onClick={actions.retry}>
           <RotateCcwIcon className="h-4 w-4" aria-hidden="true" />
           {showLabels && <span>重试</span>}
+        </button>
+      )}
+      {shouldShowUnifiedAgentCancel(task) && (
+        <button type="button" className={buttonClass('red')} title="取消执行" aria-label="取消执行" onClick={actions.cancel}>
+          <CircleStopIcon className="h-4 w-4" aria-hidden="true" />
+          {showLabels && <span>取消执行</span>}
         </button>
       )}
       <button

@@ -11,6 +11,11 @@ const storeMocks = vi.hoisted(() => ({
   updateTaskInStore: vi.fn(),
 }))
 
+const unifiedExecutorMocks = vi.hoisted(() => ({
+  cancelUnifiedAgentTask: vi.fn(),
+  retryUnifiedAgentTask: vi.fn(),
+}))
+
 vi.mock('../store', () => ({
   useStore: <T,>(selector: (state: {
     setMaskEditorImageId: () => void
@@ -24,7 +29,13 @@ vi.mock('../store', () => ({
   ...storeMocks,
 }))
 
-import TaskActionRow, { createTaskActionCallbacks, shouldShowTaskRetry } from './TaskActionRow'
+vi.mock('../lib/agentExecutor', () => unifiedExecutorMocks)
+
+import TaskActionRow, {
+  createTaskActionCallbacks,
+  shouldShowTaskRetry,
+  shouldShowUnifiedAgentCancel,
+} from './TaskActionRow'
 
 const task: TaskRecord = {
   id: 'task-a',
@@ -82,6 +93,46 @@ describe('TaskActionRow', () => {
     expect(shouldShowTaskRetry(task, 'compact', false)).toBe(false)
     expect(shouldShowTaskRetry({ ...task, status: 'error' }, 'compact', false)).toBe(true)
     expect(shouldShowTaskRetry(task, 'compact', true)).toBe(true)
+  })
+
+  it('统一 Gateway 回合在运行时提供取消执行，并在失败后使用统一重试', () => {
+    const gatewayTask: TaskRecord = {
+      ...task,
+      id: 'gateway-task',
+      origin: 'agent',
+      status: 'running',
+      finishedAt: null,
+      elapsed: null,
+      agentRoute: 'tool_pipeline',
+      agentExecutionId: 'execution-1',
+      agentPlanSnapshot: { schemaVersion: 3 } as TaskRecord['agentPlanSnapshot'],
+    }
+    const runningMarkup = renderToStaticMarkup(<TaskActionRow task={gatewayTask} presentation="agent" />)
+    const runningActions = createTaskActionCallbacks({
+      task: gatewayTask,
+      setMaskEditorImageId: vi.fn(),
+      setConfirmDialog: vi.fn(),
+      focusInputEditor: vi.fn(),
+    })
+
+    expect(shouldShowUnifiedAgentCancel(gatewayTask)).toBe(true)
+    expect(shouldShowTaskRetry(gatewayTask, 'agent')).toBe(false)
+    expect(runningMarkup).toContain('aria-label="取消执行"')
+    runningActions.cancel()
+    expect(unifiedExecutorMocks.cancelUnifiedAgentTask).toHaveBeenCalledWith(gatewayTask)
+
+    const failedTask: TaskRecord = { ...gatewayTask, status: 'error', error: '执行失败', finishedAt: 3, elapsed: 2 }
+    const failedActions = createTaskActionCallbacks({
+      task: failedTask,
+      setMaskEditorImageId: vi.fn(),
+      setConfirmDialog: vi.fn(),
+      focusInputEditor: vi.fn(),
+    })
+
+    expect(shouldShowUnifiedAgentCancel(failedTask)).toBe(false)
+    expect(shouldShowTaskRetry(failedTask, 'agent')).toBe(true)
+    failedActions.retry()
+    expect(unifiedExecutorMocks.retryUnifiedAgentTask).toHaveBeenCalledWith(failedTask)
   })
 
   it('复用和编辑完成后恢复输入焦点，modal 场景同时关闭', async () => {

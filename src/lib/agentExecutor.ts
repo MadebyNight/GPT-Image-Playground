@@ -19,3 +19,11 @@ export {
   getRestrictedAgentPlanOperation,
   subscribeRestrictedAgentExecution,
 } from './restrictedAgentApi'
+
+export {
+  cancelUnifiedAgentTask,
+  getUnifiedAgentExecutionSummary,
+  retryUnifiedAgentTask,
+  submitUnifiedAgentTurn,
+} from './unifiedAgentExecutor'
+export type { UnifiedAgentTurnRequest } from './unifiedAgentExecutor'
