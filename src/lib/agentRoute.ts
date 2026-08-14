@@ -78,12 +78,13 @@ export function routeAgentTurn(input: AgentRouteTurnInput): AgentRouteDecision {
   const crop = getCrop(prompt)
   const rotation = getRotation(prompt)
   const flip = getFlip(prompt)
-  const scaleRequested = /缩放|缩小|放大|\b(?:resize|scale)\b/iu.test(prompt)
+  const scaleRequested = hasScaleRequest(prompt)
   const outputFormats = getOutputFormats(prompt)
   const unsupportedFormat = getUnsupportedOutputFormat(prompt)
-  const transparent = /透明(?:背景|底|通道)?|背景透明|alpha(?:\s*通道)?/iu.test(prompt)
+  const transparent = hasTransparencyRequirement(prompt)
   const compression = getCompression(prompt)
   const explicitTool = getExplicitToolRequirement(prompt)
+  const fixedCanvas = /固定(?:画布|画面|画幅)|画布(?:大小|尺寸)|固定尺寸/iu.test(prompt)
 
   if (pixelSizes.invalid) {
     return decision('clarify', '像素尺寸必须是正整数，请重新说明宽和高。', ['无效像素尺寸'], null)
@@ -120,6 +121,8 @@ export function routeAgentTurn(input: AgentRouteTurnInput): AgentRouteDecision {
   if (aspectRatio) {
     pushConstraint(hardConstraints, `固定比例 ${formatRatio(aspectRatio)}`)
   }
+
+  if (fixedCanvas) pushConstraint(hardConstraints, '固定画布')
 
   if (fitPreferences.fit && !pixelSize) {
     pushConstraint(hardConstraints, fitPreferences.fit === 'contain' ? '不裁切' : fitPreferences.fit === 'fill' ? '允许变形' : '填满画布')
@@ -344,7 +347,7 @@ function getCrop(prompt: string): { requested: boolean; value: FinalOutputSpec['
 }
 
 function getRotation(prompt: string): RotationParseResult {
-  const requested = /旋转|转动|\brotate\b/iu.test(prompt)
+  const requested = /(?:顺时针|逆时针|clockwise|counterclockwise)\s*(?:旋转|转动)|(?:旋转|转动)\s*(?:为|到)?\s*-?\d+(?:\.\d+)?\s*(?:°|度|degrees?)|(?:旋转|转动)(?:这|该|图片|图像|照片|画面)|(?:把|将|让).{0,20}(?:图|图片|图像|照片|画面|它).{0,10}(?:旋转|转动)|\brotate\b/iu.test(prompt)
   if (!requested) return { requested: false, value: null, unsupported: false }
 
   const beforeDirection = prompt.match(
@@ -378,7 +381,7 @@ function normalizeRotation(degrees: number): number {
 }
 
 function getFlip(prompt: string): FlipParseResult {
-  const requested = /翻转|镜像|\bflip\b/iu.test(prompt)
+  const requested = /水平翻转|垂直翻转|左右翻转|上下翻转|镜像(?:翻转|处理|这|该|图片|图像|照片|画面)|\bflip\b|(?:把|将|让).{0,20}(?:图|图片|图像|照片|画面|它).{0,10}翻转|翻转(?:这|该|图片|图像|照片|画面)/iu.test(prompt)
   if (!requested) return { requested: false, value: null }
   if (/水平翻转|左右翻转|镜像|\bhorizontal\s+flip\b|\bflip\s+horizontal\b/iu.test(prompt)) {
     return { requested: true, value: 'horizontal' }
@@ -406,6 +409,14 @@ function getCompression(prompt: string): { value: number | null; invalid: boolea
   const value = Number(match[1])
   if (value < 0 || value > 100) return { value: null, invalid: true }
   return { value, invalid: false }
+}
+
+function hasScaleRequest(prompt: string): boolean {
+  return /缩放|缩小|放大(?!镜)|\b(?:resize|scale)\b/iu.test(prompt)
+}
+
+function hasTransparencyRequirement(prompt: string): boolean {
+  return /透明(?:背景|底|通道)|背景透明|alpha(?:\s*通道)?|透明\s*(?:\b(?:png|webp)\b|图片|图像)|(?:输出|导出|保存|交付).{0,12}透明/iu.test(prompt)
 }
 
 function getExplicitToolRequirement(prompt: string): string | null {

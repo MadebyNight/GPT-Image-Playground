@@ -104,6 +104,13 @@ describe('routeAgentTurn', () => {
     })
   })
 
+  it('不会把画面语义误判为确定性编辑', () => {
+    expect(routeAgentTurn({ prompt: '生成一幅有透明玻璃、旋转木马和放大镜的插画' })).toMatchObject({
+      route: 'responses_image',
+      fallbackForbidden: false,
+    })
+  })
+
   it('拒绝透明 JPEG 冲突', () => {
     expect(routeAgentTurn({ prompt: '输出透明背景 JPEG' })).toMatchObject({
       route: 'clarify',
