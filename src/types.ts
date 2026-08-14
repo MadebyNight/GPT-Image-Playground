@@ -260,6 +260,19 @@ export interface RestrictedAgentPlanInput {
   height: number
 }
 
+export interface RestrictedAgentWebSearchSource {
+  title: string
+  url: string
+  description: string
+  engine: string
+}
+
+/** 仅在本次 Tool 计划请求开启联网搜索时存在。 */
+export interface RestrictedAgentWebSearchReference {
+  enabled: true
+  sources: RestrictedAgentWebSearchSource[]
+}
+
 interface RestrictedAgentPlanBase {
   id: string
   version: number
@@ -271,6 +284,7 @@ interface RestrictedAgentPlanBase {
   assumptions: string[]
   warnings: string[]
   policyVersion: string
+  webSearch?: RestrictedAgentWebSearchReference
 }
 
 export type RestrictedAgentToolOperation =

@@ -68,7 +68,7 @@ export interface PersistedAgentFlow {
 
 interface RestrictedAgentState extends PersistedAgentFlow {
   localRun: OpenShopToolLocalRun | null
-  createPlanFromCurrentInput: (draftSnapshot?: ComposerDraftSnapshot) => Promise<RestrictedAgentPlan | null>
+  createPlanFromCurrentInput: (draftSnapshot?: ComposerDraftSnapshot, webSearchEnabled?: boolean) => Promise<RestrictedAgentPlan | null>
   confirmAndExecute: () => Promise<string | null>
   retryOpenShopSave: (options?: OpenShopSaveAttemptOptions) => Promise<string | null>
   returnToEditing: () => void
@@ -231,7 +231,7 @@ function getSourceTaskId(browserImageId: string) {
   return useStore.getState().tasks.find((task) => task.outputImages.includes(browserImageId))?.id ?? null
 }
 
-function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot): RestrictedAgentPlanRequest {
+function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot, webSearchEnabled = false): RestrictedAgentPlanRequest {
   const request = draftSnapshot.prompt.trim()
   const maskTargetId = draftSnapshot.maskDraft?.targetImageId ?? null
   const inputs = draftSnapshot.inputImages.map((image) => ({
@@ -251,6 +251,7 @@ function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot): Restr
     outputCompression: draftSnapshot.params.output_compression,
     moderation: draftSnapshot.params.moderation,
     imageCount: Math.min(4, Math.max(1, Math.round(draftSnapshot.params.n))),
+    webSearchEnabled,
     inputs,
     mask: draftSnapshot.maskDraft
       ? {
@@ -962,7 +963,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   ...readPersistedState(),
   localRun: null,
 
-  async createPlanFromCurrentInput(draftSnapshot = getComposerDraftSnapshot('tool')) {
+  async createPlanFromCurrentInput(draftSnapshot = getComposerDraftSnapshot('tool'), webSearchEnabled = false) {
     if (['planning', 'confirming', 'executing'].includes(get().phase)) return null
     const app = useStore.getState()
     if (!isRestrictedAgentEnabled()) {
@@ -986,7 +987,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       localRun: null,
     })
     try {
-      const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot))
+      const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot, webSearchEnabled))
       const currentDraft = getComposerDraftSnapshot('tool')
       const currentHash = await computeRestrictedAgentConfirmationHash(
         creation.plan,

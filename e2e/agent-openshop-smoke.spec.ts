@@ -529,7 +529,7 @@ async function prepareToolOpenShopComposer(page: Page, prompt: string, sourceDat
     state.setPrompt(nextPrompt)
     state.setInputImages([{ id: imageId, dataUrl }])
   }, { nextPrompt: prompt, dataUrl: sourceDataUrl, imageId: SOURCE_IMAGE_ID })
-  await page.getByTitle('生成执行计划 (Ctrl+Enter)').click()
+  await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
   await expect(page.getByRole('heading', { name: 'OpenShop Chromium Tool Plan' })).toBeVisible()
 }
 
@@ -553,12 +553,12 @@ test('Chat Agent 使用固定 SSE fixture 完成 Chromium 最小流程', async (
   })
   await gotoGallery(page, `/?${query.toString()}`)
   await page.getByRole('tab', { name: 'Agent' }).click()
-  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]').fill(LEGACY_AGENT_PROMPT)
-  await page.getByTitle('生成 (Ctrl+Enter)').click()
+  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible').fill(LEGACY_AGENT_PROMPT)
+  await page.locator('button[title="生成 (Ctrl+Enter)"]:visible').click()
 
-  const latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-latest-response]')
+  const latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-conversation-turn]').last()
   await expect(latestResponse).toContainText(LEGACY_AGENT_ASSISTANT_TEXT)
-  await expect(latestResponse.getByAltText('本轮生成结果预览')).toBeVisible()
+  await expect(latestResponse.getByAltText('第 1 轮生成结果 1')).toBeVisible()
   expect(requestBody).toEqual(LEGACY_AGENT_REQUEST_BODY_FIXTURE)
 })
 
@@ -583,10 +583,10 @@ test('Chat Agent 失败终态出现后立即刷新仍保留 partial 与错误', 
   })
   await gotoGallery(page, `/?${query.toString()}`)
   await page.getByRole('tab', { name: 'Agent' }).click()
-  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]').fill('测试失败后立即刷新')
-  await page.getByTitle('生成 (Ctrl+Enter)').click()
+  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible').fill('测试失败后立即刷新')
+  await page.locator('button[title="生成 (Ctrl+Enter)"]:visible').click()
 
-  let latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-latest-response]')
+  let latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-conversation-turn]').last()
   await expect(latestResponse).toContainText('刷新后仍应保留的 partial')
   await expect(latestResponse).toContainText('E2E 模型执行失败')
   await expect(latestResponse).toContainText('执行失败')
@@ -594,7 +594,7 @@ test('Chat Agent 失败终态出现后立即刷新仍保留 partial 与错误', 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('tablist', { name: '工作区模式' })).toBeVisible()
   await page.getByRole('tab', { name: 'Agent' }).click()
-  latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-latest-response]')
+  latestResponse = page.getByRole('region', { name: '当前 Agent 工作区' }).locator('[data-agent-conversation-turn]').last()
   await expect(latestResponse).toContainText('刷新后仍应保留的 partial')
   await expect(latestResponse).toContainText('E2E 模型执行失败')
   await expect(latestResponse).toContainText('执行失败')
@@ -631,7 +631,7 @@ test('双能力部署可切换 Chat 与 Tool，并隔离完整输入草稿', asy
 
   await gotoGallery(page)
   await page.getByRole('tab', { name: 'Agent' }).click()
-  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible')
   await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
   await editor.fill('Chat 独立草稿')
 
@@ -712,16 +712,64 @@ test('Tool-only agentOnly 刷新后从 Tool 草稿生成执行计划', async ({ 
   expect(response?.ok()).toBe(true)
   await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
   await expect(page.getByRole('tablist', { name: '工作区模式' })).toHaveCount(0)
-  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible')
   await editor.fill(prompt)
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
   await expect(editor).toHaveText(prompt)
-  await page.getByTitle('生成执行计划 (Ctrl+Enter)').click()
+  await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
 
   await expect(page.getByRole('heading', { name: 'Tool scope E2E plan' })).toBeVisible()
   expect(planRequestBody).toContain(prompt)
+})
+
+test('Tool Agent 联网开关仅在当前页面生效，并随计划请求提交', async ({ page }) => {
+  let planRequestBody = ''
+  await page.route('**/runtime-config.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: 1,
+        serverApi: { enabled: false },
+        restrictedAgent: { enabled: true, basePath: '/agent-api/v1', agentOnly: true },
+      }),
+    })
+  })
+  await page.route('**/agent-api/v1/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }) })
+  })
+  await page.route('**/agent-api/v1/plans', async (route) => {
+    planRequestBody = route.request().postData() ?? ''
+    const manifest = parseComposerSnapshotFixture(planRequestBody)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: {
+        schemaVersion: 2,
+        composerSnapshotHash: hashComposerSnapshotFixture(manifest),
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', version: 1, status: 'awaiting_confirmation',
+        expiresAt: '2099-01-01T00:00:00.000Z', originalRequest: manifest.prompt, summary: '联网计划',
+        operation: { type: 'image.generate', generation: { exactPrompt: manifest.prompt, action: 'generate', size: '1024x1024', quality: 'auto', outputFormat: 'png', outputCompression: null, imageCount: 1 } },
+        inputs: [], assumptions: [], warnings: [], policyVersion: 'tool-operation-v2',
+      } }),
+    })
+  })
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  const webSearchButton = page.locator('button[title="开启联网搜索"]:visible')
+  await expect(webSearchButton).toHaveAttribute('aria-pressed', 'false')
+  await webSearchButton.click()
+  await expect(page.locator('button[title^="联网搜索已开启"]:visible')).toHaveAttribute('aria-pressed', 'true')
+  await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible').fill('制作科技产品海报')
+  await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
+  await expect(page.getByRole('heading', { name: '联网计划' })).toBeVisible()
+  expect(planRequestBody).toContain('name="webSearchEnabled"\r\n\r\ntrue')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('button[title="开启联网搜索"]:visible')).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由', async ({ page }) => {
@@ -791,7 +839,7 @@ test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由
   await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
   await page.getByRole('tab', { name: 'Chat' }).click()
   await page.getByRole('tab', { name: '画廊' }).click()
-  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]')
+  const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible')
   await editor.fill('Gallery 独立草稿')
 
   await page.getByRole('button', { name: '设置' }).click()
@@ -801,7 +849,7 @@ test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由
   await page.getByRole('button', { name: '关闭' }).click()
 
   await expect(editor).toHaveText('Gallery 独立草稿')
-  await page.getByTitle('生成 (Ctrl+Enter)').click()
+  await page.locator('button[title="生成 (Ctrl+Enter)"]:visible').click()
   await expect.poll(() => galleryRequests).toBe(1)
   expect(galleryRequestUrl).toContain('/images/generations')
   expect(galleryRequestBody).toMatchObject({ prompt: 'Gallery 独立草稿' })
@@ -1802,7 +1850,7 @@ test('Tool Agent OpenShop sourceTask binding 错误时不 claim、不创建 ifra
 
   await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
 
-  await expect(page.getByText('OpenShop sourceTaskId 与浏览器图片来源不匹配')).toBeVisible()
+  await expect(page.locator('[data-agent-error-summary]:visible')).toHaveText('OpenShop sourceTaskId 与浏览器图片来源不匹配')
   expect(fixture.getFrameLoads()).toBe(0)
   const runCount = await page.evaluate(async () => {
     const request = indexedDB.open('gpt-image-playground', 3)

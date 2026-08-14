@@ -130,8 +130,9 @@ describe('restricted Agent gateway client', () => {
     expect(init?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf-1' })
     const body = init?.body as FormData
     expect([...body.keys()].sort()).toEqual([
-      'composerSnapshot', 'imageCount', 'outputFormat', 'quality', 'reference', 'request', 'size',
+      'composerSnapshot', 'imageCount', 'outputFormat', 'quality', 'reference', 'request', 'size', 'webSearchEnabled',
     ])
+    expect(body.get('webSearchEnabled')).toBe('false')
     expect(JSON.parse(String(body.get('composerSnapshot')))).toMatchObject({
       schemaVersion: 2,
       scope: 'tool',

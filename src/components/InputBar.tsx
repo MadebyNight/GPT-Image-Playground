@@ -21,6 +21,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { storeBackedAgentExecutor } from '../lib/agentExecutor'
 import { useRestrictedAgentStore } from '../restrictedAgentStore'
+import { Globe } from 'lucide-react'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
@@ -438,6 +439,7 @@ export default function InputBar({
   const [isDragging, setIsDragging] = useState(false)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [compressionHintVisible, setCompressionHintVisible] = useState(false)
   const [moderationHintVisible, setModerationHintVisible] = useState(false)
   const [sizeHintVisible, setSizeHintVisible] = useState(false)
@@ -517,7 +519,7 @@ export default function InputBar({
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !agentBusy)
   const handleSubmit = useCallback(async () => {
     if (isRestrictedAgentLayout) {
-      await createAgentPlan(getComposerDraftSnapshot('tool'))
+      await createAgentPlan(getComposerDraftSnapshot('tool'), webSearchEnabled)
       return
     }
 
@@ -549,7 +551,7 @@ export default function InputBar({
       })
       : await submitTask()
     if (taskId) onTaskSubmitted?.(taskId)
-  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast])
+  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast, webSearchEnabled])
   const chatUnavailableMessage = getChatUnavailableMessage(effectiveSettings)
   const missingApiConfigMessage = isAgentLayout && !isRestrictedAgentLayout
     ? chatUnavailableMessage
@@ -1942,6 +1944,22 @@ export default function InputBar({
               {renderParams('grid-cols-6')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
+                {isRestrictedAgentLayout && (
+                  <button
+                    type="button"
+                    onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+                    disabled={agentBusy}
+                    aria-pressed={webSearchEnabled}
+                    title={webSearchEnabled ? '联网搜索已开启：本次 Tool 计划将自动检索参考资料' : '开启联网搜索'}
+                    className={`p-2.5 rounded-xl transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                      webSearchEnabled
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                    }`}
+                  >
+                    <Globe className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}
@@ -1999,6 +2017,22 @@ export default function InputBar({
               </div>
 
               <div className="flex items-center gap-2">
+                {isRestrictedAgentLayout && (
+                  <button
+                    type="button"
+                    onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+                    disabled={agentBusy}
+                    aria-pressed={webSearchEnabled}
+                    title={webSearchEnabled ? '联网搜索已开启：本次 Tool 计划将自动检索参考资料' : '开启联网搜索'}
+                    className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      webSearchEnabled
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300'
+                    }`}
+                  >
+                    <Globe className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}

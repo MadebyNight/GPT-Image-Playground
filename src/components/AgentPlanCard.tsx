@@ -139,6 +139,27 @@ export default function AgentPlanCard({
         </>
       )}
 
+      {plan.webSearch && (
+        <section className="mt-5">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">联网参考</h3>
+          {plan.webSearch.sources.length > 0 ? (
+            <ul className="mt-2 space-y-2">
+              {plan.webSearch.sources.map((source) => (
+                <li key={source.url} className="rounded-xl bg-gray-50 px-3 py-2 text-sm dark:bg-white/[0.04]">
+                  <a href={source.url} target="_blank" rel="noreferrer" className="font-medium text-blue-600 hover:underline dark:text-blue-300">
+                    {source.title}
+                  </a>
+                  <p className="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{source.description}</p>
+                  <span className="mt-1 block text-[11px] text-gray-400">{source.engine}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-white/[0.04] dark:text-gray-400">已请求联网搜索，但未获得可用结果；本计划按离线信息生成。</p>
+          )}
+        </section>
+      )}
+
       {plan.assumptions.length > 0 && (
         <section className="mt-5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
           <h3 className="font-medium">规划假设</h3>

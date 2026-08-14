@@ -37,6 +37,7 @@ import type {
   ToolOperation,
 } from './types.js';
 import { ExecutionWorker } from './worker.js';
+import { OpenWebSearchService, type WebSearchService } from './webSearch.js';
 
 const fieldSchema = z.object({
   request: z.string().trim().min(1).max(16_000),
@@ -46,12 +47,14 @@ const fieldSchema = z.object({
   outputCompression: z.coerce.number().int().min(0).max(100).optional(),
   imageCount: z.coerce.number().int().min(1).optional(),
   composerSnapshot: z.string().max(64_000).optional(),
+  webSearchEnabled: z.string().optional().refine((value) => value === undefined || value === 'true' || value === 'false'),
 }).strict();
 
 export interface CreateAppOptions {
   config?: GatewayConfig;
   planner?: Planner;
   executor?: ImageExecutor;
+  webSearch?: WebSearchService;
 }
 
 function sessionForMutation(request: FastifyRequest, reply: Parameters<typeof getOrCreateSession>[1], config: GatewayConfig): SessionContext {
@@ -199,6 +202,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   await assetStore.initialize();
   const planner = options.planner ?? new ResponsesPlanner(config);
   const executor = options.executor ?? new DeterministicImagesExecutor(config);
+  const webSearch = options.webSearch ?? new OpenWebSearchService(config);
   const events = new ExecutionEvents();
   const worker = new ExecutionWorker(db, assetStore, executor, events);
   const rateLimiter = new SlidingWindowRateLimiter();
@@ -269,6 +273,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
           planRatePerMinute: config.planRatePerMinute,
           executeRatePerMinute: config.executeRatePerMinute,
           imagesRatePerHour: config.imagesRatePerHour,
+          webSearchRatePerMinute: config.webSearchRatePerMinute,
         },
         parameters: {
           sizes: ALLOWED_SIZES,
@@ -325,6 +330,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
         outputCompression: parsedFields.data.outputCompression,
         imageCount: parsedFields.data.imageCount,
       };
+      const webSearchRequested = parsedFields.data.webSearchEnabled === 'true';
+      let webSearchSources: import('./types.js').WebSearchSource[] | undefined;
+      let webSearchWarning: string | null = null;
+      if (webSearchRequested) {
+        try {
+          rateLimiter.consume(`web-search:${session.id}`, config.webSearchRatePerMinute, 60_000);
+          webSearchSources = await webSearch.search(parsedFields.data.request);
+        } catch (error) {
+          webSearchSources = [];
+          webSearchWarning = `联网搜索未完成：${error instanceof Error ? error.message : '服务不可用'}；本计划按离线信息生成。`;
+        }
+      }
       const manifest = parsedFields.data.composerSnapshot
         ? assertComposerFields(parseComposerSnapshotManifest(parsedFields.data.composerSnapshot, config), parsedFields.data)
         : null;
@@ -336,6 +353,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
           preferences,
           assets: orderedUploads,
           allowOpenShop: Boolean(manifest),
+          webSearchSources,
         }),
         preferences,
         inputs,
@@ -353,6 +371,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
         inputs,
         assumptions: draft.assumptions,
         warnings: draft.warnings,
+        ...(webSearchRequested ? { webSearch: { enabled: true as const, sources: webSearchSources ?? [] } } : {}),
+        ...(webSearchWarning ? { warnings: [...draft.warnings, webSearchWarning] } : {}),
       };
       let plan: RestrictedAgentPlanSnapshot;
       if (manifest) {
