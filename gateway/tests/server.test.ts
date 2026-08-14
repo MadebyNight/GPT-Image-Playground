@@ -19,7 +19,12 @@ import {
 } from '../src/policy.js';
 import { ResponsesPlanner, type Planner } from '../src/planner.js';
 import { createApp } from '../src/server.js';
-import type { PlanInputView, RestrictedAgentPlanSnapshot } from '../src/types.js';
+import type {
+  PlanInputView,
+  RestrictedAgentPlanSnapshot,
+  StoredAsset,
+  ToolAgentPlanV3Snapshot,
+} from '../src/types.js';
 import type { WebSearchService } from '../src/webSearch.js';
 import {
   RESTRICTED_EXECUTION_RESPONSE_FIXTURE,
@@ -1054,5 +1059,164 @@ describe('restart recovery', () => {
     expect(reopened.getExecution(execution.id, 'session').status).toBe('failed_unknown');
     expect(reopened.recoverInterruptedExecutions(now + 3)).toBe(0);
     reopened.close();
+  });
+});
+
+describe('v3 execution action persistence', () => {
+  function v3Plan(id = TOOL_AGENT_V3_PLAN_FIXTURE.id): ToolAgentPlanV3Snapshot {
+    return decodeRestrictedAgentPlanSnapshot({
+      ...structuredClone(TOOL_AGENT_V3_PLAN_FIXTURE),
+      id,
+    }) as ToolAgentPlanV3Snapshot;
+  }
+
+  function outputAsset(executionId: string, planId: string, id = '99999999-9999-4999-8999-999999999999'): StoredAsset {
+    return {
+      id,
+      planId,
+      executionId,
+      sessionId: 'session',
+      direction: 'output',
+      role: 'generated',
+      mimeType: 'image/png',
+      sha256: 'b'.repeat(64),
+      storagePath: `/test/${id}.png`,
+      byteSize: 95,
+      width: 870,
+      height: 220,
+      expiresAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+    };
+  }
+
+  it('打开旧 v2 SQLite 时前向创建 v3 action 表且仍可读取旧计划', async () => {
+    const config = await makeConfig();
+    const legacy = decodeRestrictedAgentPlanSnapshot(structuredClone(contractFixture.validPlans.tool));
+    const beforeMigration = new GatewayDatabase(config);
+    try {
+      beforeMigration.insertPlan(legacy, 'session', []);
+      // 用当前基线初始化后移除 v3 表，精确模拟仍停留在 v2 的已部署数据库。
+      beforeMigration.raw.exec('DROP TABLE execution_action_artifacts; DROP TABLE execution_actions;');
+      beforeMigration.raw.pragma('user_version = 2');
+    } finally {
+      beforeMigration.close();
+    }
+
+    const migrated = new GatewayDatabase(config);
+    try {
+      expect(migrated.getPlan(legacy.id, 'session')).toMatchObject({ schemaVersion: 2, id: legacy.id });
+      expect(migrated.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_actions'").get()).toBeTruthy();
+      expect(migrated.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_action_artifacts'").get()).toBeTruthy();
+      expect(migrated.raw.pragma('user_version', { simple: true })).toBe(3);
+    } finally {
+      migrated.close();
+    }
+
+    const replayed = new GatewayDatabase(config);
+    try {
+      expect(replayed.getPlan(legacy.id, 'session')).toMatchObject({ schemaVersion: 2, id: legacy.id });
+      expect(replayed.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_actions'").get()).toBeTruthy();
+      expect(replayed.raw.pragma('user_version', { simple: true })).toBe(3);
+    } finally {
+      replayed.close();
+    }
+  });
+
+  it('同一 execution 的 action index 与幂等键均只能写入一次，并隔离跨会话读取', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    try {
+      const { execution } = db.insertAutoPlanAndExecution(v3Plan(), 'session', []);
+      const first = db.getExecutionActions(execution.id, 'session')[0]!;
+
+      expect(() => db.insertExecutionAction({
+        executionId: execution.id,
+        actionIndex: first.actionIndex,
+        action: first.normalizedParams,
+        idempotencyKey: `${first.idempotencyKey}-different`,
+      })).toThrow(/UNIQUE/);
+      expect(() => db.insertExecutionAction({
+        executionId: execution.id,
+        actionIndex: 99,
+        action: first.normalizedParams,
+        idempotencyKey: first.idempotencyKey,
+      })).toThrow(/UNIQUE/);
+      try {
+        db.getExecutionActions(execution.id, 'other-session');
+        throw new Error('跨会话读取不应成功');
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'execution_not_found' });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it('queued action 可在重启后保留，执行中的 action 会标为 failed_unknown 并终止后续 action', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const now = Date.now();
+    let executionId = '';
+    try {
+      executionId = db.insertAutoPlanAndExecution(v3Plan(), 'session', [], now).execution.id;
+    } finally {
+      db.close();
+    }
+
+    const resumed = new GatewayDatabase(config);
+    try {
+      expect(resumed.getExecutionActions(executionId, 'session').map((action) => action.status)).toEqual(['queued', 'queued', 'queued']);
+      expect(resumed.claimNextExecution(now + 1)?.id).toBe(executionId);
+      expect(resumed.claimNextAction(executionId, now + 2)).toMatchObject({ actionIndex: 0, status: 'executing' });
+    } finally {
+      resumed.close();
+    }
+
+    const restarted = new GatewayDatabase(config);
+    try {
+      expect(restarted.recoverInterruptedExecutions(now + 3)).toBe(1);
+      expect(restarted.getExecution(executionId, 'session')).toMatchObject({ status: 'failed_unknown' });
+      expect(restarted.getExecutionActions(executionId, 'session').map((action) => action.status))
+        .toEqual(['failed_unknown', 'cancelled', 'cancelled']);
+    } finally {
+      restarted.close();
+    }
+  });
+
+  it('仅在 metadata.assert 成功后暴露 v3 最终产物，action 失败会同步取消未启动步骤', async () => {
+    const config = await makeConfig();
+    const db = new GatewayDatabase(config);
+    const now = Date.now();
+    try {
+      const { execution } = db.insertAutoPlanAndExecution(v3Plan(), 'session', [], now);
+      db.claimNextExecution(now + 1);
+      const generated = db.claimNextAction(execution.id, now + 2)!;
+      const asset = outputAsset(execution.id, execution.planId);
+      db.insertOutputAssets([asset]);
+      db.completeAction(generated.id, [asset.id], now + 3);
+
+      const transformed = db.claimNextAction(execution.id, now + 4)!;
+      expect(transformed.inputAssets.map((input) => input.id)).toEqual([asset.id]);
+      db.completeAction(transformed.id, [asset.id], now + 5);
+      expect(db.getExecution(execution.id, 'session').outputAssets).toEqual([]);
+
+      const asserted = db.claimNextAction(execution.id, now + 6)!;
+      expect(asserted.inputAssets.map((input) => input.id)).toEqual([asset.id]);
+      db.completeAction(asserted.id, [asset.id], now + 7);
+      expect(db.getExecution(execution.id, 'session')).toMatchObject({
+        status: 'completed',
+        outputAssets: [expect.objectContaining({ id: asset.id, width: 870, height: 220 })],
+      });
+
+      const failed = db.insertAutoPlanAndExecution(v3Plan('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), 'session', [], now + 8).execution;
+      db.claimNextExecution(now + 9);
+      const failedAction = db.claimNextAction(failed.id, now + 10)!;
+      db.failAction(failedAction.id, { code: 'test_failure', message: '测试失败' }, now + 11);
+      expect(db.getExecution(failed.id, 'session')).toMatchObject({ status: 'failed' });
+      expect(db.getExecutionActions(failed.id, 'session').map((action) => action.status))
+        .toEqual(['failed', 'cancelled', 'cancelled']);
+    } finally {
+      db.close();
+    }
   });
 });

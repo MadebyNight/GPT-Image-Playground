@@ -106,6 +106,7 @@ export const RESTRICTED_EXECUTION_RESPONSE_FIXTURE = {
     height: 2,
     byteSize: 95,
   }],
+  actions: [],
   createdAt: '<created-at>',
   startedAt: '<started-at>',
   completedAt: '<completed-at>',

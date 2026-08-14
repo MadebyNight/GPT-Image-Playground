@@ -22,6 +22,17 @@ export const EXECUTION_STATUSES = [
 
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
+export const EXECUTION_ACTION_STATUSES = [
+  'queued',
+  'executing',
+  'completed',
+  'failed',
+  'cancelled',
+  'failed_unknown',
+] as const;
+
+export type ExecutionActionStatus = (typeof EXECUTION_ACTION_STATUSES)[number];
+
 export type AssetRole = 'reference' | 'mask_target' | 'mask' | 'generated';
 export type PlanInputRole = Exclude<AssetRole, 'generated'>;
 
@@ -235,21 +246,52 @@ export type RestrictedAgentPlanSnapshot =
   | ToolAgentPlanSnapshot
   | ToolAgentPlanV3Snapshot;
 
+export interface ExecutionAssetView {
+  id: string;
+  url: string;
+  mimeType: string;
+  sha256: string;
+  width: number;
+  height: number;
+  byteSize: number;
+}
+
+/** v3 action 的不可变参数、执行状态及实际使用的输入/输出资产。 */
+export interface ExecutionActionView {
+  id: string;
+  executionId: string;
+  actionIndex: number;
+  type: ToolAction['type'];
+  normalizedParams: ToolAction;
+  status: ExecutionActionStatus;
+  idempotencyKey: string;
+  error: { code: string; message: string } | null;
+  inputAssets: ExecutionAssetView[];
+  outputAssets: ExecutionAssetView[];
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface ExecutionActionInsert {
+  id?: string;
+  executionId: string;
+  actionIndex: number;
+  action: ToolAction;
+  idempotencyKey?: string;
+  status?: Extract<ExecutionActionStatus, 'queued' | 'executing'>;
+}
+
 export interface ExecutionView {
   id: string;
   planId: string;
   status: ExecutionStatus;
   cancelRequested: boolean;
   error: { code: string; message: string } | null;
-  outputAssets: Array<{
-    id: string;
-    url: string;
-    mimeType: string;
-    sha256: string;
-    width: number;
-    height: number;
-    byteSize: number;
-  }>;
+  /** v1/v2 为全部已生成资产；v3 仅在 metadata.assert 完成后提供最终资产。 */
+  outputAssets: ExecutionAssetView[];
+  actions: ExecutionActionView[];
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
