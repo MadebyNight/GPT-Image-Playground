@@ -238,6 +238,138 @@ async function createPlan(context: Awaited<ReturnType<typeof setup>>, fields: Re
   });
 }
 
+function responsesRelayPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    request: '生成一张雨夜赛博朋克街道',
+    input: '生成一张雨夜赛博朋克街道',
+    stream: false,
+    imageTool: {
+      type: 'image_generation',
+      action: 'generate',
+      size: 'auto',
+      quality: 'auto',
+      output_format: 'png',
+    },
+    ...overrides,
+  };
+}
+
+function strictOutputSpec(overrides: Record<string, unknown> = {}) {
+  return {
+    width: 870,
+    height: 220,
+    fit: 'cover',
+    position: 'center',
+    outputFormat: 'png',
+    outputCompression: null,
+    ...overrides,
+  };
+}
+
+function plannerTransform(spec: Record<string, unknown>) {
+  return {
+    width: spec.width ?? null,
+    height: spec.height ?? null,
+    fit: spec.fit ?? null,
+    position: spec.position ?? null,
+    crop: spec.crop ?? null,
+    rotate: spec.rotate ?? null,
+    flip: spec.flip ?? null,
+    background: spec.background ?? null,
+    outputFormat: spec.outputFormat ?? 'png',
+    outputCompression: spec.outputCompression ?? null,
+  };
+}
+
+function plannerExpected(spec: Record<string, unknown>) {
+  return {
+    width: spec.width ?? null,
+    height: spec.height ?? null,
+    fit: spec.fit ?? null,
+    position: spec.position ?? null,
+    crop: spec.crop ?? null,
+    rotate: spec.rotate ?? null,
+    flip: spec.flip ?? null,
+    outputFormat: spec.outputFormat ?? 'png',
+    transparent: spec.transparent ?? null,
+    background: spec.background ?? null,
+    outputCompression: spec.outputCompression ?? null,
+  };
+}
+
+function v3GenerationPlannerDraft(spec: Record<string, unknown>) {
+  return {
+    summary: '生成并处理严格尺寸图片',
+    actions: [
+      {
+        type: 'image.generate',
+        generation: {
+          exactPrompt: '一张为横幅裁切预留构图的测试图片', action: 'generate', size: '1536x1024', quality: 'medium',
+          outputFormat: 'png', outputCompression: null, imageCount: 1,
+        },
+      },
+      { type: 'image.transform', input: { kind: 'action_output', actionIndex: 0 }, transform: plannerTransform(spec) },
+      { type: 'metadata.assert', input: { kind: 'action_output', actionIndex: 1 }, expected: plannerExpected(spec) },
+    ],
+    assumptions: [],
+    warnings: [],
+  };
+}
+
+function v3TransformPlannerDraft(spec: Record<string, unknown>) {
+  return {
+    summary: '处理已有图片并校验严格规格',
+    actions: [
+      { type: 'image.transform', input: { kind: 'plan_input', inputIndex: 0 }, transform: plannerTransform(spec) },
+      { type: 'metadata.assert', input: { kind: 'action_output', actionIndex: 0 }, expected: plannerExpected(spec) },
+    ],
+    assumptions: [],
+    warnings: [],
+  };
+}
+
+function autoExecuteMultipart(options: {
+  request?: string;
+  finalOutputSpec?: Record<string, unknown> | string;
+  inputs?: Array<{ browserImageId: string; bytes: Buffer; role?: 'reference' | 'mask_target' }>;
+  imageCount?: number;
+} = {}) {
+  const request = options.request ?? '生成一张严格尺寸横幅';
+  const inputs = options.inputs ?? [];
+  const imageCount = options.imageCount ?? 1;
+  const finalOutputSpec = options.finalOutputSpec ?? strictOutputSpec();
+  return multipart({
+    request,
+    size: '1024x1024',
+    quality: 'medium',
+    outputFormat: 'png',
+    imageCount: String(imageCount),
+    webSearchEnabled: 'false',
+    composerSnapshot: composerSnapshot({
+      request,
+      inputs: inputs.map((input, ordinal) => ({
+        browserImageId: input.browserImageId,
+        bytes: input.bytes,
+        role: input.role ?? 'reference',
+        ordinal,
+      })),
+      params: { imageCount },
+    }),
+    finalOutputSpec: typeof finalOutputSpec === 'string' ? finalOutputSpec : JSON.stringify(finalOutputSpec),
+  }, inputs.map((input) => ({ field: input.role ?? 'reference', bytes: input.bytes })));
+}
+
+async function createAutoPlan(
+  context: Awaited<ReturnType<typeof setup>>,
+  options: Parameters<typeof autoExecuteMultipart>[0] = {},
+) {
+  const form = autoExecuteMultipart(options);
+  return context.app.inject({
+    method: 'POST', url: '/v1/plans/auto-execute', payload: form.payload,
+    headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+  });
+}
+
 async function waitForTerminal(app: FastifyInstance, id: string, cookie: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const response = await app.inject({ method: 'GET', url: `/v1/executions/${id}`, headers: { host: 'app.internal', cookie } });
@@ -447,6 +579,324 @@ describe('v3 Gateway action contract', () => {
     };
     expect(() => validateAndConstrainToolAgentDraft(draft, {}, [inputAsset], config, transparentJpeg))
       .toThrowError(expect.objectContaining({ code: 'transparent_jpeg_conflict' }));
+  });
+});
+
+describe('server-managed Responses relay', () => {
+  it('先执行 session 与 CSRF 校验，再拒绝硬约束且绝不访问上游', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+    const payload = responsesRelayPayload({
+      request: '生成一张 870×220 px 的夏日咖啡横幅',
+      input: '生成一张 870×220 px 的夏日咖啡横幅',
+    });
+
+    const noCsrf = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload,
+      headers: { host: 'app.internal', origin: 'http://app.internal', cookie: context.cookie },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+
+    const rejected = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload, headers: context.mutationHeaders,
+    });
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json().error).toMatchObject({ code: 'hard_constraint_requires_tool_pipeline' });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '把这张图顺时针旋转 90°',
+    '把这张图顺时针旋转90度',
+    '将图片裁剪为横幅构图',
+    '将图片调整为 16:9 比例',
+    '生成一张 16:9 的电影感横幅',
+    '生成一张 3:2 的风景照片',
+    '把这张图翻转一下',
+    '请输出 PNG 格式文件',
+    '不裁切，完整保留画面',
+    '压缩质量为 80',
+    '请使用 Sharp 处理图片',
+    '请使用 Photoshop 完成这张图',
+    '严格按照 2.35:1 生成电影感横幅',
+    '生成一张透明图片',
+    '生成 GIF 格式图片',
+  ])('拒绝其他硬约束“%s”且不访问上游', async (request) => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ request, input: request }), headers: context.mutationHeaders,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe('hard_constraint_requires_tool_pipeline');
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '生成一张 0×220 px 的横幅',
+    '生成一张宽 0 高 220 px 的横幅',
+  ])('拒绝无效像素规格“%s”且不访问上游', async (request) => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ request, input: request }), headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatchObject({
+      code: 'hard_constraint_requires_tool_pipeline',
+      details: { route: 'clarify' },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('不把普通的自然语言“请用”表达误判为具名工具约束', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'resp_normal' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const request = '请用温暖的色调生成一张傍晚海边插画';
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ request, input: request }), headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('拒绝通过 imageTool 伪造的精确尺寸且不访问上游', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/v1/responses/image',
+      payload: responsesRelayPayload({
+        imageTool: {
+          type: 'image_generation',
+          action: 'generate',
+          size: '870x220',
+          quality: 'auto',
+          output_format: 'png',
+        },
+      }),
+      headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatchObject({
+      code: 'hard_constraint_requires_tool_pipeline',
+      details: { route: 'tool_pipeline', hardConstraints: ['精确像素尺寸'] },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('将受控 Responses relay 纳入同一 session 的图片小时额度', async () => {
+    const context = await setup({ config: { imagesRatePerHour: 1 } });
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'resp_limited' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const first = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload: responsesRelayPayload(), headers: context.mutationHeaders,
+    });
+    const second = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload: responsesRelayPayload(), headers: context.mutationHeaders,
+    });
+
+    expect(first.statusCode, first.body).toBe(200);
+    expect(second.statusCode).toBe(429);
+    expect(second.json().error).toMatchObject({ code: 'rate_limit_exceeded' });
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('聚合所有 input_text 后拒绝附加的硬约束，绝不访问上游', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+    const normalRequest = '生成一张雨夜赛博朋克街道';
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({
+        request: normalRequest,
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: normalRequest },
+            { type: 'input_text', text: '并严格输出 870×220 px 的 PNG 文件' },
+          ],
+        }],
+      }),
+      headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe('hard_constraint_requires_tool_pipeline');
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('将历史严格规格与当前普通输入分开路由，并完整转发历史上下文', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'resp_context' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const request = '生成一张雨夜赛博朋克街道';
+    const conversationContext = '上一轮已严格输出 870×220 px 的 PNG 横幅；本轮仅将它作为创作背景。';
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ request, input: request, conversationContext }),
+      headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: conversationContext }] },
+        { role: 'user', content: [{ type: 'input_text', text: request }] },
+      ],
+    });
+  });
+
+  it('即使声明历史上下文，也聚合当前所有 input_text 拒绝附加硬约束', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream 不应被调用'));
+    const request = '生成一张雨夜赛博朋克街道';
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({
+        request,
+        conversationContext: '上一轮曾输出过普通城市插画。',
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: request },
+            { type: 'input_text', text: '并严格输出 870×220 px 的 PNG 文件' },
+          ],
+        }],
+      }),
+      headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe('hard_constraint_requires_tool_pipeline');
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('只接受白名单字段，并由服务端固定 Responses 上游参数', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'resp_1' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    }));
+
+    const injected = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ model: 'attacker-model', tools: [], upstream: 'https://attacker.invalid', authorization: 'Bearer attacker' }),
+      headers: context.mutationHeaders,
+    });
+    expect(injected.statusCode).toBe(400);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload: responsesRelayPayload(), headers: context.mutationHeaders,
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.json()).toEqual({ id: 'resp_1' });
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(upstreamFetch.mock.calls[0]?.[0]).toBe('http://upstream.invalid/v1/responses');
+    expect(upstreamFetch.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-key',
+        'content-type': 'application/json',
+      },
+    });
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: 'planner-fixed',
+      input: '生成一张雨夜赛博朋克街道',
+      tools: [{
+        type: 'image_generation',
+        action: 'generate',
+        size: 'auto',
+        quality: 'auto',
+        output_format: 'png',
+      }],
+      tool_choice: 'required',
+    });
+  });
+
+  it.each([
+    {
+      label: 'JSON',
+      stream: false,
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      body: '{"id":"resp_json"}',
+    },
+    {
+      label: 'SSE',
+      stream: true,
+      status: 201,
+      contentType: 'text/event-stream; charset=utf-8',
+      body: 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n',
+    },
+  ])('透明 relay 上游 $label 状态码、content-type 与字节流', async ({ stream, status, contentType, body }) => {
+    const context = await setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status, headers: { 'content-type': contentType } }));
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image',
+      payload: responsesRelayPayload({ stream }), headers: context.mutationHeaders,
+    });
+    expect(response.statusCode).toBe(status);
+    expect(response.headers['content-type']).toBe(contentType);
+    expect(response.headers['cache-control']).toBe('no-store');
+    if (stream) expect(response.headers['x-accel-buffering']).toBe('no');
+    expect(response.body).toBe(body);
+  });
+
+  it('将本地 Responses 上游超时转为 504，且不暴露为可回退路径', async () => {
+    const context = await setup();
+    const timeout = new Error('upstream timed out');
+    timeout.name = 'TimeoutError';
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(timeout);
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload: responsesRelayPayload(), headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode).toBe(504);
+    expect(response.json().error).toMatchObject({ code: 'responses_timeout' });
+  });
+
+  it('将普通画面中的“旋转木马”保留在 Responses 路径', async () => {
+    const context = await setup();
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'resp_carousel' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const request = '生成一幅有透明玻璃、旋转木马和放大镜的插画';
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/responses/image', payload: responsesRelayPayload({ request, input: request }), headers: context.mutationHeaders,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -984,6 +1434,163 @@ describe('two phase gateway', () => {
     const terminal = await waitForTerminal(context.app, id, context.cookie);
     expect(terminal.status).toBe('cancelled');
     expect(executor.executeGeneration).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('v3 auto execute HTTP contract', () => {
+  it('自动创建 v3 计划、执行与 action 链，并返回 manifest asset binding', async () => {
+    const finalOutputSpec = strictOutputSpec();
+    const planner: Planner = { createDraft: vi.fn(async () => v3GenerationPlannerDraft(finalOutputSpec)) };
+    const context = await setup({ planner });
+
+    const response = await createAutoPlan(context, { finalOutputSpec });
+    expect(response.statusCode, response.body).toBe(202);
+    const pipeline = response.json().data;
+    expect(pipeline.plan).toMatchObject({
+      schemaVersion: 3,
+      status: 'queued',
+      finalOutputSpec,
+      actions: [{ type: 'image.generate' }, { type: 'image.transform' }, { type: 'metadata.assert' }],
+    });
+    expect(pipeline.execution).toMatchObject({
+      planId: pipeline.plan.id,
+      status: 'queued',
+      actions: [{ actionIndex: 0, type: 'image.generate' }, { actionIndex: 1, type: 'image.transform' }, { actionIndex: 2, type: 'metadata.assert' }],
+    });
+    expect(pipeline.assetBindings).toEqual([]);
+    expect(planner.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      outputSchemaVersion: 3,
+      finalOutputSpec,
+      allowOpenShop: false,
+    }));
+  });
+
+  it('严格要求 finalOutputSpec JSON，并拒绝未知规格字段', async () => {
+    const planner: Planner = { createDraft: vi.fn(async () => v3GenerationPlannerDraft(strictOutputSpec())) };
+    const context = await setup({ planner });
+
+    const response = await createAutoPlan(context, {
+      finalOutputSpec: JSON.stringify({ ...strictOutputSpec(), unexpected: true }),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('invalid_final_output_spec');
+    expect(planner.createDraft).not.toHaveBeenCalled();
+  });
+
+  it('纯 transform 自动执行不消耗 Images 配额，并从 Composer manifest 返回 asset binding', async () => {
+    const finalOutputSpec = strictOutputSpec({ rotate: 90 });
+    const planner: Planner = { createDraft: vi.fn(async () => v3TransformPlannerDraft(finalOutputSpec)) };
+    const executor = fakeExecutor();
+    const context = await setup({
+      config: { imagesRatePerHour: 1, executeRatePerMinute: 3, planRatePerMinute: 3 },
+      planner,
+      executor,
+    });
+    const input = { browserImageId: 'browser-reference-1', bytes: png };
+
+    const first = await createAutoPlan(context, { finalOutputSpec, inputs: [input] });
+    expect(first.statusCode, first.body).toBe(202);
+    const firstPipeline = first.json().data;
+    expect(firstPipeline.assetBindings).toEqual([{
+      gatewayAssetId: firstPipeline.plan.inputs[0].assetId,
+      browserImageId: 'browser-reference-1',
+      sourceTaskId: null,
+      role: 'reference',
+      ordinal: 0,
+    }]);
+
+    const second = await createAutoPlan(context, {
+      request: '将另一张图旋转 90 度', finalOutputSpec, inputs: [{ browserImageId: 'browser-reference-2', bytes: png }],
+    });
+    expect(second.statusCode, second.body).toBe(202);
+    await waitForTerminal(context.app, firstPipeline.execution.id, context.cookie);
+    await waitForTerminal(context.app, second.json().data.execution.id, context.cookie);
+    expect(executor.executeGeneration).not.toHaveBeenCalled();
+  });
+
+  it('按上传 role ordinal 绑定非升序 manifest 的多参考图', async () => {
+    const finalOutputSpec = strictOutputSpec({ rotate: 90 });
+    const planner: Planner = { createDraft: vi.fn(async () => v3TransformPlannerDraft(finalOutputSpec)) };
+    const context = await setup({ planner });
+    const request = '将两张参考图按严格规格处理';
+    const ordinalZero = { browserImageId: 'browser-reference-0', bytes: png };
+    const ordinalOne = { browserImageId: 'browser-reference-1', bytes: jpeg };
+    const form = multipart({
+      request,
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      imageCount: '1',
+      webSearchEnabled: 'false',
+      // manifest 顺序可合法地是 ordinal 1 再 ordinal 0；上传顺序仍定义实际 roleOrdinal。
+      composerSnapshot: composerSnapshot({
+        request,
+        inputs: [
+          { ...ordinalOne, ordinal: 1 },
+          { ...ordinalZero, ordinal: 0 },
+        ],
+      }),
+      finalOutputSpec: JSON.stringify(finalOutputSpec),
+    }, [
+      { field: 'reference', bytes: ordinalZero.bytes, filename: 'ordinal-0.png' },
+      { field: 'reference', bytes: ordinalOne.bytes, filename: 'ordinal-1.jpg' },
+    ]);
+
+    const response = await context.app.inject({
+      method: 'POST', url: '/v1/plans/auto-execute', payload: form.payload,
+      headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    const pipeline = response.json().data;
+    expect(pipeline.assetBindings).toEqual([
+      {
+        gatewayAssetId: pipeline.plan.inputs[0].assetId,
+        browserImageId: 'browser-reference-1',
+        sourceTaskId: null,
+        role: 'reference',
+        ordinal: 1,
+      },
+      {
+        gatewayAssetId: pipeline.plan.inputs[1].assetId,
+        browserImageId: 'browser-reference-0',
+        sourceTaskId: null,
+        role: 'reference',
+        ordinal: 0,
+      },
+    ]);
+  });
+
+  it('Capabilities 声明 v3 action 链', async () => {
+    const context = await setup();
+    const capabilities = await context.app.inject({ method: 'GET', url: '/v1/capabilities', headers: { host: 'app.internal' } });
+    expect(capabilities.json().data).toMatchObject({
+      planSchemaVersions: [1, 2, 3],
+      operationTypes: expect.arrayContaining(['image.transform', 'metadata.assert']),
+    });
+  });
+
+  it('旧 execute 即使已有 execution 也明确拒绝 v3', async () => {
+    const context = await setup();
+
+    const sessionId = context.cookie.split('=')[1]!.split('.')[0]!;
+    const db = new GatewayDatabase(context.config);
+    const plan = decodeRestrictedAgentPlanSnapshot({
+      ...structuredClone(TOOL_AGENT_V3_PLAN_FIXTURE),
+      id: '12121212-1212-4121-8121-121212121212',
+    }) as ToolAgentPlanV3Snapshot;
+    try {
+      db.insertAutoPlanAndExecution(plan, sessionId, []);
+    } finally {
+      db.close();
+    }
+
+    const legacyExecute = await context.app.inject({
+      method: 'POST', url: `/v1/plans/${plan.id}/execute`,
+      headers: { ...context.mutationHeaders, 'if-match': '"1"' },
+    });
+    expect(legacyExecute.statusCode).toBe(409);
+    expect(legacyExecute.json().error.code).toBe('v3_actions_require_auto_execution');
   });
 });
 

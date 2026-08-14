@@ -64,6 +64,18 @@ export interface PlanInputView {
   height: number;
 }
 
+/**
+ * 自动执行响应把 Gateway 资产与 Composer 中的浏览器图片绑定对应起来。
+ * Gateway 不接收前端任务元数据，因此 sourceTaskId 当前始终为 null。
+ */
+export interface AutoPlanAssetBinding {
+  gatewayAssetId: string;
+  browserImageId: string | null;
+  sourceTaskId: null;
+  role: PlanInputRole;
+  ordinal: number;
+}
+
 export interface WebSearchSource {
   title: string;
   url: string;

@@ -92,13 +92,15 @@ describe('Nginx static cache policy', () => {
   })
 })
 
-describe('Restricted Agent deployment boundary', () => {
-  it('keeps both server-side routes behind independently removable blocks', () => {
+describe('Unified Agent deployment boundary', () => {
+  it('keeps both server-side routes behind independently removable blocks and preserves the Responses relay stream', () => {
     const nginx = readFileSync('deploy/nginx.conf', 'utf8')
     const agentBlock = nginx.match(/# BEGIN RESTRICTED AGENT[\s\S]*?# END RESTRICTED AGENT/)?.[0] ?? ''
     expect(nginx).toContain('# BEGIN RESTRICTED AGENT')
     expect(agentBlock).toContain('location ^~ /agent-api/')
+    expect(agentBlock).toContain('POST /agent-api/v1/responses/image')
     expect(agentBlock).toContain('proxy_pass http://agent-gateway:3000/;')
+    expect(agentBlock).toContain('proxy_http_version 1.1;')
     expect(agentBlock).toContain('client_max_body_size 129m;')
     expect(agentBlock).toContain('proxy_set_header Host $http_host;')
     expect(agentBlock).toContain('proxy_set_header X-Forwarded-Host $http_x_forwarded_host;')
@@ -106,6 +108,9 @@ describe('Restricted Agent deployment boundary', () => {
     expect(agentBlock).not.toContain('proxy_set_header X-Forwarded-Proto $scheme;')
     expect(agentBlock).toContain('proxy_request_buffering off;')
     expect(agentBlock).toContain('proxy_buffering off;')
+    expect(agentBlock).toContain('proxy_cache off;')
+    expect(agentBlock).toContain('add_header X-Accel-Buffering "no" always;')
+    expect(agentBlock).toContain('proxy_read_timeout ${AGENT_REQUEST_TIMEOUT_SECONDS}s;')
 
     const entrypoint = readFileSync('deploy/inject-api-url.sh', 'utf8')
     expect(entrypoint).toContain('if [ "$RESTRICTED_AGENT_ENABLED" != "true" ]')
