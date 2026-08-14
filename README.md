@@ -65,14 +65,14 @@
 ## ✨ 核心特性
 
 ### 🎨 强大的图像生成与编辑
-- **双模接口支持**：自由切换使用常规 `Images API` (`/v1/images`) 或 `Responses API` (`/v1/responses`)。
+- **Images / Responses 兼容**：兼容配置可使用常规 `Images API` (`/v1/images`) 或 `Responses API` (`/v1/responses`)；Agent 会在每次提交时自动选择内部执行路径，不要求用户选择协议或模式。
 - **参考图与遮罩**：支持上传最多 16 张参考图（支持剪贴板和拖拽）。内置可视化遮罩编辑器，自动预处理以符合官方分辨率限制。
 - **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
 
-### 🤖 可确认的受限 Agent
-- **两阶段执行**：Agent 先输出最终 Prompt、参数、参考图和执行步骤，只有用户明确确认后才生成图片。
-- **服务端权限边界**：Planner 不持有工具，Executor 只执行服务端冻结计划；浏览器不能指定模型、上游地址、工具或原始请求体。
-- **内网安全控制**：提供不可重复执行的计划、输入哈希、会话与 CSRF 校验、额度和并发限制、SQLite 审计及断线恢复。
+### 🤖 统一图片 Agent
+- **自动路由与执行**：前台只保留一个 Agent 入口、一份会话历史和一个输入框。无硬约束的生成或语义编辑使用 Responses 流式路径；精确尺寸、裁剪、旋转、格式等硬约束自动进入 Gateway action 链，无需用户确认。
+- **严格交付 fail-closed**：Gateway 会冻结计划、自动入队、执行并校验最终产物；Gateway 不可用、action 失败或 metadata 不匹配时，硬约束请求明确失败，绝不降级为模型自选尺寸的 Responses 生图。
+- **Responses 是前置条件**：当前 Responses 配置不可用时，整个 Agent 输入会被阻断，Gateway 不能单独解锁严格处理能力。服务端托管 Responses 且 Gateway 可达时，普通 Agent 回合经受控流式 relay 转发；浏览器不能指定 Gateway 上游、凭据、模型、工具或原始请求体。
 
 ### ⚙️ 精细化参数追踪
 - **智能尺寸控制**：提供 1K/2K/4K 快速预设，自定义宽高时会自动规整至模型安全范围（16 的倍数、总像素校验等）。
@@ -154,13 +154,17 @@ $env:VITE_DEFAULT_API_URL="https://api.openai.com/v1"; npm run deploy:cf
 <details>
 <summary><strong>🐳 方式三：Docker 部署</strong></summary>
 
-Docker 部署支持兼容模式、服务端统一配置（Chat Agent）和必须先确认计划的受限模式（Tool Agent）。Chat 与 Tool 是两项独立能力，可以只启用其中一项，也可以在同一部署中同时启用；两者故障时不会互相替代或自动回退。你可以使用本仓库工作流发布的镜像，或在本地构建镜像。
+Docker 部署兼容原有浏览器 Profile、同源 API 代理和服务端统一 API 配置；启用 Agent 时，前台仍只有一个自动路由的 Agent，不显示旧的双入口控制或确认步骤。你可以使用本仓库工作流发布的镜像，或在本地构建镜像。
 
-**受限 Agent 模式（可信内网推荐）：**
+**统一 Agent 与 Gateway（可信部署推荐）：**
 
-受限模式使用独立 `agent-gateway` 容器。Planner 只生成结构化计划，用户确认后才进入受限执行路径；`openshop.edit` 在浏览器的一次性离屏 OpenShop iframe 中执行并保存为新历史。仅启用 Tool 时 Nginx 会移除通用 `/api-proxy`；与服务端统一配置同时启用时，只保留由服务端固定上游和凭据的受控 Chat 代理。
+Agent 首先需要一套可用的 Responses 配置：服务端托管时保持 `SERVER_API_MODE=responses`，并在 `SERVER_API_MODE_OPTIONS` 中包含 `responses`；BYOK 时选择带 API Key 的 OpenAI 兼容 Responses Profile。Responses 不可用时整个 Agent 被阻断，单独设置 `RESTRICTED_AGENT_ENABLED=true` 不会开启 Agent。
 
-启用时至少配置：
+Gateway 的 action 链只处理命中精确尺寸、比例、裁剪、旋转、翻转、缩放、格式、透明或压缩等硬约束的回合。它会原子地创建不可变计划与 execution 并自动入队，界面仅展示进度、审计、取消和重试；旧的确认 API 仅保留给旧计划读取、恢复与兼容调用。`openshop.edit` 仍是独立兼容 action，不参与新的严格输出链。
+
+服务端托管 Responses 且 Gateway 可达时，无硬约束的 Agent Responses 回合会通过 `POST /agent-api/v1/responses/image` 受控流式转发。该 relay 不是严格 action 链的降级入口：它使用现有 `AGENT_UPSTREAM_BASE_URL`、`AGENT_API_KEY` 与 `AGENT_PLANNER_MODEL`，不新增环境变量；`AGENT_IMAGE_MODEL` 继续仅用于严格 action 链中的 `/images/*` 调用。Gateway 不可用时，普通无硬约束回合保留既有的 Responses 直连或同源 `/api-proxy` 传输；带硬约束的回合明确失败，绝不回退到 Responses。
+
+启用 Gateway 时至少配置：
 
 ```env
 RESTRICTED_AGENT_ENABLED=true
@@ -174,9 +178,9 @@ AGENT_IMAGE_MODEL=你的图片模型
 
 关键限制均可通过 `AGENT_*` 环境变量调整，默认包括：计划 15 分钟过期、最多 16 张参考图、128 MiB 上传、每次 1–4 张输出、全局并发 2、队列 10。完整变量和默认值见 [.env.example](.env.example)。
 
-Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `agent-gateway-data` volume 中。Tool Agent 不适用于纯静态托管。Gateway 不健康时 Tool 会失败关闭，不会回退到 Chat 或旧代理；Chat 是否可用由独立的服务端统一配置或浏览器 Profile 决定。
+Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `agent-gateway-data` volume 中。严格 action 链不适用于纯静态托管；纯静态部署仍可在 Responses 可用时使用普通 Agent 回合。Gateway 不健康时，严格规格会失败关闭；普通回合是否继续可用取决于已有的服务端统一 Responses 配置或浏览器 Profile。
 
-受限模式使用服务端固定 Images API 执行器，上游必须支持 `b64_json` 图片结果；不接受远程结果 URL，以避免 Gateway 代替用户抓取外部资源。
+Gateway 的严格 action 链使用服务端固定 Images API 执行器，上游必须支持 `b64_json` 图片结果；不接受远程结果 URL，以避免 Gateway 代替用户抓取外部资源。
 
 **兼容模式变量（`SERVER_API_CONFIG_ENABLED=false`，默认）：**
 
@@ -193,15 +197,15 @@ Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `a
 - `SERVER_API_UPSTREAM_URL`：真实上游地址，默认空；开启时必填，只接受安全的 `http://` 或 `https://` URL，不接受 userinfo、query 或 fragment。
 - `SERVER_API_KEY`：上游 API Key，默认空；开启时必填。填写原始 Key，不要添加 `Bearer ` 前缀。允许字母、数字及 `._~+/=-`，最大 4096 字符。
 - `SERVER_API_MODEL`：统一使用的模型，默认 `gpt-image-2`；必须以字母或数字开头，其余字符仅允许字母、数字及 `._~:/+@=-`，最大 256 字符。
-- `SERVER_API_MODE`：`images` 或 `responses`，默认 `images`。Nginx 会据此只放行对应的 Images API 或 Responses API 路径。
+- `SERVER_API_MODE`：`images` 或 `responses`，默认 `images`。Nginx 会据此只放行对应的 Images API 或 Responses API 路径；服务端托管的统一 Agent 需要当前选择为 `responses`。
 - `SERVER_API_MODEL_OPTIONS`：允许用户在设置里选择的模型列表，逗号分隔，默认开放 `gpt-image-2,gpt-5.5`，覆盖 Images API 和 Responses API 常用模型。列表项仍需符合模型 ID 字符限制。
-- `SERVER_API_MODE_OPTIONS`：允许用户在设置里选择的接口模式，逗号分隔，可包含 `images`、`responses`，默认开放 `images,responses`。Nginx 会按该列表放行对应路径；如需限制用户只能使用单一协议，可显式设置为 `images` 或 `responses`。
+- `SERVER_API_MODE_OPTIONS`：允许用户在设置里选择的接口模式，逗号分隔，可包含 `images`、`responses`，默认开放 `images,responses`。Nginx 会按该列表放行对应路径；如需使用统一 Agent，列表必须包含 `responses`。如需限制用户只能使用单一协议，可显式设置为 `images` 或 `responses`。
 - `SERVER_API_ALLOW_CUSTOM_MODEL`：是否允许用户在设置里输入自定义模型 ID，严格使用小写布尔值，默认 `true`；设为 `false` 时只能选择 `SERVER_API_MODEL_OPTIONS` 中的模型。
 - `SERVER_API_CODEX_CLI`：是否启用 Codex CLI 兼容参数，严格使用小写布尔值，默认 `false`。
 - `SERVER_API_RESPONSE_FORMAT_B64_JSON`：是否请求 Base64 JSON 图片结果，严格使用小写布尔值，默认 `false`。
 - `SERVER_API_TIMEOUT_SECONDS`：请求超时秒数，必须是 `10..600` 的十进制整数，默认 `600`。
 
-统一模式仅支持 OpenAI 兼容接口，不支持 fal.ai 或自定义 Provider。开启后，服务端会强制启用并锁定 `/api-proxy`，将代理目标固定为 `SERVER_API_UPSTREAM_URL`，并用 `SERVER_API_KEY` 生成的 Authorization 覆盖任何客户端请求头；`API_PROXY_URL`、`ENABLE_API_PROXY` 和 `LOCK_API_PROXY` 不再决定实际代理行为。用户只能在部署端通过 `SERVER_API_MODE_OPTIONS` 预设的范围内选择接口模式；模型默认允许选择预设项或输入自定义模型 ID，也可通过 `SERVER_API_ALLOW_CUSTOM_MODEL=false` 限制为只能选择 `SERVER_API_MODEL_OPTIONS`。用户不能修改 API URL 或 API Key。
+统一模式仅支持 OpenAI 兼容接口，不支持 fal.ai 或自定义 Provider。开启后，服务端会强制启用并锁定 `/api-proxy`，将代理目标固定为 `SERVER_API_UPSTREAM_URL`，并用 `SERVER_API_KEY` 生成的 Authorization 覆盖任何客户端请求头；`API_PROXY_URL`、`ENABLE_API_PROXY` 和 `LOCK_API_PROXY` 不再决定实际代理行为。该路径继续服务于既有 Images/Responses 调用，并在 Gateway 不可达时承接无硬约束的 Agent Responses 回合；当 Gateway 可达时，服务端托管的 Agent Responses 会改经 `/agent-api/v1/responses/image` relay，使用 Gateway 的 `AGENT_*` 上游与凭据。用户只能在部署端通过 `SERVER_API_MODE_OPTIONS` 预设的范围内选择接口模式；模型默认允许选择预设项或输入自定义模型 ID，也可通过 `SERVER_API_ALLOW_CUSTOM_MODEL=false` 限制为只能选择 `SERVER_API_MODEL_OPTIONS`。用户不能修改 API URL 或 API Key。
 
 统一模式访问 HTTPS upstream 时会启用 SNI，并使用镜像内系统 CA 校验证书链与主机名；证书无效、过期、自签名或主机名不匹配时请求会失败。若使用 HTTP，Bearer Key 和请求内容不会被加密，只能用于受信任内网、VPN 或其他隔离网络，禁止经过不可信公网链路。
 
@@ -213,14 +217,14 @@ Gateway 只在 Compose 内网暴露 `3000`，图片和 SQLite 数据保存在 `a
 
 > 静态托管无法安全保存服务端 Key，也无法实现覆盖 Authorization 的反向代理，因此纯静态 Vercel、GitHub Pages、Netlify 等部署不能直接启用此模式。普通 `npm run build` 会以 `DEPLOY_TARGET=static` 构建并直接使用浏览器端 Legacy 配置，不依赖运行时配置文件。需要服务端统一配置或受限 Agent 时，应使用本 Docker/Nginx 实现；非 Docker 的等价实现必须在构建环境中显式设置 `DEPLOY_TARGET=runtime`，并提供 `/runtime-config.json` 及相应同源服务端协议。runtime 构建在配置缺失、加载失败或校验失败时始终拒绝提交，不会回退到浏览器凭据。
 
-**Chat + Tool 双能力配置：**
+**服务端托管的统一 Agent 配置：**
 
-同时启用时，Chat 通过服务端统一配置的 `/api-proxy` 调用固定上游，Tool 通过 `/agent-api/v1` 访问 Gateway。除各自的模型和凭据外，至少需要同时设置以下变量：
+服务端托管 Agent 同时需要 Responses 与 Gateway。前者决定 Agent 是否可提交；后者处理硬约束 action 链，并在可达时承接普通 Agent 回合的受控 Responses relay。除各自已有的模型和凭据外，至少需要同时设置以下变量：
 
 ```env
 SERVER_API_CONFIG_ENABLED=true
 SERVER_API_UPSTREAM_URL=https://api.openai.com/v1
-SERVER_API_KEY=sk-your-chat-server-key
+SERVER_API_KEY=sk-your-server-key
 SERVER_API_MODEL=gpt-5.5
 SERVER_API_MODE=responses
 SERVER_API_MODEL_OPTIONS=gpt-image-2,gpt-5.5
@@ -231,12 +235,12 @@ RESTRICTED_AGENT_ONLY=false
 AGENT_PUBLIC_ORIGIN=https://你的站点域名
 AGENT_SESSION_SECRET=至少32字符的随机字符串
 AGENT_UPSTREAM_BASE_URL=https://api.openai.com/v1
-AGENT_API_KEY=sk-your-tool-agent-key
+AGENT_API_KEY=sk-your-agent-server-key
 AGENT_PLANNER_MODEL=你的规划模型
 AGENT_IMAGE_MODEL=你的图片模型
 ```
 
-`RESTRICTED_AGENT_ONLY=false` 会保留 Gallery/Agent 工作区入口；设为 `true` 时隐藏 Gallery 并默认进入 Agent 工作区。该开关不强制 Tool 模式：只要 Chat 与 Tool 都可用，Agent 工作区内仍可切换两种模式。两个 Key 可以相同，但生产环境建议按能力拆分，便于独立限额、轮换和熔断。
+`RESTRICTED_AGENT_ONLY=false` 会保留 Gallery/Agent 工作区入口；设为 `true` 时隐藏 Gallery 并默认进入 Agent 工作区。该开关不改变自动路由，也不会绕过 Responses 前置条件。`SERVER_API_KEY` 与 `AGENT_API_KEY` 可以相同，但生产环境可按调用边界拆分，便于独立限额、轮换和熔断；两组上游及模型必须都支持各自承担的 Responses 或 Images 请求。
 
 **部署后 health/readiness smoke：**
 
@@ -250,7 +254,7 @@ docker compose -p openshop-smoke exec -T gpt-image-playground wget -qO- http://1
 docker compose -p openshop-smoke exec -T agent-gateway node -e "fetch('http://127.0.0.1:3000/healthz').then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"
 ```
 
-双能力部署的 `runtime-config.json` 应同时包含 `serverApi.enabled: true` 与 `restrictedAgent.enabled: true`；capabilities 应返回 HTTP 200，并在 `operationTypes` 中包含 `openshop.edit`。修改环境变量或镜像后可执行以下重启检查：
+统一 Agent 部署的 `runtime-config.json` 应同时包含 `serverApi.enabled: true` 与 `restrictedAgent.enabled: true`；capabilities 应返回 HTTP 200，并在 `operationTypes` 中包含 `image.transform`、`metadata.assert` 与兼容的 `openshop.edit`。修改环境变量或镜像后可执行以下重启检查：
 
 ```bash
 docker compose -p openshop-smoke restart
@@ -270,7 +274,7 @@ npm run test:e2e:install
 npm run test:e2e
 ```
 
-首次运行或干净环境需要先通过 `npm run test:e2e:install` 安装 Chromium。当前 Playwright 配置会在 `127.0.0.1:4173` 启动 Vite，并通过确定性 fixture 验证 Chat、Tool、刷新不重放、跨页面 CAS 和 OpenShop 行为；它不是对 Compose 容器的浏览器访问。容器镜像、运行时配置、Nginx 到 Gateway 的链路和重启恢复应使用上面的 Docker smoke 单独验证。
+首次运行或干净环境需要先通过 `npm run test:e2e:install` 安装 Chromium。当前 Playwright 配置会在 `127.0.0.1:4173` 启动 Vite，并通过确定性 fixture 验证单一 Agent 的普通 Responses 回合、严格 action 链、自动执行、刷新不重放、跨页面 CAS 和 OpenShop 兼容行为；它不是对 Compose 容器的浏览器访问。容器镜像、运行时配置、Nginx 到 Gateway 的链路和重启恢复应使用上面的 Docker smoke 单独验证。
 
 **验证环境清理：**
 
@@ -282,9 +286,9 @@ docker compose -p openshop-smoke down --volumes --remove-orphans
 
 该命令只清理 `openshop-smoke` project 的容器、网络和卷，不删除镜像。不要在未配置真实镜像标签隔离方案时删除仓库 Compose 使用的 `latest`。如果验证产生了 `.playwright/test-results/` 或本地 `dist/`、`gateway/dist/`，确认不再需要后也应一并移除。
 
-**静态部署降级与回滚：**
+**静态部署与回滚：**
 
-纯静态构建不提供 Gateway，因此 Tool 会明确不可用；Chat 仍可使用浏览器 Profile，不会伪装成服务端统一配置。Docker 部署可通过 `RESTRICTED_AGENT_ENABLED=false` 单独关闭 Tool，或通过 `SERVER_API_CONFIG_ENABLED=false` 关闭服务端 Chat 并恢复浏览器端配置。回滚后重新创建容器并重复 health/readiness smoke，确认公开配置与预期一致。
+纯静态构建不提供 Gateway。浏览器 Profile 的 Responses 配置可用时，Agent 仍可完成无硬约束回合；精确尺寸、裁剪、旋转、格式等严格请求会明确失败，不会伪装成近似生成。Docker 部署可通过 `RESTRICTED_AGENT_ENABLED=false` 关闭严格 action 链与受控 relay，或通过 `SERVER_API_CONFIG_ENABLED=false` 关闭服务端统一配置并恢复浏览器端配置。回滚后重新创建容器并重复 health/readiness smoke，确认公开配置与预期一致。
 
 **1. 服务端统一配置：Docker CLI 示例**
 
@@ -336,7 +340,7 @@ services:
 3. 如需服务端统一配置，在 Environment 中填入 `.env.example` 对应变量，并将 `SERVER_API_CONFIG_ENABLED` 设为 `true`。
 4. `SERVER_API_KEY` 只能放在 Dokploy Environment 中，不要写入仓库文件。
 
-如需受限 Agent，在 Dokploy 中设置 `RESTRICTED_AGENT_ENABLED=true` 和全部必填 `AGENT_*` 变量。域名仍绑定前端 `gpt-image-playground:80`，不要单独暴露 Gateway 端口。
+如需统一 Agent，在 Dokploy 中先配置可用的服务端 Responses，再设置 `RESTRICTED_AGENT_ENABLED=true` 和全部必填 `AGENT_*` 变量。域名仍绑定前端 `gpt-image-playground:80`，不要单独暴露 Gateway 端口；Gateway 使用既有 `/agent-api/` 路由承接严格 action 链与受控 Responses relay。
 
 回滚时将 `SERVER_API_CONFIG_ENABLED=false` 并重启容器，即可恢复原有 `DEFAULT_API_URL` / `API_PROXY_URL` / `ENABLE_API_PROXY` / `LOCK_API_PROXY` 行为。使用 `latest` 标签时，重新拉取镜像并重启即可更新（如 `docker compose pull && docker compose up -d`）；生产环境建议固定版本标签。
 
@@ -388,7 +392,7 @@ npm run test:gateway
 npm run build:gateway
 ```
 
-本地联调受限模式建议使用 Docker Compose profile，避免在开发服务器中复制生产安全边界：
+本地联调 Gateway 建议使用 Docker Compose，避免在开发服务器中复制生产安全边界：
 
 ```bash
 docker compose up --build
