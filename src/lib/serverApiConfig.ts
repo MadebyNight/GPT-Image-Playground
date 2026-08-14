@@ -7,7 +7,6 @@ export const SERVER_MANAGED_PROFILE_ID = 'server-managed-openai'
 export const DEFAULT_SERVER_API_PROXY_PATH = '/api-proxy'
 export const DEFAULT_RESTRICTED_AGENT_BASE_PATH = '/agent-api/v1'
 export const SERVER_API_CONFIG_UNAVAILABLE_MESSAGE = '服务端 API 配置不可用，请联系部署管理员'
-export const AGENT_MODE_PREFERENCE_KEY = 'agent-mode-v1'
 
 interface DisabledServerApiConfig {
   enabled: false
@@ -321,56 +320,41 @@ export function getChatCapabilities(settings: AppSettings): ChatCapabilities {
 
 export function getAgentCapabilities(settings: AppSettings): AgentCapabilities {
   const chat = getChatCapabilities(settings)
-  const tool = isRestrictedAgentEnabled()
-  const defaultMode: AgentMode | null = chat.chatUsable ? 'chat' : tool ? 'tool' : null
+  const responsesUsable = chat.chatUsable
+  const toolPipelineUsable = isRestrictedAgentEnabled()
   return {
+    // 统一 Agent 必须先具备 Responses；Gateway 仅用于严格规格后的自动工具链。
+    agentUsable: responsesUsable,
+    responsesUsable,
+    toolPipelineUsable,
+    // 以下旧字段在统一工作区迁移完成前保留，避免旧 UI 读取到不完整对象。
     chatAllowed: chat.chatAllowed,
     chatConfigured: chat.chatConfigured,
     chatUsable: chat.chatUsable,
-    tool,
+    tool: toolPipelineUsable,
     openShopTool: false,
-    defaultMode,
-    modeSwitching: chat.chatUsable && tool,
+    defaultMode: responsesUsable ? 'chat' : null,
+    modeSwitching: false,
   }
 }
 
-export function resolveAgentMode(capabilities: AgentCapabilities, preferredMode: unknown): AgentMode | null {
-  if (preferredMode === 'chat' && capabilities.chatUsable) return 'chat'
-  if (preferredMode === 'tool' && capabilities.tool) return 'tool'
-  return capabilities.defaultMode
+/**
+ * @deprecated 统一 Agent 不再支持 Chat/Tool 模式切换。保留导出仅供尚未迁移的旧 UI 编译。
+ */
+export function resolveAgentMode(capabilities: AgentCapabilities, _preferredMode: unknown): AgentMode | null {
+  return (capabilities.agentUsable ?? capabilities.chatUsable) ? 'chat' : null
 }
 
 type AgentModeStorage = Pick<Storage, 'getItem' | 'setItem'>
 
-function getDefaultModeStorage(): AgentModeStorage | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage
-  } catch {
-    return null
-  }
+/** @deprecated 统一 Agent 不再持久化 Chat/Tool 偏好。 */
+export function getAgentModePreference(_storage?: AgentModeStorage | null): AgentMode | null {
+  return null
 }
 
-export function getAgentModePreference(storage?: AgentModeStorage | null): AgentMode | null {
-  if (runtimeState.status !== 'ready') return null
-  try {
-    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
-    if (!targetStorage) return null
-    const value = targetStorage.getItem(AGENT_MODE_PREFERENCE_KEY)
-    return value === 'chat' || value === 'tool' ? value : null
-  } catch {
-    return null
-  }
-}
-
-export function setAgentModePreference(mode: AgentMode, storage?: AgentModeStorage | null): void {
-  if (runtimeState.status !== 'ready') return
-  try {
-    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
-    if (!targetStorage) return
-    targetStorage.setItem(AGENT_MODE_PREFERENCE_KEY, mode)
-  } catch {
-    // 隐私模式或禁用存储时保持当前会话内选择即可。
-  }
+/** @deprecated 统一 Agent 不再持久化 Chat/Tool 偏好。 */
+export function setAgentModePreference(_mode: AgentMode, _storage?: AgentModeStorage | null): void {
+  // 保留无副作用兼容入口，直到旧工作区被移除。
 }
 
 export function getChatUnavailableMessage(settings: AppSettings): string {

@@ -349,7 +349,7 @@ describe('initializeRuntimeConfig', () => {
     },
   )
 
-  it('resolves Chat and Tool as independent capabilities with deterministic fallback', () => {
+  it('以 Responses 可用性作为统一 Agent 总开关，并仅暴露 Tool Pipeline 状态', () => {
     initializeRuntimeConfig({
       ...enabledRuntimeConfig,
       serverApi: {
@@ -366,12 +366,15 @@ describe('initializeRuntimeConfig', () => {
     const dual = getAgentCapabilities({ ...DEFAULT_SETTINGS, apiMode: 'responses' })
 
     expect(dual).toMatchObject({
+      agentUsable: true,
+      responsesUsable: true,
+      toolPipelineUsable: true,
       chatUsable: true,
       tool: true,
       defaultMode: 'chat',
-      modeSwitching: true,
+      modeSwitching: false,
     })
-    expect(resolveAgentMode(dual, 'tool')).toBe('tool')
+    expect(resolveAgentMode(dual, 'tool')).toBe('chat')
     expect(resolveAgentMode(dual, 'invalid')).toBe('chat')
 
     initializeRuntimeConfig({
@@ -384,16 +387,32 @@ describe('initializeRuntimeConfig', () => {
       },
     })
     const toolOnly = getAgentCapabilities(DEFAULT_SETTINGS)
-    expect(toolOnly).toMatchObject({ chatUsable: false, tool: true, defaultMode: 'tool', modeSwitching: false })
-    expect(resolveAgentMode(toolOnly, 'chat')).toBe('tool')
+    expect(toolOnly).toMatchObject({
+      agentUsable: false,
+      responsesUsable: false,
+      toolPipelineUsable: true,
+      chatUsable: false,
+      tool: true,
+      defaultMode: null,
+      modeSwitching: false,
+    })
+    expect(resolveAgentMode(toolOnly, 'tool')).toBeNull()
 
     initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
     const unavailable = getAgentCapabilities(DEFAULT_SETTINGS)
-    expect(unavailable).toMatchObject({ chatUsable: false, tool: false, defaultMode: null, modeSwitching: false })
+    expect(unavailable).toMatchObject({
+      agentUsable: false,
+      responsesUsable: false,
+      toolPipelineUsable: false,
+      chatUsable: false,
+      tool: false,
+      defaultMode: null,
+      modeSwitching: false,
+    })
     expect(resolveAgentMode(unavailable, 'tool')).toBeNull()
   })
 
-  it('reads and writes mode preference only for valid values', () => {
+  it('不再读取或写入 Chat/Tool 偏好，避免它参与路由决策', () => {
     const storage = {
       value: null as string | null,
       getItem: vi.fn(() => storage.value),
@@ -402,12 +421,12 @@ describe('initializeRuntimeConfig', () => {
 
     expect(getAgentModePreference(storage)).toBeNull()
     setAgentModePreference('tool', storage)
-    expect(getAgentModePreference(storage)).toBe('tool')
-    storage.value = 'invalid'
+    expect(storage.getItem).not.toHaveBeenCalled()
+    expect(storage.setItem).not.toHaveBeenCalled()
     expect(getAgentModePreference(storage)).toBeNull()
   })
 
-  it('silently degrades when the browser localStorage getter throws', () => {
+  it('旧偏好兼容入口不会访问 browser localStorage', () => {
     const restrictedWindow = {}
     Object.defineProperty(restrictedWindow, 'localStorage', {
       configurable: true,

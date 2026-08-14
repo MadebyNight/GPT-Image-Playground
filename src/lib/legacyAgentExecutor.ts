@@ -2,6 +2,7 @@ import type { ApiProfile, ResponsesApiResponse, TaskParams, TaskRecord } from '.
 import { retryTaskWithExecution, submitTask, useStore } from '../store'
 import { buildAgentConversationContext, createAgentConversationId, getAgentConversationId, getConversationTasks } from './agentConversation'
 import { getActiveApiProfile } from './apiProfiles'
+import { routeAgentTurn } from './agentRoute'
 import { buildOpenAIRequestUrl, createRequestHeaders, createResponsesImageTool, parseResponsesImageResults } from './openaiCompatibleImageApi'
 import { readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
@@ -332,6 +333,20 @@ function assertAgentProfile(profile: ApiProfile) {
   }
 }
 
+/**
+ * 旧 Responses 执行器只允许承接没有严格规格的回合。严格规格会由统一执行器
+ * 转交 Gateway；这里的断言防止旧调用方绕过前端分流而产生错误的 Responses 回退。
+ */
+function assertResponsesAgentRoute(opts: CallApiOptions) {
+  const decision = routeAgentTurn({
+    prompt: opts.prompt,
+    hasExplicitImageInput: opts.inputImageDataUrls.length > 0,
+  })
+  if (decision.route !== 'responses_image') {
+    throw new Error(`当前 Agent 回合不能通过 Responses 执行：${decision.routeReason}`)
+  }
+}
+
 async function callAgentResponsesImageApiSingle(
   opts: CallApiOptions,
   profile: ApiProfile,
@@ -423,6 +438,7 @@ export async function callAgentResponsesImageApi(
   opts: CallApiOptions,
   options: { stream: boolean; imageCount: number; taskId?: string } = { stream: true, imageCount: 1 },
 ): Promise<CallApiResult> {
+  assertResponsesAgentRoute(opts)
   const profile = getActiveApiProfile(opts.settings)
   assertAgentProfile(profile)
 

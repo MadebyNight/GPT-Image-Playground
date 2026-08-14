@@ -212,6 +212,23 @@ describe('storeBackedAgentExecutor', () => {
     })
   })
 
+  it.each([
+    ['严格尺寸', '生成一张 870×220 px 的夏日咖啡横幅', '检测到严格输出或确定性编辑要求：精确尺寸 870×220px。'],
+    ['未绑定历史图片', '编辑上一张图', '历史图片尚未显式绑定'],
+    ['不支持格式', '导出 GIF 格式', 'GIF 不是当前严格图片工具链支持的输出格式。'],
+  ])('在发起请求前阻断%s回合，并保留路由原因', async (_label, prompt, reason) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fetch 不应被调用'))
+
+    await expect(callAgentResponsesImageApi({
+      settings: storeMock.state.settings,
+      prompt,
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    }, { stream: false, imageCount: 1 })).rejects.toThrow(reason)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('uses the same-origin Gateway proxy contract without browser credentials', async () => {
     initializeRuntimeConfig({
       version: 1,
