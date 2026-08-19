@@ -19,49 +19,6 @@
 
 ---
 
-## 📸 界面预览
-
-<details>
-<summary><b>点击展开截图展示</b></summary>
-<br>
-
-<div align="center">
-  <b>桌面端主界面</b><br>
-  <img src="docs/images/example_pc_1.png" alt="桌面端主界面" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>任务详情与实际参数</b><br>
-  <img src="docs/images/example_pc_2.png" alt="任务详情与实际参数" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>桌面端批量选择</b><br>
-  <img src="docs/images/example_pc_3.png" alt="桌面端批量选择" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端主界面</b><br>
-  <img src="docs/images/example_mb_1.jpg" alt="移动端主界面" width="420" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端侧滑多选</b><br>
-  <img src="docs/images/example_mb_2.jpg" alt="移动端侧滑多选" width="420" />
-</div>
-
-</details>
-
----
-
 ## ✨ 核心特性
 
 ### 🎨 强大的图像生成与编辑
