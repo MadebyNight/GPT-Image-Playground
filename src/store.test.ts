@@ -603,7 +603,7 @@ describe('input persistence setting', () => {
 })
 
 describe('initStore composer concurrency', () => {
-  const emptyDraft = (scope: 'gallery' | 'agent') => ({
+  const emptyDraft = (scope: 'gallery' | 'chat' | 'tool') => ({
     composerScope: scope,
     prompt: '',
     inputImages: [],
@@ -624,7 +624,8 @@ describe('initStore composer concurrency', () => {
       composerScope: 'gallery',
       composerDrafts: {
         gallery: emptyDraft('gallery'),
-        agent: emptyDraft('agent'),
+        chat: emptyDraft('chat'),
+        tool: emptyDraft('tool'),
       },
       composerVersion: 0,
       prompt: '',
@@ -668,7 +669,7 @@ describe('initStore composer concurrency', () => {
 
   it('does not overwrite a changed prompt, params or new image while a persisted image is restoring', async () => {
     const persistedImage = {
-      id: 'persisted-agent-image',
+      id: 'persisted-chat-image',
       dataUrl: 'data:image/png;base64,b2xk',
       source: 'upload' as const,
       createdAt: 1,
@@ -677,8 +678,8 @@ describe('initStore composer concurrency', () => {
     useStore.setState((state) => ({
       composerDrafts: {
         ...state.composerDrafts,
-        agent: {
-          ...emptyDraft('agent'),
+        chat: {
+          ...emptyDraft('chat'),
           inputImages: [{ id: persistedImage.id, dataUrl: '' }],
         },
       },
@@ -964,7 +965,7 @@ describe('submitted composer snapshot', () => {
   })
 })
 
-describe('unified Agent composer draft', () => {
+describe('mode-scoped composer drafts', () => {
   beforeEach(() => {
     const profile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
     const emptyDraft = {
@@ -984,10 +985,11 @@ describe('unified Agent composer draft', () => {
         profiles: [profile],
         activeProfileId: profile.id,
       }),
-      composerScope: 'agent',
+      composerScope: 'chat',
       composerDrafts: {
         gallery: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
-        agent: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
+        chat: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
+        tool: { ...emptyDraft, params: { ...DEFAULT_PARAMS } },
       },
       ...emptyDraft,
       maskEditorImageId: null,
@@ -997,48 +999,63 @@ describe('unified Agent composer draft', () => {
     })
   })
 
-  it('keeps one draft when legacy Chat or Tool callers select the Agent scope', () => {
-    useStore.getState().setPrompt('统一 Agent 草稿')
+  it('isolates prompt, images, mask, params, reused profile and version between Chat and Tool', () => {
+    useStore.getState().setPrompt('Chat 草稿')
     useStore.getState().setInputImages([imageA])
     useStore.getState().setMaskDraft({ targetImageId: imageA.id, maskDataUrl: 'data:image/png;base64,mask-chat', updatedAt: 1 })
     useStore.getState().setParams({ size: '1536x1024' })
-    useStore.getState().setReusedTaskApiProfile('agent-profile', true, 'Agent Profile')
-    const agentVersion = useStore.getState().composerVersion
+    useStore.getState().setReusedTaskApiProfile('chat-profile', true, 'Chat Profile')
+    const chatVersion = useStore.getState().composerVersion
 
     useStore.getState().setComposerScope('tool')
     expect(getComposerDraftSnapshot()).toMatchObject({
-      composerScope: 'agent',
-      prompt: '统一 Agent 草稿',
+      composerScope: 'tool',
+      prompt: '',
+      inputImages: [],
+      maskDraft: null,
+      params: DEFAULT_PARAMS,
+      reusedTaskApiProfileId: null,
+      composerVersion: 0,
+    })
+
+    useStore.getState().setPrompt('Tool 草稿')
+    useStore.getState().setInputImages([imageB])
+    useStore.getState().setParams({ quality: 'high' })
+    const toolVersion = useStore.getState().composerVersion
+
+    useStore.getState().setComposerScope('chat')
+    expect(getComposerDraftSnapshot()).toMatchObject({
+      composerScope: 'chat',
+      prompt: 'Chat 草稿',
       inputImages: [imageA],
       maskDraft: { targetImageId: imageA.id },
       params: { size: '1536x1024' },
-      reusedTaskApiProfileId: 'agent-profile',
+      reusedTaskApiProfileId: 'chat-profile',
       reusedTaskApiProfileMissing: true,
-      composerVersion: agentVersion,
+      composerVersion: chatVersion,
     })
-    expect(useStore.getState().composerScope).toBe('agent')
-
-    useStore.getState().setComposerScope('chat')
-    expect(getComposerDraftSnapshot().composerVersion).toBe(agentVersion)
+    expect(toolVersion).toBeGreaterThan(0)
   })
 
-  it('clears the submitted Agent draft without clearing the active gallery draft', async () => {
-    useStore.getState().setPrompt('Agent 待提交')
-    const agentSnapshot = getComposerDraftSnapshot()
-    useStore.getState().setComposerScope('gallery')
-    useStore.getState().setPrompt('画廊新草稿')
+  it('clears only the submitted source mode when another mode becomes active', async () => {
+    useStore.getState().setPrompt('Chat 待提交')
+    const chatSnapshot = getComposerDraftSnapshot()
+    useStore.getState().setComposerScope('tool')
+    useStore.getState().setPrompt('Tool 新草稿')
 
     await submitTask({
-      draftSnapshot: agentSnapshot,
+      draftSnapshot: chatSnapshot,
       callApi: vi.fn().mockResolvedValue({ images: [], actualParams: {} }),
     })
 
-    expect(useStore.getState().prompt).toBe('画廊新草稿')
-    useStore.getState().setComposerScope('agent')
+    expect(useStore.getState().prompt).toBe('Tool 新草稿')
+    useStore.getState().setComposerScope('chat')
     expect(useStore.getState().prompt).toBe('')
+    useStore.getState().setComposerScope('tool')
+    expect(useStore.getState().prompt).toBe('Tool 新草稿')
   })
 
-  it('maps the legacy persisted single draft to Agent', () => {
+  it('maps the legacy persisted single draft to Chat without leaking it into Tool', () => {
     const merged = mergePersistedState({
       settings: { ...DEFAULT_SETTINGS },
       prompt: '旧版单草稿',
@@ -1046,87 +1063,13 @@ describe('unified Agent composer draft', () => {
       params: { ...DEFAULT_PARAMS, quality: 'high' },
     }, useStore.getState())
 
-    expect(merged.composerDrafts.agent).toMatchObject({
+    expect(merged.composerDrafts.chat).toMatchObject({
       prompt: '旧版单草稿',
       inputImages: [{ id: imageA.id, dataUrl: '' }],
       params: { quality: 'high' },
     })
-    expect(merged.composerDrafts).not.toHaveProperty('chat')
-    expect(merged.composerDrafts).not.toHaveProperty('tool')
-  })
-})
-
-describe('unified Agent composer draft migration', () => {
-  it('migrates the newer non-empty legacy Chat or Tool draft into the single Agent draft', () => {
-    const merged = mergePersistedState({
-      settings: { ...DEFAULT_SETTINGS },
-      composerDrafts: {
-        chat: {
-          prompt: 'Chat 草稿',
-          inputImages: [],
-          params: { ...DEFAULT_PARAMS },
-          composerVersion: 3,
-        },
-        tool: {
-          prompt: 'Tool 草稿',
-          inputImages: [],
-          params: { ...DEFAULT_PARAMS, quality: 'high' },
-          composerVersion: 4,
-        },
-      },
-    }, useStore.getState())
-
-    expect(merged.composerDrafts.agent).toMatchObject({
-      composerScope: 'agent',
-      prompt: 'Tool 草稿',
-      params: { quality: 'high' },
-      composerVersion: 4,
-    })
-    expect(merged.composerDrafts).not.toHaveProperty('chat')
-    expect(merged.composerDrafts).not.toHaveProperty('tool')
-  })
-
-  it('ignores an empty newer legacy draft and uses Chat when non-empty drafts have the same version', () => {
-    const emptyToolWinsByVersion = mergePersistedState({
-      settings: { ...DEFAULT_SETTINGS },
-      composerDrafts: {
-        chat: { prompt: '保留 Chat 内容', composerVersion: 3 },
-        tool: { prompt: '   ', composerVersion: 9 },
-      },
-    }, useStore.getState())
-    const chatWinsTie = mergePersistedState({
-      settings: { ...DEFAULT_SETTINGS },
-      composerDrafts: {
-        chat: { prompt: 'Chat 平手', composerVersion: 4 },
-        tool: { prompt: 'Tool 平手', composerVersion: 4 },
-      },
-    }, useStore.getState())
-
-    expect(emptyToolWinsByVersion.composerDrafts.agent.prompt).toBe('保留 Chat 内容')
-    expect(chatWinsTie.composerDrafts.agent.prompt).toBe('Chat 平手')
-  })
-
-  it('writes only gallery and agent drafts after migration', () => {
-    useStore.setState({
-      composerScope: 'agent',
-      composerDrafts: {
-        gallery: {
-          composerScope: 'gallery', prompt: '', inputImages: [], maskDraft: null, params: { ...DEFAULT_PARAMS },
-          reusedTaskApiProfileId: null, reusedTaskApiProfileName: null, reusedTaskApiProfileMissing: false, composerVersion: 0,
-        },
-        agent: {
-          composerScope: 'agent', prompt: '统一草稿', inputImages: [], maskDraft: null, params: { ...DEFAULT_PARAMS },
-          reusedTaskApiProfileId: null, reusedTaskApiProfileName: null, reusedTaskApiProfileMissing: false, composerVersion: 1,
-        },
-      },
-      prompt: '统一草稿',
-      inputImages: [],
-      maskDraft: null,
-      params: { ...DEFAULT_PARAMS },
-      composerVersion: 1,
-    })
-
-    expect(Object.keys(getPersistedState(useStore.getState()).composerDrafts).sort()).toEqual(['agent', 'gallery'])
+    expect(merged.composerDrafts.tool.prompt).toBe('')
+    expect(merged.composerDrafts.tool.inputImages).toEqual([])
   })
 })
 

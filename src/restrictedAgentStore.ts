@@ -23,8 +23,6 @@ import {
   getRestrictedAgentPlan,
   subscribeRestrictedAgentExecution,
   getRestrictedAgentPlanOperation,
-  type RestrictedAgentAutoPipeline,
-  type RestrictedAgentExecutionEvent,
   type RestrictedAgentPlanRequest,
 } from './lib/restrictedAgentApi'
 import { openShopToolRunner, OpenShopToolRunnerError } from './lib/openShopToolRunner'
@@ -83,9 +81,6 @@ const STORAGE_KEY = 'restricted-agent-flow-v1'
 const POLL_INTERVAL_MS = 2_000
 const executionPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const executionEventStops = new Map<string, () => void>()
-/** v3 自动执行不会占用旧确认流的全局 execution；按 task 隔离观察和取消。 */
-const autoPipelineTaskExecutions = new Map<string, string>()
-const autoPipelineExecutionTasks = new Map<string, string>()
 const finalizingExecutions = new Set<string>()
 const taskCreationPromises = new Map<string, Promise<string>>()
 const openShopRunPromises = new Map<string, Promise<string | null>>()
@@ -236,10 +231,7 @@ function getSourceTaskId(browserImageId: string) {
   return useStore.getState().tasks.find((task) => task.outputImages.includes(browserImageId))?.id ?? null
 }
 
-export function createRestrictedAgentPlanRequestFromDraft(
-  draftSnapshot: ComposerDraftSnapshot,
-  webSearchEnabled = false,
-): RestrictedAgentPlanRequest {
+function createPlanRequestFromDraft(draftSnapshot: ComposerDraftSnapshot, webSearchEnabled = false): RestrictedAgentPlanRequest {
   const request = draftSnapshot.prompt.trim()
   const maskTargetId = draftSnapshot.maskDraft?.targetImageId ?? null
   const inputs = draftSnapshot.inputImages.map((image) => ({
@@ -320,7 +312,7 @@ async function validateOpenShopConfirmation(
   const currentHash = await computeRestrictedAgentConfirmationHash(
     plan,
     decodedBindings,
-    createRestrictedAgentPlanRequestFromDraft(draft),
+    createPlanRequestFromDraft(draft),
   )
   if (currentHash !== plan.composerSnapshotHash) {
     throw new OpenShopConfirmationError('stale', 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认')
@@ -587,16 +579,6 @@ async function finalizeExecution(execution: RestrictedAgentExecution, taskId: st
 }
 
 async function applyExecution(execution: RestrictedAgentExecution, taskId: string | null) {
-  const mappedTaskId = taskId ?? autoPipelineExecutionTasks.get(execution.id) ?? null
-  const task = useStore.getState().tasks.find((item) => (
-    item.id === mappedTaskId || item.agentExecutionId === execution.id
-  ))
-  if (task && (!task.agentExecutionId || task.agentExecutionId === execution.id)) {
-    updateTaskInStore(task.id, {
-      agentExecutionId: execution.id,
-      agentExecutionSnapshot: execution,
-    })
-  }
   const isActive = useRestrictedAgentStore.getState().execution?.id === execution.id
   if (isActive) {
     useRestrictedAgentStore.setState({
@@ -613,52 +595,6 @@ async function applyExecution(execution: RestrictedAgentExecution, taskId: strin
     stopExecutionWatch(execution.id)
     await finalizeExecution(execution, taskId)
   }
-}
-
-function applyExecutionEvent(
-  executionId: string,
-  taskId: string | null,
-  event: RestrictedAgentExecutionEvent,
-) {
-  const mappedTaskId = taskId ?? autoPipelineExecutionTasks.get(executionId) ?? null
-  const task = useStore.getState().tasks.find((item) => (
-    item.id === mappedTaskId || item.agentExecutionId === executionId
-  ))
-  const snapshot = task?.agentExecutionSnapshot
-  if (!task || !snapshot || snapshot.id !== executionId) return
-
-  if (event.type === 'action.queued'
-    || event.type === 'action.started'
-    || event.type === 'action.completed'
-    || event.type === 'action.failed'
-    || event.type === 'action.cancelled'
-    || event.type === 'action.failed_unknown') {
-    const actions = [...(snapshot.actions ?? [])]
-    const actionIndex = actions.findIndex((action) => action.id === event.data.id || action.actionIndex === event.data.actionIndex)
-    if (actionIndex >= 0) actions[actionIndex] = event.data
-    else actions.push(event.data)
-    actions.sort((left, right) => left.actionIndex - right.actionIndex)
-    updateTaskInStore(task.id, {
-      agentExecutionSnapshot: { ...snapshot, actions, updatedAt: event.data.updatedAt },
-    })
-    return
-  }
-
-  if (event.type === 'asset.ready') {
-    const outputAssets = snapshot.outputAssets.some((asset) => asset.id === event.data.asset.id)
-      ? snapshot.outputAssets
-      : [...snapshot.outputAssets, event.data.asset]
-    updateTaskInStore(task.id, { agentExecutionSnapshot: { ...snapshot, outputAssets } })
-    return
-  }
-
-  updateTaskInStore(task.id, {
-    agentExecutionSnapshot: {
-      ...snapshot,
-      status: event.data.status,
-      updatedAt: event.data.updatedAt,
-    },
-  })
 }
 
 async function refreshExecution(executionId: string, taskId: string | null) {
@@ -688,10 +624,7 @@ function watchExecution(executionId: string, taskId: string | null) {
   if (typeof EventSource !== 'undefined') {
     const stop = subscribeRestrictedAgentExecution(
       executionId,
-      (event) => {
-        applyExecutionEvent(executionId, taskId, event)
-        void refreshExecution(executionId, taskId)
-      },
+      () => { void refreshExecution(executionId, taskId) },
       () => { schedulePoll() },
     )
     executionEventStops.set(executionId, stop)
@@ -699,34 +632,6 @@ function watchExecution(executionId: string, taskId: string | null) {
     schedulePoll()
   }
   void refreshExecution(executionId, taskId)
-}
-
-/**
- * 把 v3 自动执行绑定到创建它的统一 Agent 回合。它不写入旧确认流状态，
- * 因而两个后台 execution 不会互相覆盖。
- */
-export function observeAutoPipelineExecution(taskId: string, pipeline: RestrictedAgentAutoPipeline): void {
-  const { plan, execution } = pipeline
-  autoPipelineTaskExecutions.set(taskId, execution.id)
-  autoPipelineExecutionTasks.set(execution.id, taskId)
-  updateTaskInStore(taskId, {
-    agentPlanId: plan.id,
-    agentPlanSnapshot: plan,
-    agentExecutionId: execution.id,
-    agentExecutionSnapshot: execution,
-  })
-  void applyExecution(execution, taskId)
-  if (!isTerminalExecution(execution)) watchExecution(execution.id, taskId)
-}
-
-/** 只取消指定统一 Agent 回合绑定的 v3 execution。 */
-export async function cancelAutoPipelineTaskExecution(taskId: string): Promise<boolean> {
-  const task = useStore.getState().tasks.find((item) => item.id === taskId)
-  const executionId = autoPipelineTaskExecutions.get(taskId) ?? task?.agentExecutionId
-  if (!task || !executionId || task.agentPlanSnapshot?.schemaVersion !== 3) return false
-  const execution = await cancelRestrictedAgentExecution(executionId)
-  await applyExecution(execution, taskId)
-  return true
 }
 
 async function saveExportedOpenShopRun(
@@ -1082,12 +987,12 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       localRun: null,
     })
     try {
-      const creation = await createRestrictedAgentPlan(createRestrictedAgentPlanRequestFromDraft(draftSnapshot, webSearchEnabled))
+      const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot, webSearchEnabled))
       const currentDraft = getComposerDraftSnapshot('tool')
       const currentHash = await computeRestrictedAgentConfirmationHash(
         creation.plan,
         creation.assetBindings,
-        createRestrictedAgentPlanRequestFromDraft(currentDraft),
+        createPlanRequestFromDraft(currentDraft),
       )
       const fresh = creation.plan.schemaVersion !== 2 || currentHash === creation.plan.composerSnapshotHash
       set({
@@ -1139,7 +1044,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
         composerSnapshotHash = await computeRestrictedAgentConfirmationHash(
           plan,
           assetBindings,
-          createRestrictedAgentPlanRequestFromDraft(currentDraft),
+          createPlanRequestFromDraft(currentDraft),
         )
         if (composerSnapshotHash !== plan.composerSnapshotHash) {
           set({ phase: 'stale', error: 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认' })
@@ -1299,18 +1204,8 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
         set({ error: error instanceof Error ? error.message : String(error) })
       }
     }
-    const recoverable = tasks.filter((task) => (
-      task.status === 'running'
-      && task.agentExecutionId
-      && (task.origin === 'restricted-agent' || task.agentPlanSnapshot?.schemaVersion === 3)
-    ))
-    for (const task of recoverable) {
-      if (task.agentPlanSnapshot?.schemaVersion === 3) {
-        autoPipelineTaskExecutions.set(task.id, task.agentExecutionId!)
-        autoPipelineExecutionTasks.set(task.agentExecutionId!, task.id)
-      }
-      watchExecution(task.agentExecutionId!, task.id)
-    }
+    const recoverable = tasks.filter((task) => task.origin === 'restricted-agent' && task.status === 'running' && task.agentExecutionId)
+    for (const task of recoverable) watchExecution(task.agentExecutionId!, task.id)
     if (active && !isTerminalExecution(active)) watchExecution(active.id, activeTaskId)
     if (active && isTerminalExecution(active)) await finalizeExecution(active, activeTaskId)
   },
@@ -1345,7 +1240,7 @@ async function refreshPlanFreshness() {
     const currentHash = await computeRestrictedAgentConfirmationHash(
       flow.plan,
       flow.assetBindings,
-      createRestrictedAgentPlanRequestFromDraft(draft),
+      createPlanRequestFromDraft(draft),
     )
     const latest = useRestrictedAgentStore.getState()
     if (revision !== freshnessRevision || latest.plan?.id !== flow.plan.id

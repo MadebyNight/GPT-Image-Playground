@@ -28,32 +28,6 @@ export interface OpenShopConfigurationGate {
   isConfiguring: boolean
 }
 
-export const OPEN_SHOP_HELLO_RETRY_INTERVAL_MS = 250
-
-export interface OpenShopHelloRetryController {
-  start: () => void
-  stop: () => void
-}
-
-export function createOpenShopHelloRetryController(sendHello: () => void): OpenShopHelloRetryController {
-  let retryTimer: ReturnType<typeof globalThis.setInterval> | null = null
-
-  const stop = () => {
-    if (retryTimer === null) return
-    globalThis.clearInterval(retryTimer)
-    retryTimer = null
-  }
-
-  return {
-    start() {
-      stop()
-      retryTimer = globalThis.setInterval(sendHello, OPEN_SHOP_HELLO_RETRY_INTERVAL_MS)
-      sendHello()
-    },
-    stop,
-  }
-}
-
 export function shouldSendOpenShopConfiguration({
   hasFrameWindow,
   hasSourceDataUrl,
@@ -111,7 +85,6 @@ export default function OpenShopWorkspace({
   const configuredRef = useRef(false)
   const helloSentRef = useRef(false)
   const helloRequestIdRef = useRef<string | null>(null)
-  const helloRetryControllerRef = useRef<OpenShopHelloRetryController | null>(null)
   const saveRequestIdRef = useRef<string | null>(null)
   const [isConfigured, setIsConfigured] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -135,20 +108,6 @@ export default function OpenShopWorkspace({
     helloRequestIdRef.current = requestId
     postOpenShopMessage(frameWindow, targetOrigin, { type: 'openshop:hello', id: requestId })
   }, [targetOrigin])
-
-  const stopHelloRetry = useCallback(() => {
-    helloRetryControllerRef.current?.stop()
-    helloRetryControllerRef.current = null
-  }, [])
-
-  const startHelloRetry = useCallback(() => {
-    stopHelloRetry()
-    if (editorReadyRef.current || !frameRef.current?.contentWindow || !targetOrigin) return
-
-    const retryController = createOpenShopHelloRetryController(() => sendHello(true))
-    helloRetryControllerRef.current = retryController
-    retryController.start()
-  }, [sendHello, stopHelloRetry, targetOrigin])
 
   const sendConfiguration = useCallback(async () => {
     const frameWindow = frameRef.current?.contentWindow
@@ -209,7 +168,6 @@ export default function OpenShopWorkspace({
           ? helloRequestIdRef.current
           : null
         if (isOpenShopRequestIdMatch(expectedHelloId, message.id)) {
-          stopHelloRetry()
           editorReadyRef.current = true
           void sendConfiguration()
           return
@@ -275,12 +233,9 @@ export default function OpenShopWorkspace({
     window.addEventListener('message', onMessage)
     // iframe 可能在 React effect 注册前已完成加载。重发同一握手是幂等的，
     // 可以避免第一次 ready 回复落在监听器建立之前而无法继续配置。
-    startHelloRetry()
-    return () => {
-      window.removeEventListener('message', onMessage)
-      stopHelloRetry()
-    }
-  }, [onSave, sendConfiguration, sendHello, startHelloRetry, stopHelloRetry, targetOrigin])
+    sendHello(true)
+    return () => window.removeEventListener('message', onMessage)
+  }, [onSave, sendConfiguration, sendHello, targetOrigin])
 
   useEffect(() => {
     if (!sourceDataUrl || !editorReadyRef.current) return
@@ -440,7 +395,6 @@ export default function OpenShopWorkspace({
             allow="clipboard-read; clipboard-write; fullscreen"
             allowFullScreen
             onLoad={() => {
-              stopHelloRetry()
               editorReadyRef.current = false
               configurationInFlightRef.current = false
               configurationRequestIdRef.current = null
@@ -451,7 +405,7 @@ export default function OpenShopWorkspace({
               setIsConfigured(false)
               setIsSaving(false)
               if (sourceDataUrl) setStatus('正在连接编辑器…')
-              startHelloRetry()
+              sendHello(true)
             }}
           />
         )}

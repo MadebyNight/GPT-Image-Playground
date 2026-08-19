@@ -4,21 +4,18 @@ import type { TaskRecord } from '../types'
 import { DEFAULT_PARAMS } from '../types'
 
 vi.mock('../store', () => ({
-  useStore: Object.assign(
-    <T,>(selector: (state: {
-      toggleTaskSelection: () => void
-      settings: { alwaysShowRetryButton: boolean }
-      setMaskEditorImageId: () => void
-      setConfirmDialog: () => void
-    }) => T) =>
-      selector({
-        toggleTaskSelection: vi.fn(),
-        settings: { alwaysShowRetryButton: true },
-        setMaskEditorImageId: vi.fn(),
-        setConfirmDialog: vi.fn(),
-      }),
-    { subscribe: vi.fn(() => vi.fn()) },
-  ),
+  useStore: <T,>(selector: (state: {
+    toggleTaskSelection: () => void
+    settings: { alwaysShowRetryButton: boolean }
+    setMaskEditorImageId: () => void
+    setConfirmDialog: () => void
+  }) => T) =>
+    selector({
+      toggleTaskSelection: vi.fn(),
+      settings: { alwaysShowRetryButton: true },
+      setMaskEditorImageId: vi.fn(),
+      setConfirmDialog: vi.fn(),
+    }),
   ensureImageThumbnailCached: vi.fn(async () => undefined),
   subscribeImageThumbnail: vi.fn(() => vi.fn()),
   updateTaskInStore: vi.fn(),
@@ -26,7 +23,6 @@ vi.mock('../store', () => ({
   reuseConfig: vi.fn(),
   editOutputs: vi.fn(),
   removeTask: vi.fn(),
-  getComposerDraftSnapshot: vi.fn(() => ({ composerVersion: 0 })),
 }))
 
 import TaskCard from './TaskCard'

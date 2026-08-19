@@ -39,10 +39,7 @@ describe('DetailModal runtime configuration boundaries', () => {
       showToast: vi.fn(),
     }
     vi.doMock('../store', () => ({
-      useStore: Object.assign(
-        <T,>(selector: (state: typeof storeState) => T) => selector(storeState),
-        { subscribe: vi.fn(() => vi.fn()) },
-      ),
+      useStore: <T,>(selector: (state: typeof storeState) => T) => selector(storeState),
       getCachedImage: vi.fn(),
       ensureImageCached: vi.fn(async () => undefined),
       reuseConfig: vi.fn(),
@@ -52,7 +49,6 @@ describe('DetailModal runtime configuration boundaries', () => {
       showCodexCliPrompt: vi.fn(),
       getCodexCliPromptKey: vi.fn(() => 'runtime-config-unavailable'),
       retryTask: vi.fn(),
-      getComposerDraftSnapshot: vi.fn(() => ({ composerVersion: 0 })),
     }))
     const { default: DetailModal } = await import('./DetailModal')
 

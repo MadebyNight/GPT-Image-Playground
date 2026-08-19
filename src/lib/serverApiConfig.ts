@@ -7,7 +7,7 @@ export const SERVER_MANAGED_PROFILE_ID = 'server-managed-openai'
 export const DEFAULT_SERVER_API_PROXY_PATH = '/api-proxy'
 export const DEFAULT_RESTRICTED_AGENT_BASE_PATH = '/agent-api/v1'
 export const SERVER_API_CONFIG_UNAVAILABLE_MESSAGE = '服务端 API 配置不可用，请联系部署管理员'
-export const RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE = 'Responses 服务暂时不可用，请稍后重试'
+export const AGENT_MODE_PREFERENCE_KEY = 'agent-mode-v1'
 
 interface DisabledServerApiConfig {
   enabled: false
@@ -83,8 +83,6 @@ const SERVER_API_KEYS = new Set([
 const SAFE_PROXY_PATH_SEGMENT = /^[A-Za-z0-9._~-]+$/
 
 let runtimeState: RuntimeConfigState = { status: 'loading' }
-// 仅反映当前页面生命周期内已观察到的 Responses 运行时故障；不写入设置或持久化存储。
-let responsesRuntimeBreakerOpen = false
 const STATIC_RUNTIME_CONFIG: PublicRuntimeConfig = { version: 1, serverApi: { enabled: false } }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -241,8 +239,6 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function initializeRuntimeConfig(raw: unknown): RuntimeConfigState {
-  // 新的运行时配置加载相当于新的健康判定周期，不能继承旧页面内存中的失败状态。
-  responsesRuntimeBreakerOpen = false
   try {
     runtimeState = { status: 'ready', config: parsePublicRuntimeConfig(raw) }
   } catch (error) {
@@ -253,7 +249,6 @@ export function initializeRuntimeConfig(raw: unknown): RuntimeConfigState {
 
 export async function loadRuntimeConfig(required = __RUNTIME_CONFIG_REQUIRED__): Promise<void> {
   runtimeState = { status: 'loading' }
-  responsesRuntimeBreakerOpen = false
   if (!required) {
     runtimeState = { status: 'ready', config: STATIC_RUNTIME_CONFIG }
     return
@@ -326,41 +321,56 @@ export function getChatCapabilities(settings: AppSettings): ChatCapabilities {
 
 export function getAgentCapabilities(settings: AppSettings): AgentCapabilities {
   const chat = getChatCapabilities(settings)
-  const responsesUsable = chat.chatUsable && !responsesRuntimeBreakerOpen
-  const toolPipelineUsable = isRestrictedAgentEnabled()
+  const tool = isRestrictedAgentEnabled()
+  const defaultMode: AgentMode | null = chat.chatUsable ? 'chat' : tool ? 'tool' : null
   return {
-    // 统一 Agent 必须先具备 Responses；Gateway 仅用于严格规格后的自动工具链。
-    agentUsable: responsesUsable,
-    responsesUsable,
-    toolPipelineUsable,
-    // 以下旧字段在统一工作区迁移完成前保留，避免旧 UI 读取到不完整对象。
     chatAllowed: chat.chatAllowed,
     chatConfigured: chat.chatConfigured,
-    chatUsable: responsesUsable,
-    tool: toolPipelineUsable,
+    chatUsable: chat.chatUsable,
+    tool,
     openShopTool: false,
-    defaultMode: responsesUsable ? 'chat' : null,
-    modeSwitching: false,
+    defaultMode,
+    modeSwitching: chat.chatUsable && tool,
   }
 }
 
-/**
- * @deprecated 统一 Agent 不再支持 Chat/Tool 模式切换。保留导出仅供尚未迁移的旧 UI 编译。
- */
-export function resolveAgentMode(capabilities: AgentCapabilities, _preferredMode: unknown): AgentMode | null {
-  return (capabilities.agentUsable ?? capabilities.chatUsable) ? 'chat' : null
+export function resolveAgentMode(capabilities: AgentCapabilities, preferredMode: unknown): AgentMode | null {
+  if (preferredMode === 'chat' && capabilities.chatUsable) return 'chat'
+  if (preferredMode === 'tool' && capabilities.tool) return 'tool'
+  return capabilities.defaultMode
 }
 
 type AgentModeStorage = Pick<Storage, 'getItem' | 'setItem'>
 
-/** @deprecated 统一 Agent 不再持久化 Chat/Tool 偏好。 */
-export function getAgentModePreference(_storage?: AgentModeStorage | null): AgentMode | null {
-  return null
+function getDefaultModeStorage(): AgentModeStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage
+  } catch {
+    return null
+  }
 }
 
-/** @deprecated 统一 Agent 不再持久化 Chat/Tool 偏好。 */
-export function setAgentModePreference(_mode: AgentMode, _storage?: AgentModeStorage | null): void {
-  // 保留无副作用兼容入口，直到旧工作区被移除。
+export function getAgentModePreference(storage?: AgentModeStorage | null): AgentMode | null {
+  if (runtimeState.status !== 'ready') return null
+  try {
+    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
+    if (!targetStorage) return null
+    const value = targetStorage.getItem(AGENT_MODE_PREFERENCE_KEY)
+    return value === 'chat' || value === 'tool' ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function setAgentModePreference(mode: AgentMode, storage?: AgentModeStorage | null): void {
+  if (runtimeState.status !== 'ready') return
+  try {
+    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
+    if (!targetStorage) return
+    targetStorage.setItem(AGENT_MODE_PREFERENCE_KEY, mode)
+  } catch {
+    // 隐私模式或禁用存储时保持当前会话内选择即可。
+  }
 }
 
 export function getChatUnavailableMessage(settings: AppSettings): string {
@@ -373,18 +383,7 @@ export function getChatUnavailableMessage(settings: AppSettings): string {
       ? '当前 API 配置仅启用 Images，请切换到 Responses'
       : '当前部署未启用 Chat Responses 能力'
   }
-  if (responsesRuntimeBreakerOpen) return RESPONSES_RUNTIME_UNAVAILABLE_MESSAGE
   return 'Chat Agent 当前不可用'
-}
-
-/** Responses 实际请求失败后打开当前页面内存中的总开关。 */
-export function markResponsesRuntimeUnavailable(): void {
-  responsesRuntimeBreakerOpen = true
-}
-
-/** 任一完整的 Responses 成功结果都会恢复当前页面内存中的总开关。 */
-export function markResponsesRuntimeAvailable(): void {
-  responsesRuntimeBreakerOpen = false
 }
 
 export function isRestrictedAgentEnabled(): boolean {

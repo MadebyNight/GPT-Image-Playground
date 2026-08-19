@@ -1,424 +1,467 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  cancelUnifiedAgentTask,
-  retryUnifiedAgentTask,
-  subscribeAgentProgress,
-  type AgentProgressEvent,
-  type AgentToolStatus,
-} from '../lib/agentExecutor'
-import { useStore } from '../store'
+import type { ReactNode } from 'react'
+import { getRestrictedAgentPlanOperation } from '../lib/restrictedAgentApi'
+import { useRestrictedAgentStore } from '../restrictedAgentStore'
+import { getComposerDraftSnapshot, useStore } from '../store'
 import type {
+  AgentMode,
+  OpenShopToolLocalRun,
+  OpenShopToolLocalRunStatus,
   RestrictedAgentExecution,
-  RestrictedAgentExecutionActionStatus,
+  RestrictedAgentExecutionStatus,
   RestrictedAgentPlan,
-  RestrictedAgentToolAction,
   TaskRecord,
-  ToolAgentPlanV3,
 } from '../types'
 import AgentConversationStream from './AgentConversationStream'
 import AgentExecutionDetails from './AgentExecutionDetails'
 import AgentImagePreview from './AgentImagePreview'
 import AgentPlanCard from './AgentPlanCard'
 import AgentResultReply, {
-  type AgentResultImage,
   type AgentResultStatus,
-  type AgentResultStatusTone,
 } from './AgentResultReply'
+import LegacyAgentMainWorkspace from './LegacyAgentMainWorkspace'
 import TaskActionRow from './TaskActionRow'
 
 interface AgentMainWorkspaceProps {
-  task: TaskRecord | null
-  /** 同一 Agent 会话的任务，按 turn/创建时间升序；旧记录也只读展示。 */
-  conversationTasks?: TaskRecord[]
+  mode: AgentMode
+  chatTask: TaskRecord | null
+  chatConversationTasks?: TaskRecord[]
+  toolTask: TaskRecord | null
 }
 
-interface AgentSessionView {
-  taskId: string
-  prompt: string
-  assistantText: string
-  toolStatus: AgentToolStatus | null
-  toolMessage: string
-  partialImages: string[]
-  revisedPrompts: string[]
-  error: string | null
+const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
+  queued: '已进入受限执行队列',
+  executing: 'Gateway 正在执行已确认计划',
+  completed: '执行完成',
+  failed: '执行失败',
+  cancelled: '执行已取消',
+  failed_unknown: '执行状态不确定，不会自动重试',
 }
 
-const ACTION_LABELS: Record<RestrictedAgentToolAction['type'], string> = {
-  'image.generate': '图片生成',
-  'image.edit': '图片编辑',
-  'image.transform': '严格尺寸处理',
-  'metadata.assert': '输出规格校验',
+const LOCAL_RUN_STATUS_LABELS: Record<OpenShopToolLocalRunStatus, string> = {
+  running: 'OpenShop 正在当前浏览器执行',
+  exported: 'OpenShop 已导出结果，等待保存',
+  saving: '正在保存 OpenShop 导出结果',
+  completed: 'OpenShop 编辑与本地保存已完成',
+  cancelled: 'OpenShop 本地执行已取消',
+  failed: 'OpenShop 本地执行失败',
+  interrupted: 'OpenShop 本地执行被页面刷新或关闭中断',
+  expired: 'OpenShop 临时导出结果已过期',
 }
 
-function isV3Plan(plan: RestrictedAgentPlan | undefined): plan is ToolAgentPlanV3 {
-  return plan?.schemaVersion === 3
-}
+const recoveryButtonClassName = 'inline-flex min-h-11 items-center rounded-xl border border-current px-3 py-2 text-sm font-medium transition hover:bg-current/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
 
-function createSessionFromTask(task: TaskRecord): AgentSessionView {
-  return {
-    taskId: task.id,
-    prompt: task.prompt,
-    assistantText: task.agentAssistantText?.trim() ?? '',
-    toolStatus: task.status === 'running' ? 'in_progress' : task.status === 'done' ? 'completed' : null,
-    toolMessage: task.status === 'running' ? '正在生成图片' : task.status === 'done' ? '图片已生成' : '',
-    partialImages: [],
-    revisedPrompts: task.revisedPromptByImage ? Object.values(task.revisedPromptByImage) : [],
-    error: task.error,
-  }
-}
-
-function mergeSessionWithTask(task: TaskRecord, session: AgentSessionView | undefined): AgentSessionView {
-  const fromTask = createSessionFromTask(task)
-  if (!session) return fromTask
-  return {
-    ...fromTask,
-    ...session,
-    assistantText: fromTask.assistantText.length > session.assistantText.length
-      ? fromTask.assistantText
-      : session.assistantText,
-    toolStatus: task.status === 'done' ? 'completed' : session.toolStatus ?? fromTask.toolStatus,
-    toolMessage: task.status === 'done' && !session.toolMessage ? fromTask.toolMessage : session.toolMessage,
-    revisedPrompts: session.revisedPrompts.length ? session.revisedPrompts : fromTask.revisedPrompts,
-    error: session.error ?? task.error,
-  }
-}
-
-function applyAgentEvent(session: AgentSessionView | undefined, event: AgentProgressEvent, fallbackTaskId: string | null): AgentSessionView | undefined {
-  const taskId = event.taskId ?? session?.taskId ?? fallbackTaskId
-  if (!taskId) return session
-  if (event.type === 'task_created') {
-    return {
-      taskId: event.taskId,
-      prompt: event.prompt,
-      assistantText: '',
-      toolStatus: 'queued',
-      toolMessage: event.stream ? '已提交，等待流式响应' : '已提交，等待响应',
-      partialImages: [],
-      revisedPrompts: [],
-      error: null,
-    }
-  }
-
-  const current = session ?? {
-    taskId,
-    prompt: '',
-    assistantText: '',
-    toolStatus: null,
-    toolMessage: '',
-    partialImages: [],
-    revisedPrompts: [],
-    error: null,
-  }
-  if (event.type === 'assistant_delta') return { ...current, assistantText: `${current.assistantText}${event.text}` }
-  if (event.type === 'tool_status') return { ...current, toolStatus: event.status, toolMessage: event.message }
-  if (event.type === 'partial_image') return { ...current, partialImages: [...current.partialImages, event.image] }
-  if (event.type === 'done') {
-    return {
-      ...current,
-      toolStatus: 'completed',
-      toolMessage: `生成完成，共 ${event.imageCount} 张图片`,
-      assistantText: event.assistantText?.trim() || current.assistantText,
-      revisedPrompts: event.revisedPrompts?.filter((item): item is string => Boolean(item?.trim())) ?? current.revisedPrompts,
-    }
-  }
-  if (event.type === 'error') return { ...current, error: event.message, toolMessage: event.message }
-  return current
-}
-
-function getFallbackAssistantText(task: TaskRecord): string {
-  if (task.status === 'running') return '正在生成图片。'
-  if (task.status === 'error') return task.error || '本轮生成未完成。'
-  return task.outputImages.length ? '图片已生成。' : task.agentAssistantText?.trim() || '本轮已完成。'
-}
-
-function getAssistantText(task: TaskRecord, session?: AgentSessionView): string {
-  return session?.assistantText.trim() || task.agentAssistantText?.trim() || getFallbackAssistantText(task)
-}
-
-function getTaskStatus(task: TaskRecord, session: AgentSessionView): AgentResultStatus {
-  if (task.status === 'running') {
-    return { label: '生成中', detail: session.toolStatus === 'queued' ? '等待响应' : undefined, tone: 'progress' }
-  }
-  if (task.status === 'error') return { label: '执行失败', tone: 'error' }
-  return {
-    label: '已完成',
-    detail: task.elapsed == null ? undefined : `${Math.max(0, Math.round(task.elapsed / 1000))} 秒`,
-    tone: 'success',
-  }
-}
-
-function getResultImages(task: TaskRecord, session: AgentSessionView): AgentResultImage[] {
-  if (task.outputImages.length) {
-    return task.outputImages.map((id, index) => ({ id, alt: `第 ${task.agentTurn ?? 1} 轮生成结果 ${index + 1}` }))
-  }
-  const partialImage = session.partialImages[session.partialImages.length - 1]
-  if (partialImage) return [{ fallbackSrc: partialImage, alt: 'Agent 流式预览', interactive: false }]
-  return task.status === 'running' ? [{ alt: '等待 Agent 图片输出', interactive: false }] : []
-}
-
-function getActionStatusText(type: RestrictedAgentToolAction['type'], status: RestrictedAgentExecutionActionStatus) {
-  if (status === 'executing') {
-    if (type === 'image.generate') return '正在生成图片'
-    if (type === 'image.edit') return '正在编辑图片'
-    if (type === 'image.transform') return '正在严格处理尺寸'
-    return '正在校验输出规格'
-  }
-  if (status === 'queued') return `等待${ACTION_LABELS[type]}`
-  if (status === 'completed') return `${ACTION_LABELS[type]}已完成`
-  if (status === 'cancelled') return `${ACTION_LABELS[type]}已取消`
-  if (status === 'failed_unknown') return `${ACTION_LABELS[type]}状态不确定`
-  return `${ACTION_LABELS[type]}失败`
-}
-
-function getExecutionTone(status: RestrictedAgentExecution['status'] | undefined): AgentResultStatusTone {
+function getExecutionTone(status: RestrictedAgentExecutionStatus): AgentResultStatus['tone'] {
   if (status === 'completed') return 'success'
   if (status === 'failed' || status === 'failed_unknown' || status === 'cancelled') return 'error'
   return 'progress'
 }
 
-function getPipelineStatus(task: TaskRecord, execution: RestrictedAgentExecution | null): AgentResultStatus {
-  if (!execution) {
-    return task.status === 'error'
-      ? { label: '严格输出未完成', tone: 'error' }
-      : { label: '正在分析执行方式', tone: 'progress' }
-  }
-  const currentAction = execution.actions?.find((action) => action.status === 'executing')
-    ?? execution.actions?.find((action) => action.status === 'queued')
-  const detail = currentAction ? getActionStatusText(currentAction.type, currentAction.status) : undefined
-  const label = execution.status === 'completed'
-    ? '严格输出已完成'
-    : execution.status === 'cancelled'
-      ? '执行已取消'
-      : execution.status === 'failed_unknown'
-        ? '执行状态不确定'
-        : execution.status === 'failed'
-          ? '严格输出未完成'
-          : '自动执行中'
-  return { label, detail, tone: getExecutionTone(execution.status) }
+function getLocalRunTone(status: OpenShopToolLocalRunStatus): AgentResultStatus['tone'] {
+  if (status === 'completed') return 'success'
+  if (status === 'exported') return 'warning'
+  if (status === 'cancelled' || status === 'failed' || status === 'interrupted' || status === 'expired') return 'error'
+  return 'progress'
 }
 
-function Parameters({ task }: { task: TaskRecord }) {
+function getTaskStatus(task: TaskRecord): AgentResultStatus {
+  if (task.status === 'done') {
+    return {
+      label: task.origin === 'openshop' ? 'OpenShop 编辑完成' : '任务完成',
+      detail: task.elapsed == null ? undefined : `耗时 ${(task.elapsed / 1000).toFixed(1)} 秒`,
+      tone: 'success',
+    }
+  }
+  if (task.status === 'error') {
+    const localStatus = task.agentLocalRunStatus
+    return {
+      label: localStatus ? LOCAL_RUN_STATUS_LABELS[localStatus] : '任务失败',
+      tone: 'error',
+    }
+  }
+  return { label: '任务执行中，等待状态恢复', tone: 'progress' }
+}
+
+function getPlanPrompt(plan: RestrictedAgentPlan | null): string | undefined {
+  if (!plan) return undefined
+  const operation = getRestrictedAgentPlanOperation(plan)
+  if (operation.type === 'image.generate' || operation.type === 'image.edit') {
+    return operation.generation.exactPrompt
+  }
+  return undefined
+}
+
+function PlanDetails({ plan }: { plan: RestrictedAgentPlan }) {
+  const operation = getRestrictedAgentPlanOperation(plan)
+  return (
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">摘要</dt>
+        <dd className="mt-0.5 text-gray-700 dark:text-gray-200">{plan.summary}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">Operation</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{operation.type}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">计划</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{plan.id} · v{plan.version}</dd>
+      </div>
+      <div>
+        <dt className="text-gray-400 dark:text-gray-500">策略</dt>
+        <dd className="mt-0.5 font-mono text-gray-700 dark:text-gray-200">{plan.policyVersion}</dd>
+      </div>
+    </dl>
+  )
+}
+
+function ParameterDetails({ task }: { task: TaskRecord }) {
+  const source = [task.apiProfileName, task.apiModel].filter(Boolean).join(' · ')
   return (
     <dl className="grid gap-2 text-xs sm:grid-cols-2">
       <div><dt className="text-gray-400 dark:text-gray-500">尺寸</dt><dd>{task.params.size}</dd></div>
       <div><dt className="text-gray-400 dark:text-gray-500">质量</dt><dd>{task.params.quality}</dd></div>
       <div><dt className="text-gray-400 dark:text-gray-500">格式</dt><dd>{task.params.output_format}</dd></div>
       <div><dt className="text-gray-400 dark:text-gray-500">数量</dt><dd>{task.params.n}</dd></div>
+      {source ? <div className="sm:col-span-2"><dt className="text-gray-400 dark:text-gray-500">来源</dt><dd>{source}</dd></div> : null}
     </dl>
   )
 }
 
-function ActionProgress({ plan, execution }: { plan: ToolAgentPlanV3; execution: RestrictedAgentExecution | null }) {
+function RunDetails({
+  task,
+  execution,
+  localRun,
+}: {
+  task: TaskRecord | null
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+}) {
+  const executionId = execution?.id ?? task?.agentExecutionId
+  const executionStatus = execution?.status
+  const runId = localRun?.id ?? task?.agentRunId ?? task?.agentLocalRunId
+  const runStatus = localRun?.status ?? task?.agentLocalRunStatus
+  const saveStatus = localRun?.saveStatus ?? task?.agentLocalSaveStatus
+  if (!executionId && !runId) return null
+
   return (
-    <ul className="space-y-1">
-      {plan.actions.map((action, actionIndex) => {
-        const status = execution?.actions?.find((item) => item.actionIndex === actionIndex)?.status
-          ?? (execution?.status === 'completed' ? 'completed' : execution?.status === 'cancelled' ? 'cancelled' : 'queued')
-        return <li key={`${action.type}-${actionIndex}`}>{ACTION_LABELS[action.type]} · {getActionStatusText(action.type, status)}</li>
-      })}
-    </ul>
+    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+      {executionId ? (
+        <div>
+          <dt className="text-gray-400 dark:text-gray-500">执行 ID</dt>
+          <dd className="break-all font-mono">{executionId}{executionStatus ? ` · ${executionStatus}` : ''}</dd>
+        </div>
+      ) : null}
+      {runId ? (
+        <div>
+          <dt className="text-gray-400 dark:text-gray-500">本地 Run</dt>
+          <dd className="break-all font-mono">{runId}{runStatus ? ` · ${runStatus}` : ''}{saveStatus ? ` / ${saveStatus}` : ''}</dd>
+        </div>
+      ) : null}
+    </dl>
   )
 }
 
-function TurnDetails({ task, plan, execution, session }: { task: TaskRecord; plan?: ToolAgentPlanV3; execution: RestrictedAgentExecution | null; session: AgentSessionView }) {
-  const referenceImageIds = task.inputImageIds
-  const revisedPrompt = session.revisedPrompts.length
-    ? session.revisedPrompts.map((prompt, index) => <p key={`${prompt}-${index}`}>{prompt}</p>)
-    : undefined
-  const run = execution || task.agentExecutionId ? (
-    <dl className="grid gap-2 text-xs sm:grid-cols-2">
-      {task.agentExecutionId ? <div><dt className="text-gray-400 dark:text-gray-500">执行编号</dt><dd className="break-all font-mono">{task.agentExecutionId}</dd></div> : null}
-      {execution?.status ? <div><dt className="text-gray-400 dark:text-gray-500">当前状态</dt><dd>{getPipelineStatus(task, execution).label}</dd></div> : null}
-    </dl>
-  ) : undefined
+interface ToolExecutionDetailsProps {
+  task: TaskRecord | null
+  plan: RestrictedAgentPlan | null
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+  onOpenImage: (imageId: string, imageIds: string[]) => void
+}
+
+function ToolExecutionDetails({ task, plan, execution, localRun, onOpenImage }: ToolExecutionDetailsProps) {
+  const referenceImageIds = task?.inputImageIds ?? []
+  const prompt = task?.agentOriginalRequest || plan?.originalRequest || task?.prompt
+  const revisedPrompt = task?.outputImages
+    .map((imageId) => task.revisedPromptByImage?.[imageId]?.trim())
+    .find(Boolean) || getPlanPrompt(plan)
+  const runDetails = <RunDetails task={task} execution={execution} localRun={localRun} />
 
   return (
     <AgentExecutionDetails
-      prompt={task.agentOriginalRequest || task.prompt || '（无提示词）'}
-      revisedPrompt={revisedPrompt}
+      prompt={prompt}
+      revisedPrompt={revisedPrompt && revisedPrompt !== prompt ? revisedPrompt : undefined}
       references={referenceImageIds.length ? (
         <div className="flex flex-wrap gap-2">
           {referenceImageIds.map((imageId, index) => (
-            <AgentImagePreview key={imageId} imageId={imageId} imageIds={referenceImageIds} alt={`参考图 ${index + 1}`} />
+            <AgentImagePreview
+              key={imageId}
+              imageId={imageId}
+              imageIds={referenceImageIds}
+              alt={`参考图 ${index + 1}`}
+              onOpen={onOpenImage}
+            />
           ))}
         </div>
       ) : undefined}
-      parameters={<Parameters task={task} />}
-      run={run}
-      actionProgress={plan ? <ActionProgress plan={plan} execution={execution} /> : undefined}
-      partialPreviews={session.partialImages.length ? (
-        <div className="flex flex-wrap gap-2">
-          {session.partialImages.slice(-4).map((image, index) => <AgentImagePreview key={`${image.slice(0, 32)}-${index}`} fallbackSrc={image} alt="Agent 流式预览" interactive={false} />)}
-        </div>
-      ) : undefined}
-      rawImageUrls={task.rawImageUrls}
-      rawResponse={task.rawResponsePayload}
+      parameters={task ? <ParameterDetails task={task} /> : undefined}
+      plan={plan ? <PlanDetails plan={plan} /> : undefined}
+      run={runDetails}
+      rawImageUrls={task?.rawImageUrls}
+      rawResponse={task?.rawResponsePayload}
     />
   )
 }
 
-function UserMessage({ task }: { task: TaskRecord }) {
-  return (
-    <div className="flex justify-end">
-      <div data-agent-user-message={task.id} data-selectable-text className="max-w-[min(84%,36rem)] whitespace-pre-wrap rounded-2xl rounded-br-md bg-blue-500 px-4 py-3 text-sm leading-6 text-white">
-        {task.agentOriginalRequest || task.prompt || '（无提示词）'}
-      </div>
-    </div>
-  )
+interface LiveReplyState {
+  status?: AgentResultStatus
+  assistantText?: ReactNode
+  errorMessage?: ReactNode
+  recoveryActions?: ReactNode
 }
 
-function ResponseTurn({ task, session }: { task: TaskRecord; session: AgentSessionView }) {
-  const plan = isV3Plan(task.agentPlanSnapshot) ? task.agentPlanSnapshot : undefined
-  const execution = task.agentExecutionSnapshot ?? null
-  const isReadOnlyCompatibility = task.origin === 'restricted-agent' || task.origin === 'openshop'
-  const isPipeline = Boolean(plan)
-  const terminalActionRow = !isReadOnlyCompatibility && task.status !== 'running'
-    ? <TaskActionRow task={task} presentation="agent" />
+function getLiveReplyState({
+  phase,
+  execution,
+  localRun,
+  error,
+  retryOpenShopSave,
+  returnToEditing,
+  cancelExecution,
+}: {
+  phase: string
+  execution: RestrictedAgentExecution | null
+  localRun: OpenShopToolLocalRun | null
+  error: string | null
+  retryOpenShopSave: () => Promise<string | null>
+  returnToEditing: () => void
+  cancelExecution: () => Promise<void>
+}): LiveReplyState {
+  if (phase === 'planning') {
+    return {
+      assistantText: 'Planner 正在生成可审查的执行计划，此阶段不会调用图片接口。',
+      status: { label: '规划中', tone: 'progress' },
+    }
+  }
+
+  if (execution) {
+    const terminal = ['failed', 'failed_unknown', 'cancelled'].includes(execution.status)
+    return {
+      status: {
+        label: STATUS_LABELS[execution.status],
+        detail: `执行 ID：${execution.id}`,
+        tone: getExecutionTone(execution.status),
+      },
+      errorMessage: execution.error?.message || (terminal ? error : undefined),
+      recoveryActions: execution.status === 'queued' || execution.status === 'executing' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void cancelExecution() }}>
+          尝试取消
+        </button>
+      ) : terminal ? (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改并重新规划
+        </button>
+      ) : undefined,
+    }
+  }
+
+  if (localRun) {
+    const terminal = ['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status)
+    return {
+      status: {
+        label: LOCAL_RUN_STATUS_LABELS[localRun.status],
+        detail: `本地 Run：${localRun.id}`,
+        tone: getLocalRunTone(localRun.status),
+      },
+      errorMessage: localRun.error?.message || (localRun.status === 'exported' || terminal ? error : undefined),
+      recoveryActions: localRun.status === 'exported' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void retryOpenShopSave() }}>
+          仅重试保存
+        </button>
+      ) : localRun.status === 'saving' ? (
+        <button type="button" className={recoveryButtonClassName} onClick={() => { void cancelExecution() }}>
+          取消保存
+        </button>
+      ) : terminal ? (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改并重新规划
+        </button>
+      ) : undefined,
+    }
+  }
+
+  if (phase === 'expired' || phase === 'stale') {
+    return {
+      status: { label: phase === 'expired' ? '计划已过期' : '计划已过时', tone: 'warning' },
+      errorMessage: error || (phase === 'expired'
+        ? '计划已过期。返回修改后重新生成计划，旧计划不会被执行。'
+        : '输入已变化。返回修改后重新生成计划，旧计划不会被确认。'),
+    }
+  }
+
+  if (phase === 'failed' && error) {
+    return {
+      status: { label: 'Agent 流程失败', tone: 'error' },
+      errorMessage: error,
+      recoveryActions: (
+        <button type="button" className={recoveryButtonClassName} onClick={returnToEditing}>
+          返回修改
+        </button>
+      ),
+    }
+  }
+
+  return {}
+}
+
+function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
+  const phase = useRestrictedAgentStore((state) => state.phase)
+  const livePlan = useRestrictedAgentStore((state) => state.plan)
+  const liveExecution = useRestrictedAgentStore((state) => state.execution)
+  const flowTaskId = useRestrictedAgentStore((state) => state.taskId)
+  const liveError = useRestrictedAgentStore((state) => state.error)
+  const assetBindings = useRestrictedAgentStore((state) => state.assetBindings)
+  const liveLocalRun = useRestrictedAgentStore((state) => state.localRun)
+  const confirmAndExecute = useRestrictedAgentStore((state) => state.confirmAndExecute)
+  const retryOpenShopSave = useRestrictedAgentStore((state) => state.retryOpenShopSave)
+  const returnToEditing = useRestrictedAgentStore((state) => state.returnToEditing)
+  const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
+  const setLightboxImageId = useStore((state) => state.setLightboxImageId)
+
+  const liveFlowActive = phase !== 'idle'
+  const unboundLiveFlow = liveFlowActive && !flowTaskId
+  const liveFlowMatchesSelection = liveFlowActive && (unboundLiveFlow || !task || task.id === flowTaskId)
+  const displayedTask = unboundLiveFlow ? null : task
+  const plan = liveFlowMatchesSelection ? livePlan ?? displayedTask?.agentPlanSnapshot ?? null : displayedTask?.agentPlanSnapshot ?? null
+  const execution = liveFlowMatchesSelection ? liveExecution : null
+  const localRun = liveFlowMatchesSelection ? liveLocalRun : null
+  const hasLiveFlow = liveFlowMatchesSelection
+  const hasConversation = Boolean(displayedTask || hasLiveFlow)
+  const liveDraftRequest = hasLiveFlow && !displayedTask && !livePlan
+    ? getComposerDraftSnapshot('tool').prompt.trim()
+    : ''
+  const requestText = hasLiveFlow
+    ? livePlan?.originalRequest || displayedTask?.agentOriginalRequest || displayedTask?.prompt || liveDraftRequest
+    : displayedTask?.agentOriginalRequest || displayedTask?.prompt || ''
+  const showPlanCard = Boolean(hasLiveFlow && livePlan && (
+    phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale'
+  ))
+  const liveReply = hasLiveFlow
+    ? getLiveReplyState({
+        phase,
+        execution,
+        localRun,
+        error: liveError,
+        retryOpenShopSave,
+        returnToEditing,
+        cancelExecution,
+      })
+    : {}
+  const taskStatus = displayedTask ? getTaskStatus(displayedTask) : undefined
+  const replyStatus = liveReply.status ?? taskStatus
+  const errorMessage = liveReply.errorMessage ?? (displayedTask?.status === 'error' ? displayedTask.error : undefined)
+  const completedImages = displayedTask?.status === 'done'
+    ? displayedTask.outputImages.map((imageId, index) => ({ id: imageId, alt: `生成结果 ${index + 1}` }))
+    : []
+  const taskActionRow = displayedTask?.status === 'done'
+    ? <TaskActionRow task={displayedTask} presentation="agent" />
     : undefined
-  const recoveryActions = !isReadOnlyCompatibility && !isPipeline && task.status === 'running' ? (
-    <button
-      type="button"
-      aria-label="取消执行"
-      className="inline-flex min-h-11 items-center rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
-      onClick={() => { void cancelUnifiedAgentTask(task) }}
-    >
-      取消执行
-    </button>
-  ) : !isReadOnlyCompatibility && !isPipeline && task.status === 'error' ? (
-    <button
-      type="button"
-      aria-label="重试"
-      className="inline-flex min-h-11 items-center rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
-      onClick={() => { void retryUnifiedAgentTask(task) }}
-    >
-      重试
-    </button>
+  const details = plan || displayedTask || execution || localRun ? (
+    <ToolExecutionDetails
+      task={displayedTask}
+      plan={plan}
+      execution={execution}
+      localRun={localRun}
+      onOpenImage={setLightboxImageId}
+    />
   ) : undefined
+  const contentVersion = [
+    phase,
+    displayedTask?.status,
+    displayedTask?.outputImages.length,
+    execution?.status,
+    localRun?.status,
+    localRun?.saveStatus,
+    errorMessage ? String(errorMessage) : '',
+  ].join(':')
 
   return (
-    <div data-agent-conversation-turn={task.id} className="space-y-4">
-      <UserMessage task={task} />
-      <div className="flex justify-start">
-        <div className="w-full max-w-[42rem]">
-          {isPipeline && plan ? (
-            <>
-              <AgentPlanCard
-                plan={plan}
-                execution={execution}
-                onCancel={task.status === 'running' ? () => { void cancelUnifiedAgentTask(task) } : undefined}
-                onRetry={task.status === 'error' ? () => { void retryUnifiedAgentTask(task) } : undefined}
-              />
-              {(task.status === 'done' || task.status === 'error' || task.outputImages.length) ? (
-                <div className="mt-4">
-                  <AgentResultReply
-                    status={getPipelineStatus(task, execution)}
-                    errorMessage={task.error || execution?.error?.message}
-                    images={getResultImages(task, session)}
-                    onOpenImage={(imageId, imageIds) => useStore.getState().setLightboxImageId(imageId, imageIds)}
-                    taskActionRow={terminalActionRow}
-                    executionDetails={<TurnDetails task={task} plan={plan} execution={execution} session={session} />}
+    <AgentConversationStream
+      conversationKey={displayedTask?.id ?? flowTaskId ?? 'tool-new'}
+      contentVersion={contentVersion}
+      className="h-full"
+      emptyState={(
+        <section className="flex min-h-[28rem] flex-1 items-center justify-center text-center" aria-labelledby="tool-agent-workspace-title">
+          <div>
+            <h2 id="tool-agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">Tool Agent 工作区</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
+              输入图片需求后先生成执行计划。你确认 Prompt、参数和步骤后，Gateway 才会调用图片接口。
+            </p>
+          </div>
+        </section>
+      )}
+    >
+      {hasConversation ? (
+        <div className="flex flex-1 flex-col justify-end gap-6 pb-4">
+          {requestText ? (
+            <div data-agent-tool-user-message data-selectable-text className="flex justify-end">
+              <div className="max-w-[min(84%,36rem)] whitespace-pre-wrap rounded-2xl bg-blue-500 px-4 py-3 text-sm leading-6 text-white shadow-sm">
+                {requestText}
+              </div>
+            </div>
+          ) : null}
+
+          <div
+            data-agent-tool-response
+            data-openshop-local-run-status={localRun?.status}
+            data-selectable-text
+            className="flex justify-start"
+          >
+            <div className="w-full min-w-0 max-w-[42rem]">
+              {liveReply.assistantText || replyStatus || errorMessage || completedImages.length || taskActionRow ? (
+                <AgentResultReply
+                  assistantText={liveReply.assistantText}
+                  status={replyStatus}
+                  errorMessage={errorMessage}
+                  recoveryActions={liveReply.recoveryActions}
+                  images={completedImages}
+                  onOpenImage={setLightboxImageId}
+                  taskActionRow={taskActionRow}
+                  executionDetails={!showPlanCard ? details : undefined}
+                />
+              ) : null}
+
+              {showPlanCard && livePlan ? (
+                <div className="mt-3">
+                  <AgentPlanCard
+                    plan={livePlan}
+                    assetBindings={assetBindings}
+                    confirming={phase === 'confirming'}
+                    stale={phase === 'stale'}
+                    onConfirm={() => { void confirmAndExecute() }}
+                    onReturnToEditing={returnToEditing}
                   />
+                  {details ? <div className="mt-4">{details}</div> : null}
                 </div>
-              ) : (
-                <div className="mt-4"><TurnDetails task={task} plan={plan} execution={execution} session={session} /></div>
-              )}
-            </>
-          ) : task.agentPlanSnapshot ? (
-            <>
-              <AgentResultReply
-                assistantText={<span data-selectable-text>{getAssistantText(task, session)}</span>}
-                status={getTaskStatus(task, session)}
-                errorMessage={session.error || task.error}
-                images={getResultImages(task, session)}
-                onOpenImage={(imageId, imageIds) => useStore.getState().setLightboxImageId(imageId, imageIds)}
-                executionDetails={<TurnDetails task={task} execution={execution} session={session} />}
-              />
-              <div className="mt-4"><AgentPlanCard plan={task.agentPlanSnapshot} execution={execution} /></div>
-            </>
-          ) : (
-            <AgentResultReply
-              assistantText={<span data-selectable-text>{getAssistantText(task, session)}</span>}
-              status={getTaskStatus(task, session)}
-              errorMessage={session.error || task.error}
-              recoveryActions={recoveryActions}
-              images={getResultImages(task, session)}
-              onOpenImage={(imageId, imageIds) => useStore.getState().setLightboxImageId(imageId, imageIds)}
-              taskActionRow={terminalActionRow}
-              executionDetails={<TurnDetails task={task} execution={execution} session={session} />}
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export default function AgentMainWorkspace({ task, conversationTasks }: AgentMainWorkspaceProps) {
-  const [sessions, setSessions] = useState<Record<string, AgentSessionView>>({})
-  const fallbackTaskIdRef = useRef(task?.id ?? null)
-  fallbackTaskIdRef.current = task?.id ?? null
-  const threadTasks = useMemo(() => {
-    const source = conversationTasks?.length ? conversationTasks : task ? [task] : []
-    return [...source].sort((left, right) => {
-      const turnDifference = (left.agentTurn ?? Number.MAX_SAFE_INTEGER) - (right.agentTurn ?? Number.MAX_SAFE_INTEGER)
-      return turnDifference || left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-    })
-  }, [conversationTasks, task])
-  const threadViews = useMemo(
-    () => threadTasks.map((threadTask) => ({ task: threadTask, session: mergeSessionWithTask(threadTask, sessions[threadTask.id]) })),
-    [sessions, threadTasks],
-  )
-  const conversationKey = task?.agentConversationId ?? task?.id ?? null
-  const contentVersion = useMemo(
-    () => threadViews.map(({ task: threadTask, session }) => [
-      threadTask.id,
-      threadTask.status,
-      threadTask.outputImages.join(','),
-      threadTask.agentExecutionSnapshot?.status,
-      threadTask.agentExecutionSnapshot?.actions?.map((action) => `${action.actionIndex}:${action.status}`).join(','),
-      session.assistantText,
-      session.toolStatus,
-      session.partialImages.map((image) => image.length).join(','),
-      session.error,
-    ].join(':')).join('|'),
-    [threadViews],
-  )
-
-  useEffect(() => subscribeAgentProgress((event) => {
-    setSessions((current) => {
-      const taskId = event.taskId ?? fallbackTaskIdRef.current
-      if (!taskId) return current
-      const next = applyAgentEvent(current[taskId], event, taskId)
-      return next ? { ...current, [taskId]: next } : current
-    })
-  }), [])
-
-  return (
-    <section className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-900" aria-labelledby="agent-workspace-title">
-      <h2 id="agent-workspace-title" className="sr-only">当前 Agent 工作区</h2>
-      <AgentConversationStream
-        conversationKey={conversationKey}
-        contentVersion={contentVersion}
-        emptyState={(
-          <div className="flex min-h-[28rem] flex-1 items-center justify-center text-center">
-            <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Agent 工作区</h3>
-              <p className="mt-2 max-w-sm text-sm leading-6 text-gray-500 dark:text-gray-400">输入图片需求开始新的对话，或从左侧历史继续已有会话。</p>
+              ) : null}
             </div>
           </div>
-        )}
+        </div>
+      ) : null}
+    </AgentConversationStream>
+  )
+}
+
+export default function AgentMainWorkspace(props: AgentMainWorkspaceProps) {
+  const { mode, chatTask, chatConversationTasks, toolTask } = props
+  return (
+    <>
+      <div
+        id="agent-chat-panel"
+        data-agent-main-mode="chat"
+        className={mode === 'chat' ? 'h-full min-h-0' : 'hidden'}
+        aria-hidden={mode !== 'chat'}
       >
-        {threadViews.length ? (
-          <div className="space-y-8">
-            {threadViews.map(({ task: threadTask, session }, index) => (
-              <div key={threadTask.id}>
-                <ResponseTurn task={threadTask} session={session} />
-                {index < threadViews.length - 1 ? <div className="mt-8 h-px bg-gray-100 dark:bg-white/[0.06]" aria-hidden="true" /> : null}
-              </div>
-            ))}
-          </div>
-        ) : undefined}
-      </AgentConversationStream>
-    </section>
+        <LegacyAgentMainWorkspace task={chatTask} conversationTasks={chatConversationTasks} />
+      </div>
+      <div
+        id="agent-tool-panel"
+        data-agent-main-mode="tool"
+        className={mode === 'tool' ? 'h-full min-h-0' : 'hidden'}
+        aria-hidden={mode !== 'tool'}
+      >
+        <RestrictedAgentMainWorkspace task={toolTask} />
+      </div>
+    </>
   )
 }

@@ -9,8 +9,6 @@ export interface AgentExecutionDetailsProps {
   parameters?: ReactNode
   plan?: ReactNode
   run?: ReactNode
-  /** 面向用户的 action 进度；不暴露内部 action 标识。 */
-  actionProgress?: ReactNode
   toolMessages?: ReactNode
   partialPreviews?: ReactNode
   rawImageUrls?: readonly string[] | ReactNode
@@ -64,7 +62,6 @@ export default function AgentExecutionDetails({
   parameters,
   plan,
   run,
-  actionProgress,
   toolMessages,
   partialPreviews,
   rawImageUrls,
@@ -91,8 +88,7 @@ export default function AgentExecutionDetails({
         {hasContent(parameters) ? <DetailSection label="参数与来源">{parameters}</DetailSection> : null}
         {hasContent(plan) ? <DetailSection label="计划">{plan}</DetailSection> : null}
         {hasContent(run) ? <DetailSection label="执行与 Run">{run}</DetailSection> : null}
-        {hasContent(actionProgress) ? <DetailSection label="执行进度">{actionProgress}</DetailSection> : null}
-        {hasContent(toolMessages) ? <DetailSection label="执行说明">{toolMessages}</DetailSection> : null}
+        {hasContent(toolMessages) ? <DetailSection label="Tool 消息">{toolMessages}</DetailSection> : null}
         {hasContent(partialPreviews) ? <DetailSection label="流式中间预览">{partialPreviews}</DetailSection> : null}
         {hasContent(rawImageUrlContent) ? (
           <DetailSection label="原始图片链接" code>{rawImageUrlContent}</DetailSection>

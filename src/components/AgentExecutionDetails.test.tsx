@@ -10,9 +10,9 @@ describe('AgentExecutionDetails', () => {
         revisedPrompt="生成一张极简蓝色产品海报"
         references={<span>参考图 A</span>}
         parameters={<span>1024×1024 · high</span>}
-        plan={<span>计划摘要 · plan-1</span>}
+        plan={<span>计划摘要 · policy-v2 · plan-1</span>}
         run={<span>execution-1 · local-run-1</span>}
-        actionProgress={<span>图片生成 · 严格尺寸处理 · 输出规格校验</span>}
+        toolMessages={<span>正在调用 image.generate</span>}
         partialPreviews={<span>中间预览 1</span>}
         rawImageUrls={['https://example.com/a.png']}
         rawResponse={'{"status":"completed"}'}
@@ -29,15 +29,11 @@ describe('AgentExecutionDetails', () => {
     expect(markup).toContain('参数与来源')
     expect(markup).toContain('计划')
     expect(markup).toContain('执行与 Run')
-    expect(markup).toContain('执行进度')
-    expect(markup).toContain('图片生成')
-    expect(markup).toContain('严格尺寸处理')
-    expect(markup).toContain('输出规格校验')
+    expect(markup).toContain('Tool 消息')
     expect(markup).toContain('流式中间预览')
     expect(markup).toContain('原始图片链接')
     expect(markup).toContain('原始响应')
     expect(markup).toContain('&quot;status&quot;:&quot;completed&quot;')
-    expect(markup).not.toContain('image.generate')
   })
 
   it('只渲染有内容的详情区，API 不提供最终输出和任务动作插槽', () => {

@@ -7,9 +7,14 @@ import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigration
 import { useRestrictedAgentStore } from './restrictedAgentStore'
 import {
   getAgentCapabilities,
+  getAgentModePreference,
+  getRuntimeConfigState,
   isRestrictedAgentEnabled,
   isRestrictedAgentOnly,
+  resolveAgentMode,
+  setAgentModePreference,
 } from './lib/serverApiConfig'
+import type { AgentMode } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -29,8 +34,8 @@ function getCurrentOpenShopRoute(): OpenShopRoute | null {
   return getOpenShopRoute(window.location.hash)
 }
 
-export function getWorkspaceComposerScope(workspaceMode: 'gallery' | 'agent') {
-  return workspaceMode
+export function getWorkspaceComposerScope(workspaceMode: 'gallery' | 'agent', agentMode: AgentMode) {
+  return workspaceMode === 'agent' ? agentMode : 'gallery'
 }
 
 export default function App() {
@@ -41,33 +46,58 @@ export default function App() {
   const recoverRestrictedAgent = useRestrictedAgentStore((s) => s.recover)
   const restrictedAgentEnabled = isRestrictedAgentEnabled()
   const restrictedAgentOnly = restrictedAgentEnabled && isRestrictedAgentOnly()
-  // 运行时 breaker 不写入 settings；任务状态变化触发重渲染时必须重新读取它。
-  const agentCapabilities = getAgentCapabilities(settings)
-  const agentUsable = agentCapabilities.agentUsable ?? agentCapabilities.responsesUsable ?? agentCapabilities.chatUsable
+  const agentCapabilities = useMemo(() => getAgentCapabilities(settings), [settings])
+  const initialAgentMode = resolveAgentMode(agentCapabilities, getAgentModePreference()) ?? 'chat'
   const [workspaceMode, setWorkspaceMode] = useState<'gallery' | 'agent'>(() => restrictedAgentOnly ? 'agent' : 'gallery')
-  const [activeAgentTaskId, setActiveAgentTaskId] = useState<string | null>(null)
+  const [agentMode, setAgentMode] = useState<AgentMode>(initialAgentMode)
+  const [activeTaskByMode, setActiveTaskByMode] = useState<Record<AgentMode, string | null>>({ chat: null, tool: null })
   const [openShopRoute, setOpenShopRoute] = useState<OpenShopRoute | null>(getCurrentOpenShopRoute)
   const [openShopSource, setOpenShopSource] = useState<string | undefined>()
   const [openShopSourceError, setOpenShopSourceError] = useState<string | undefined>()
   useDockerApiUrlMigrationNotice()
 
   const activeAgentTask = useMemo(
-    () => tasks.find((task) => task.id === activeAgentTaskId) ?? null,
-    [activeAgentTaskId, tasks],
+    () => tasks.find((task) => task.id === activeTaskByMode.chat) ?? null,
+    [activeTaskByMode.chat, tasks],
   )
   const activeAgentConversationId = activeAgentTask?.origin === 'agent'
     ? getAgentConversationId(activeAgentTask)
     : null
 
-  const changeWorkspaceMode = useCallback((nextMode: 'gallery' | 'agent') => {
-    if (nextMode === 'agent' && !agentUsable) return
-    setWorkspaceMode(nextMode)
-  }, [agentUsable])
+  const setActiveAgentTask = useCallback((mode: AgentMode, taskId: string | null) => {
+    setActiveTaskByMode((current) => current[mode] === taskId ? current : { ...current, [mode]: taskId })
+  }, [])
 
-  const composerScope = getWorkspaceComposerScope(workspaceMode)
+  const changeAgentMode = useCallback((nextMode: AgentMode) => {
+    if (resolveAgentMode(agentCapabilities, nextMode) !== nextMode) return
+    setAgentMode(nextMode)
+    if (getRuntimeConfigState().status === 'ready') setAgentModePreference(nextMode)
+  }, [agentCapabilities])
+
+  const changeWorkspaceMode = useCallback((nextMode: 'gallery' | 'agent') => {
+    if (nextMode === 'agent' && !agentCapabilities.defaultMode) return
+    setWorkspaceMode(nextMode)
+  }, [agentCapabilities.defaultMode])
+
+  const composerScope = getWorkspaceComposerScope(workspaceMode, agentMode)
   useLayoutEffect(() => {
     setComposerScope(composerScope)
   }, [composerScope, setComposerScope])
+
+  useEffect(() => {
+    if (getRuntimeConfigState().status !== 'ready') return
+    const resolvedMode = resolveAgentMode(agentCapabilities, getAgentModePreference() ?? agentMode)
+    if (!resolvedMode) {
+      if (!restrictedAgentOnly && workspaceMode === 'agent') {
+        setWorkspaceMode('gallery')
+      }
+      return
+    }
+    if (resolvedMode !== agentMode) {
+      setAgentMode(resolvedMode)
+    }
+    setAgentModePreference(resolvedMode)
+  }, [agentCapabilities, agentMode, restrictedAgentOnly, workspaceMode])
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -193,8 +223,8 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={workspaceMode === 'agent'}
-                disabled={!agentUsable}
-                title={agentUsable ? '打开 Agent 工作区' : 'Agent 尚不可用：Responses 服务不可用，Tool Pipeline 不会单独启用'}
+                disabled={!agentCapabilities.defaultMode}
+                title={agentCapabilities.defaultMode ? '打开 Agent 工作区' : 'Agent 尚不可用：请配置 Responses API 或启用 Tool Agent'}
                 className={`rounded-xl px-4 py-2 text-sm transition ${
                   workspaceMode === 'agent'
                     ? 'bg-blue-500 text-white shadow-sm'
@@ -220,16 +250,19 @@ export default function App() {
           >
             <AgentWorkspace
               active={workspaceMode === 'agent'}
+              mode={agentMode}
               capabilities={agentCapabilities}
-              activeTaskId={activeAgentTaskId}
-              onActiveTaskChange={setActiveAgentTaskId}
+              activeTaskByMode={activeTaskByMode}
+              onActiveTaskChange={setActiveAgentTask}
+              onModeChange={changeAgentMode}
               composer={(
                 <InputBar
                   presentation="embedded"
                   layout="agent"
+                  agentMode={agentMode}
                   agentCapabilities={agentCapabilities}
-                  onTaskSubmitted={setActiveAgentTaskId}
-                  agentConversationId={activeAgentConversationId}
+                  onTaskSubmitted={(taskId) => setActiveAgentTask(agentMode, taskId)}
+                  agentConversationId={agentMode === 'chat' ? activeAgentConversationId : null}
                 />
               )}
             />
@@ -240,6 +273,8 @@ export default function App() {
         <InputBar
           presentation="fixed"
           layout="default"
+          agentMode={agentMode}
+          agentCapabilities={agentCapabilities}
         />
       )}
       <DetailModal />

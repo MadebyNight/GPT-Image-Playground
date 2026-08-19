@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
+  AgentMode,
   ApiProfile,
   AppSettings,
   TaskParams,
@@ -66,14 +67,10 @@ const CUSTOM_RECOVERY_POLL_MS = 10_000
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
-export type ComposerScope = 'gallery' | 'agent'
-/** @deprecated 仅用于让升级过程中的旧调用方映射到统一 Agent 草稿。 */
-export type LegacyComposerScope = 'chat' | 'tool'
-type ComposerScopeInput = ComposerScope | LegacyComposerScope
+export type ComposerScope = 'gallery' | AgentMode
 
 export interface ComposerDraftSnapshot {
-  /** 读取旧快照时可能仍为 chat/tool；Store 输出始终归一化为 gallery/agent。 */
-  composerScope?: ComposerScopeInput
+  composerScope?: ComposerScope
   prompt: string
   inputImages: InputImage[]
   maskDraft: MaskDraft | null
@@ -82,10 +79,6 @@ export interface ComposerDraftSnapshot {
   reusedTaskApiProfileName: string | null
   reusedTaskApiProfileMissing: boolean
   composerVersion: number
-}
-
-function normalizeComposerScope(scope: ComposerScopeInput | undefined): ComposerScope {
-  return scope === 'gallery' ? 'gallery' : 'agent'
 }
 
 const submittedComposerVersions = new Map<string, { scope: ComposerScope; version: number }>()
@@ -344,7 +337,7 @@ function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: strin
   return next
 }
 
-const COMPOSER_SCOPES: ComposerScope[] = ['gallery', 'agent']
+const COMPOSER_SCOPES: ComposerScope[] = ['gallery', 'chat', 'tool']
 
 function createEmptyComposerDraft(scope: ComposerScope, params: TaskParams = DEFAULT_PARAMS): ComposerDraftSnapshot {
   return {
@@ -360,10 +353,7 @@ function createEmptyComposerDraft(scope: ComposerScope, params: TaskParams = DEF
   }
 }
 
-function cloneComposerDraft(
-  draft: ComposerDraftSnapshot,
-  scope: ComposerScope = normalizeComposerScope(draft.composerScope),
-): ComposerDraftSnapshot {
+function cloneComposerDraft(draft: ComposerDraftSnapshot, scope: ComposerScope = draft.composerScope ?? 'gallery'): ComposerDraftSnapshot {
   return {
     ...draft,
     composerScope: scope,
@@ -388,11 +378,11 @@ function getLiveComposerDraft(state: AppState): ComposerDraftSnapshot {
 }
 
 function getComposerDraftsWithLiveState(state: AppState): Record<ComposerScope, ComposerDraftSnapshot> {
-  const composerScope = normalizeComposerScope(state.composerScope)
   return {
     gallery: cloneComposerDraft(state.composerDrafts.gallery, 'gallery'),
-    agent: cloneComposerDraft(state.composerDrafts.agent, 'agent'),
-    [composerScope]: getLiveComposerDraft(state),
+    chat: cloneComposerDraft(state.composerDrafts.chat, 'chat'),
+    tool: cloneComposerDraft(state.composerDrafts.tool, 'tool'),
+    [state.composerScope]: getLiveComposerDraft(state),
   }
 }
 
@@ -416,24 +406,6 @@ function parsePersistedComposerDraft(value: unknown, scope: ComposerScope, fallb
   }
 }
 
-function hasComposerDraftContent(draft: ComposerDraftSnapshot): boolean {
-  return Boolean(draft.prompt.trim() || draft.inputImages.length || draft.maskDraft)
-}
-
-function selectLegacyAgentDraft(chatDraft: ComposerDraftSnapshot, toolDraft: ComposerDraftSnapshot): ComposerDraftSnapshot {
-  const hasChatContent = hasComposerDraftContent(chatDraft)
-  const hasToolContent = hasComposerDraftContent(toolDraft)
-  if (hasChatContent && hasToolContent) {
-    return cloneComposerDraft(
-      toolDraft.composerVersion > chatDraft.composerVersion ? toolDraft : chatDraft,
-      'agent',
-    )
-  }
-  if (hasChatContent) return cloneComposerDraft(chatDraft, 'agent')
-  if (hasToolContent) return cloneComposerDraft(toolDraft, 'agent')
-  return cloneComposerDraft(chatDraft, 'agent')
-}
-
 export function getPersistedState(state: AppState) {
   const settings = normalizeSettings(state.settings)
   const drafts = getComposerDraftsWithLiveState(state)
@@ -449,10 +421,10 @@ export function getPersistedState(state: AppState) {
       reusedTaskApiProfileMissing: false,
     }]
   })) as Record<ComposerScope, ComposerDraftSnapshot>
-  const agentDraft = persistedDrafts.agent
+  const legacyChatDraft = persistedDrafts.chat
   return {
     settings,
-    params: agentDraft.params,
+    params: legacyChatDraft.params,
     composerDrafts: persistedDrafts,
     ...(settings.persistInputOnRestart
       ? {
@@ -481,7 +453,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
   }
   const settings = normalizeSettings(persisted.settings ?? currentState.settings)
   const persistedDraftRecord = persisted.composerDrafts && typeof persisted.composerDrafts === 'object'
-    ? persisted.composerDrafts as Partial<Record<ComposerScopeInput, ComposerDraftSnapshot>>
+    ? persisted.composerDrafts as Partial<Record<ComposerScope, ComposerDraftSnapshot>>
     : null
   const legacyParams = persisted.params && typeof persisted.params === 'object'
     ? { ...DEFAULT_PARAMS, ...persisted.params }
@@ -489,22 +461,19 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
   const composerDrafts: Record<ComposerScope, ComposerDraftSnapshot> = persistedDraftRecord
     ? {
         gallery: parsePersistedComposerDraft(persistedDraftRecord.gallery, 'gallery', DEFAULT_PARAMS),
-        agent: Object.prototype.hasOwnProperty.call(persistedDraftRecord, 'agent')
-          ? parsePersistedComposerDraft(persistedDraftRecord.agent, 'agent', legacyParams)
-          : selectLegacyAgentDraft(
-              parsePersistedComposerDraft(persistedDraftRecord.chat, 'agent', legacyParams),
-              parsePersistedComposerDraft(persistedDraftRecord.tool, 'agent', DEFAULT_PARAMS),
-            ),
+        chat: parsePersistedComposerDraft(persistedDraftRecord.chat, 'chat', legacyParams),
+        tool: parsePersistedComposerDraft(persistedDraftRecord.tool, 'tool', DEFAULT_PARAMS),
       }
     : {
         gallery: createEmptyComposerDraft('gallery'),
-        agent: parsePersistedComposerDraft({
+        chat: parsePersistedComposerDraft({
           prompt: settings.persistInputOnRestart && typeof persisted.prompt === 'string' ? persisted.prompt : '',
           inputImages: settings.persistInputOnRestart && Array.isArray(persisted.inputImages) ? persisted.inputImages : [],
           params: legacyParams,
-        }, 'agent', legacyParams),
+        }, 'chat', legacyParams),
+        tool: createEmptyComposerDraft('tool'),
       }
-  const composerScope = normalizeComposerScope(currentState.composerScope)
+  const composerScope = currentState.composerScope
   const activeDraft = composerDrafts[composerScope]
   return {
     ...currentState,
@@ -562,7 +531,7 @@ interface AppState {
   // 输入
   composerScope: ComposerScope
   composerDrafts: Record<ComposerScope, ComposerDraftSnapshot>
-  setComposerScope: (scope: ComposerScopeInput) => void
+  setComposerScope: (scope: ComposerScope) => void
   composerVersion: number
   prompt: string
   setPrompt: (p: string) => void
@@ -691,10 +660,10 @@ export const useStore = create<AppState>()(
       composerScope: 'gallery',
       composerDrafts: {
         gallery: createEmptyComposerDraft('gallery'),
-        agent: createEmptyComposerDraft('agent'),
+        chat: createEmptyComposerDraft('chat'),
+        tool: createEmptyComposerDraft('tool'),
       },
-      setComposerScope: (requestedScope) => set((state) => {
-        const composerScope = normalizeComposerScope(requestedScope)
+      setComposerScope: (composerScope) => set((state) => {
         if (state.composerScope === composerScope) return state
         const composerDrafts = {
           ...state.composerDrafts,
@@ -1431,19 +1400,7 @@ export async function initStore() {
 
 type TaskApiCaller = (opts: CallApiOptions) => Promise<CallApiResult>
 
-export interface AgentTaskMetadata extends Pick<TaskRecord,
-  | 'agentConversationId'
-  | 'agentTurn'
-  | 'agentRoute'
-  | 'agentRouteReason'
-  | 'agentHardConstraints'
-  | 'agentFallbackForbidden'
-  | 'agentFinalOutputSpec'
-  | 'agentExecutionRoute'
-  | 'agentPlanId'
-  | 'agentExecutionId'
-  | 'agentExecutionSnapshot'
-> {
+export interface AgentTaskMetadata {
   origin: 'agent'
   agentConversationId: string
   agentTurn: number
@@ -1455,9 +1412,9 @@ function getAgentAssistantTextFromError(err: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-export function getComposerDraftSnapshot(scope?: ComposerScopeInput): ComposerDraftSnapshot {
+export function getComposerDraftSnapshot(scope?: ComposerScope): ComposerDraftSnapshot {
   const state = useStore.getState()
-  const targetScope = normalizeComposerScope(scope ?? state.composerScope)
+  const targetScope = scope ?? state.composerScope
   return targetScope === state.composerScope
     ? getLiveComposerDraft(state)
     : cloneComposerDraft(state.composerDrafts[targetScope], targetScope)
@@ -1479,11 +1436,10 @@ interface ExecuteTaskOptions {
 }
 
 export function clearComposerDraft(
-  requestedScope: ComposerScopeInput,
+  scope: ComposerScope,
   expectedVersion: number,
   clearInputAfterSubmit: boolean,
 ): number | null {
-  const scope = normalizeComposerScope(requestedScope)
   let nextVersion: number | null = null
   useStore.setState((state) => {
     const currentDraft = scope === state.composerScope
@@ -1570,7 +1526,7 @@ function clearComposerMaskDraft(
 export async function submitTask(options: SubmitTaskOptions = {}): Promise<string | null> {
   const initialState = useStore.getState()
   const draftSnapshot = options.draftSnapshot ?? getComposerDraftSnapshot()
-  const draftScope = normalizeComposerScope(draftSnapshot.composerScope ?? initialState.composerScope)
+  const draftScope = draftSnapshot.composerScope ?? initialState.composerScope
   const { settings, showToast, setConfirmDialog } = initialState
   const {
     prompt,

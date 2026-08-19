@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
@@ -14,17 +13,13 @@ import {
   ALLOWED_SIZES,
   LEGACY_POLICY_VERSION,
   POLICY_VERSION,
-  TOOL_AGENT_V3_POLICY_VERSION,
   hashComposerSnapshot,
-  normalizeFinalOutputSpec,
   normalizeComposerSnapshot,
   parseComposerSnapshotManifest,
   validateAndConstrainDraft,
-  validateAndConstrainToolAgentDraft,
 } from './policy.js';
 import { ResponsesPlanner, type Planner } from './planner.js';
-import { getImageGeneration, getPlanOperation, isToolAgentPlan, isToolAgentPlanV3 } from './plan.js';
-import { guardResponsesImageRequest, relayResponsesImage } from './responsesProxy.js';
+import { getImageGeneration, getPlanOperation, isToolAgentPlan } from './plan.js';
 import {
   getOrCreateSession,
   requireCsrf,
@@ -33,15 +28,12 @@ import {
   type SessionContext,
 } from './security.js';
 import type {
-  AutoPlanAssetBinding,
   ComposerSnapshotManifest,
-  FinalOutputSpec,
   PlanInputView,
   PlanPreferences,
   PlannerDraft,
   RestrictedAgentPlanSnapshot,
   StoredAsset,
-  ToolAgentPlanV3Snapshot,
   ToolOperation,
 } from './types.js';
 import { ExecutionWorker } from './worker.js';
@@ -57,22 +49,6 @@ const fieldSchema = z.object({
   composerSnapshot: z.string().max(64_000).optional(),
   webSearchEnabled: z.string().optional().refine((value) => value === undefined || value === 'true' || value === 'false'),
 }).strict();
-
-const autoExecuteFieldSchema = fieldSchema.extend({
-  finalOutputSpec: z.string().trim().min(1).max(64_000),
-}).strict();
-
-const planRequestFields = new Set([
-  'request',
-  'size',
-  'quality',
-  'outputFormat',
-  'outputCompression',
-  'imageCount',
-  'composerSnapshot',
-  'webSearchEnabled',
-]);
-const autoExecuteRequestFields = new Set([...planRequestFields, 'finalOutputSpec']);
 
 export interface CreateAppOptions {
   config?: GatewayConfig;
@@ -176,92 +152,6 @@ function bindComposerUploads(
   return ordered;
 }
 
-/** 复用 v1/v2 与 v3 的 multipart 上传约束；失败时只清理由本次请求写入的资产。 */
-async function collectMultipartPlanRequest(
-  request: FastifyRequest,
-  sessionId: string,
-  config: GatewayConfig,
-  assetStore: AssetStore,
-  acceptedFields: ReadonlySet<string>,
-): Promise<{ rawFields: Record<string, string>; uploads: UploadedPlanAsset[] }> {
-  if (!request.isMultipart()) throw new AppError(415, 'multipart_required', '创建计划必须使用 multipart/form-data');
-
-  const rawFields: Record<string, string> = {};
-  const uploads: UploadedPlanAsset[] = [];
-  const roleCounts = new Map<string, number>();
-  let totalUploadedBytes = 0;
-  try {
-    for await (const part of request.parts()) {
-      if (part.type === 'field') {
-        if (!acceptedFields.has(part.fieldname)) throw new AppError(400, 'unknown_field', `不允许字段 ${part.fieldname}`);
-        if (rawFields[part.fieldname] !== undefined) throw new AppError(400, 'duplicate_field', `字段 ${part.fieldname} 重复`);
-        if (typeof part.value !== 'string') throw new AppError(400, 'invalid_field', `字段 ${part.fieldname} 必须是文本`);
-        rawFields[part.fieldname] = part.value;
-        continue;
-      }
-      if (!['reference', 'mask_target', 'mask'].includes(part.fieldname)) {
-        part.file.resume();
-        throw new AppError(400, 'unknown_file_field', `不允许文件字段 ${part.fieldname}`);
-      }
-      const role = part.fieldname as 'reference' | 'mask_target' | 'mask';
-      const roleOrdinal = roleCounts.get(role) ?? 0;
-      const count = roleOrdinal + 1;
-      roleCounts.set(role, count);
-      if (role === 'reference' && count > config.maxReferenceImages) throw new AppError(400, 'too_many_references', '参考图数量超过限制');
-      if (role !== 'reference' && count > 1) throw new AppError(400, 'duplicate_mask_input', `${role} 只能上传一张`);
-      const stored = await assetStore.storeUpload(part, sessionId, role);
-      uploads.push({ ...stored, roleOrdinal });
-      totalUploadedBytes += Math.max(stored.uploadedByteSize, stored.byteSize);
-      if (totalUploadedBytes > config.maxUploadBytes) throw new AppError(413, 'upload_too_large', '上传总大小超过限制');
-    }
-    return { rawFields, uploads };
-  } catch (error) {
-    await Promise.all(uploads.map((asset) => assetStore.remove(asset)));
-    throw error;
-  }
-}
-
-function parseFinalOutputSpecField(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    throw new AppError(400, 'invalid_final_output_spec', 'finalOutputSpec 必须是有效 JSON');
-  }
-}
-
-function createAutoPlanAssetBindings(
-  planInputs: PlanInputView[],
-  orderedUploads: UploadedPlanAsset[],
-  manifest: ComposerSnapshotManifest,
-): AutoPlanAssetBinding[] {
-  if (planInputs.length !== orderedUploads.length) {
-    throw new AppError(400, 'composer_asset_binding_mismatch', '计划输入与上传资产数量不一致');
-  }
-  const browserImageIds = new Map<string, string>();
-  for (const input of manifest.inputs) browserImageIds.set(`${input.role}:${input.ordinal}`, input.browserImageId);
-  const boundUploadIds = new Set<string>();
-  return planInputs.map((input, index) => {
-    const upload = orderedUploads[index];
-    if (!upload || upload.id !== input.assetId || upload.role !== input.role || boundUploadIds.has(upload.id)) {
-      throw new AppError(400, 'composer_asset_binding_mismatch', '计划输入与上传资产顺序不一致');
-    }
-    boundUploadIds.add(upload.id);
-    // manifest 允许同一角色的 ordinal 非升序；plan.inputs 的当前位置不能重建它。
-    const ordinal = upload.roleOrdinal;
-    const browserImageId = input.role === 'mask' ? null : browserImageIds.get(`${input.role}:${ordinal}`) ?? null;
-    if (input.role !== 'mask' && browserImageId === null) {
-      throw new AppError(400, 'composer_asset_binding_mismatch', 'Composer 输入缺少浏览器图片 binding');
-    }
-    return {
-      gatewayAssetId: input.assetId,
-      browserImageId,
-      sourceTaskId: null,
-      role: input.role,
-      ordinal,
-    };
-  });
-}
-
 function resolveToolOperation(draftOperation: PlannerDraft['operation'], inputs: PlanInputView[]): ToolOperation {
   if (draftOperation.type === 'image.generate' || draftOperation.type === 'image.edit') {
     return draftOperation;
@@ -302,9 +192,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     limits: {
       fileSize: config.maxFileBytes,
       files: config.maxReferenceImages + 2,
-      // v3 自动执行额外携带 finalOutputSpec；最多 9 个字段 + 参考图、mask target、mask。
-      fields: 9,
-      parts: config.maxReferenceImages + 11,
+      fields: 7,
+      parts: config.maxReferenceImages + 8,
     },
   });
 
@@ -368,8 +257,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       data: {
         enabled: true,
         policyVersion: POLICY_VERSION,
-        planSchemaVersions: [1, 2, 3],
-        operationTypes: ['image.generate', 'image.edit', 'openshop.edit', 'image.transform', 'metadata.assert'],
+        planSchemaVersions: [1, 2],
+        operationTypes: ['image.generate', 'image.edit', 'openshop.edit'],
         csrfToken: session.csrfToken,
         limits: {
           planTtlSeconds: config.planTtlSeconds,
@@ -395,37 +284,40 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     };
   });
 
-  app.post('/v1/responses/image', async (request, reply) => {
-    // 必须在读取/路由客户端请求前建立同源 session 并校验 CSRF。
-    const session = sessionForMutation(request, reply, config);
-    const guarded = guardResponsesImageRequest(request.body, config);
-    // Responses 内置 image_generation 同样会消耗上游图片额度，必须与 Tool
-    // Pipeline 共用每个 session 的小时上限，避免受控 relay 绕过该配额。
-    rateLimiter.consume(`images:${session.id}`, config.imagesRatePerHour, 3_600_000);
-    const upstream = await relayResponsesImage(guarded, config);
-    const contentType = upstream.headers.get('content-type');
-    reply.status(upstream.status).header('cache-control', 'no-store');
-    if (contentType) reply.header('content-type', contentType);
-    if (contentType?.toLowerCase().startsWith('text/event-stream')) {
-      reply.header('x-accel-buffering', 'no');
-    }
-    if (!upstream.body) return reply.send();
-    // Node 和 Undici 的 ReadableStream 声明在当前 TypeScript 版本中泛型不兼容，
-    // 但运行时均遵循 Web Streams 合同；转换后仍保持原始字节流，不做缓冲。
-    return reply.send(Readable.fromWeb(upstream.body as unknown as Parameters<typeof Readable.fromWeb>[0]));
-  });
-
   app.post('/v1/plans', async (request, reply) => {
     const session = sessionForMutation(request, reply, config);
     rateLimiter.consume(`plan:${session.id}`, config.planRatePerMinute, 60_000);
-    const { rawFields, uploads } = await collectMultipartPlanRequest(
-      request,
-      session.id,
-      config,
-      assetStore,
-      planRequestFields,
-    );
+    if (!request.isMultipart()) throw new AppError(415, 'multipart_required', '创建计划必须使用 multipart/form-data');
+
+    const rawFields: Record<string, string> = {};
+    const uploads: UploadedPlanAsset[] = [];
+    const roleCounts = new Map<string, number>();
+    let totalUploadedBytes = 0;
     try {
+      for await (const part of request.parts()) {
+        if (part.type === 'field') {
+          if (!(part.fieldname in fieldSchema.shape)) throw new AppError(400, 'unknown_field', `不允许字段 ${part.fieldname}`);
+          if (rawFields[part.fieldname] !== undefined) throw new AppError(400, 'duplicate_field', `字段 ${part.fieldname} 重复`);
+          if (typeof part.value !== 'string') throw new AppError(400, 'invalid_field', `字段 ${part.fieldname} 必须是文本`);
+          rawFields[part.fieldname] = part.value;
+          continue;
+        }
+        if (!['reference', 'mask_target', 'mask'].includes(part.fieldname)) {
+          part.file.resume();
+          throw new AppError(400, 'unknown_file_field', `不允许文件字段 ${part.fieldname}`);
+        }
+        const role = part.fieldname as 'reference' | 'mask_target' | 'mask';
+        const roleOrdinal = roleCounts.get(role) ?? 0;
+        const count = roleOrdinal + 1;
+        roleCounts.set(role, count);
+        if (role === 'reference' && count > config.maxReferenceImages) throw new AppError(400, 'too_many_references', '参考图数量超过限制');
+        if (role !== 'reference' && count > 1) throw new AppError(400, 'duplicate_mask_input', `${role} 只能上传一张`);
+        const stored = await assetStore.storeUpload(part, session.id, role);
+        uploads.push({ ...stored, roleOrdinal });
+        totalUploadedBytes += Math.max(stored.uploadedByteSize, stored.byteSize);
+        if (totalUploadedBytes > config.maxUploadBytes) throw new AppError(413, 'upload_too_large', '上传总大小超过限制');
+      }
+
       const parsedFields = fieldSchema.safeParse(rawFields);
       if (!parsedFields.success) throw new AppError(400, 'invalid_plan_request', '计划请求字段无效');
       if (parsedFields.data.imageCount && parsedFields.data.imageCount > config.maxOutputImages) {
@@ -514,128 +406,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }
   });
 
-  /**
-   * 统一 Agent 的严格规格入口：冻结 Composer 输入和最终规格后，以同一事务
-   * 创建 v3 计划、execution 与 action 链。它没有旧版确认阶段，也不会回退
-   * 到 Responses 或单 operation 执行入口。
-   */
-  app.post('/v1/plans/auto-execute', async (request, reply) => {
-    const session = sessionForMutation(request, reply, config);
-    // 与 /v1/plans 保持一致：无论后续字段是否无效，本次规划尝试都会计入限额。
-    rateLimiter.consume(`plan:${session.id}`, config.planRatePerMinute, 60_000);
-    const { rawFields, uploads } = await collectMultipartPlanRequest(
-      request,
-      session.id,
-      config,
-      assetStore,
-      autoExecuteRequestFields,
-    );
-    try {
-      const parsedFields = autoExecuteFieldSchema.safeParse(rawFields);
-      if (!parsedFields.success) throw new AppError(400, 'invalid_plan_request', '自动执行计划请求字段无效');
-      if (!parsedFields.data.composerSnapshot) {
-        throw new AppError(400, 'composer_snapshot_required', '自动执行必须携带 Composer 快照');
-      }
-      if (parsedFields.data.imageCount !== 1) {
-        throw new AppError(400, 'invalid_image_count', '严格输出 action 链只能生成一张图片');
-      }
-
-      const preferences: PlanPreferences = {
-        size: parsedFields.data.size,
-        quality: parsedFields.data.quality,
-        outputFormat: parsedFields.data.outputFormat,
-        outputCompression: parsedFields.data.outputCompression,
-        imageCount: parsedFields.data.imageCount,
-      };
-      // 先在调用 Planner 前冻结并验证规格，Planner 只能复述该规格，不能放宽它。
-      const rawFinalOutputSpec = parseFinalOutputSpecField(parsedFields.data.finalOutputSpec);
-      const normalizedFinalOutputSpec = normalizeFinalOutputSpec(rawFinalOutputSpec, preferences, config);
-      const manifest = assertComposerFields(
-        parseComposerSnapshotManifest(parsedFields.data.composerSnapshot, config),
-        parsedFields.data,
-      );
-      const orderedUploads = bindComposerUploads(manifest, uploads);
-      const inputs = orderedUploads.map(assetToPlanInput);
-
-      const webSearchRequested = parsedFields.data.webSearchEnabled === 'true';
-      let webSearchSources: import('./types.js').WebSearchSource[] | undefined;
-      let webSearchWarning: string | null = null;
-      if (webSearchRequested) {
-        try {
-          rateLimiter.consume(`web-search:${session.id}`, config.webSearchRatePerMinute, 60_000);
-          webSearchSources = await webSearch.search(parsedFields.data.request);
-        } catch (error) {
-          webSearchSources = [];
-          webSearchWarning = `联网搜索未完成：${error instanceof Error ? error.message : '服务不可用'}；本计划按离线信息生成。`;
-        }
-      }
-
-      const constrained = validateAndConstrainToolAgentDraft(
-        await planner.createDraft({
-          request: parsedFields.data.request,
-          preferences,
-          assets: orderedUploads,
-          allowOpenShop: false,
-          webSearchSources,
-          outputSchemaVersion: 3,
-          finalOutputSpec: normalizedFinalOutputSpec,
-        }),
-        preferences,
-        inputs,
-        config,
-        rawFinalOutputSpec,
-      );
-      const plan: ToolAgentPlanV3Snapshot = {
-        id: randomUUID(),
-        version: 1,
-        status: 'queued',
-        expiresAt: new Date(Date.now() + config.planTtlSeconds * 1000).toISOString(),
-        originalRequest: parsedFields.data.request,
-        summary: constrained.summary,
-        inputs,
-        assumptions: constrained.assumptions,
-        warnings: webSearchWarning ? [...constrained.warnings, webSearchWarning] : constrained.warnings,
-        ...(webSearchRequested ? { webSearch: { enabled: true as const, sources: webSearchSources ?? [] } } : {}),
-        policyVersion: TOOL_AGENT_V3_POLICY_VERSION,
-        schemaVersion: 3,
-        composerSnapshotHash: hashComposerSnapshot(manifest),
-        finalOutputSpec: constrained.finalOutputSpec,
-        actions: constrained.actions,
-      };
-      // 在数据库写入前创建 binding，避免无效 manifest 留下已入队任务。
-      const assetBindings = createAutoPlanAssetBindings(plan.inputs, orderedUploads, manifest);
-
-      const releaseExecuteRate = rateLimiter.consume(`execute:${session.id}`, config.executeRatePerMinute, 60_000);
-      let releaseImageRate: (() => void) | undefined;
-      try {
-        const imageCount = plan.actions.reduce((count, action) => (
-          action.type === 'image.generate' || action.type === 'image.edit'
-            ? count + action.generation.imageCount
-            : count
-        ), 0);
-        if (imageCount > 0) {
-          releaseImageRate = rateLimiter.consume(`images:${session.id}`, config.imagesRatePerHour, 3_600_000, imageCount);
-        }
-        const result = db.insertAutoPlanAndExecution(plan, session.id, orderedUploads);
-        if (!result.created) {
-          releaseExecuteRate();
-          releaseImageRate?.();
-        } else {
-          worker.notify();
-        }
-        reply.status(202).header('cache-control', 'no-store');
-        return { data: { plan, execution: result.execution, assetBindings } };
-      } catch (error) {
-        releaseExecuteRate();
-        releaseImageRate?.();
-        throw error;
-      }
-    } catch (error) {
-      await Promise.all(uploads.map((asset) => assetStore.remove(asset)));
-      throw error;
-    }
-  });
-
   app.get<{ Params: { id: string } }>('/v1/plans/:id', async (request, reply) => {
     const session = getOrCreateSession(request, reply, config);
     const plan = db.getPlan(request.params.id, session.id);
@@ -652,9 +422,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       throw new AppError(412, 'plan_version_mismatch', '计划版本已变化，请重新查看');
     }
     if (plan.status === 'expired') throw new AppError(410, 'plan_expired', '计划已过期');
-    if (isToolAgentPlanV3(plan)) {
-      throw new AppError(409, 'v3_actions_require_auto_execution', 'v3 action 链只能通过自动执行接口运行');
-    }
     if (isToolAgentPlan(plan)) {
       const composerSnapshotHash = parseComposerSnapshotHeader(request.headers['x-composer-snapshot-hash']);
       if (!composerSnapshotHash) {

@@ -22,17 +22,6 @@ export const EXECUTION_STATUSES = [
 
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
-export const EXECUTION_ACTION_STATUSES = [
-  'queued',
-  'executing',
-  'completed',
-  'failed',
-  'cancelled',
-  'failed_unknown',
-] as const;
-
-export type ExecutionActionStatus = (typeof EXECUTION_ACTION_STATUSES)[number];
-
 export type AssetRole = 'reference' | 'mask_target' | 'mask' | 'generated';
 export type PlanInputRole = Exclude<AssetRole, 'generated'>;
 
@@ -64,18 +53,6 @@ export interface PlanInputView {
   height: number;
 }
 
-/**
- * 自动执行响应把 Gateway 资产与 Composer 中的浏览器图片绑定对应起来。
- * Gateway 不接收前端任务元数据，因此 sourceTaskId 当前始终为 null。
- */
-export interface AutoPlanAssetBinding {
-  gatewayAssetId: string;
-  browserImageId: string | null;
-  sourceTaskId: null;
-  role: PlanInputRole;
-  ordinal: number;
-}
-
 export interface WebSearchSource {
   title: string;
   url: string;
@@ -102,63 +79,6 @@ export interface GenerationPlan {
   outputCompression: number | null;
   imageCount: number;
 }
-
-/**
- * 用户可见的最终交付规格。它独立于 Images API 的候选尺寸，供 v3
- * transform 与 metadata.assert 使用。
- */
-export interface FinalOutputSpec {
-  width?: number;
-  height?: number;
-  fit?: 'cover' | 'contain' | 'fill';
-  position?: 'center' | 'left' | 'right' | 'top' | 'bottom';
-  crop?: { x: number; y: number; width: number; height: number };
-  rotate?: 90 | -90 | 180 | -180;
-  flip?: 'horizontal' | 'vertical';
-  outputFormat?: 'png' | 'jpeg' | 'webp';
-  transparent?: boolean;
-  background?: string;
-  outputCompression?: number | null;
-}
-
-/** Gateway 的确定性图片变换参数。 */
-export interface ImageTransform {
-  width?: number;
-  height?: number;
-  fit?: 'cover' | 'contain' | 'fill';
-  position?: 'center' | 'left' | 'right' | 'top' | 'bottom';
-  crop?: { x: number; y: number; width: number; height: number };
-  rotate?: 90 | -90 | 180 | -180;
-  flip?: 'horizontal' | 'vertical';
-  background?: string;
-  outputFormat: 'png' | 'jpeg' | 'webp';
-  outputCompression?: number | null;
-}
-
-/** v3 action 之间唯一允许的资产引用；浏览器侧 ID 永不进入该合同。 */
-export type ArtifactRef =
-  | { kind: 'plan_input'; assetId: string }
-  | { kind: 'action_output'; actionIndex: number };
-
-export type ToolAction =
-  | { type: 'image.generate'; generation: GenerationPlan & { action: 'generate' } }
-  | { type: 'image.edit'; generation: GenerationPlan & { action: 'edit' } }
-  | { type: 'image.transform'; input: ArtifactRef; transform: ImageTransform }
-  | { type: 'metadata.assert'; input: ArtifactRef; expected: FinalOutputSpec };
-
-/**
- * Planner 只能按输入顺序引用资产。Gateway 将它解析为 ArtifactRef，
- * 因而 Planner 永远不能提交 Gateway asset UUID。
- */
-export type PlannerArtifactRef =
-  | { kind: 'plan_input'; inputIndex: number }
-  | { kind: 'action_output'; actionIndex: number };
-
-export type ToolAgentPlannerAction =
-  | { type: 'image.generate'; generation: GenerationPlan & { action: 'generate' } }
-  | { type: 'image.edit'; generation: GenerationPlan & { action: 'edit' } }
-  | { type: 'image.transform'; input: PlannerArtifactRef; transform: ImageTransform }
-  | { type: 'metadata.assert'; input: PlannerArtifactRef; expected: FinalOutputSpec };
 
 export interface OpenShopCropCommand {
   schemaVersion: 1;
@@ -208,7 +128,7 @@ export interface OpenShopEditOperation {
 
 export type ToolOperation = ImageToolOperation | OpenShopEditOperation;
 
-export interface RestrictedAgentPlanSnapshotBase {
+interface RestrictedAgentPlanSnapshotBase {
   id: string;
   version: number;
   status: PlanStatus;
@@ -239,61 +159,7 @@ export interface ToolAgentPlanSnapshot extends RestrictedAgentPlanSnapshotBase {
   actions?: never;
 }
 
-/**
- * v3 仅描述受限的 Gateway action 链。它不能进入旧版单 operation
- * 执行入口；自动执行、action 持久化与 Worker 会在后续任务接入。
- */
-export interface ToolAgentPlanV3Snapshot extends RestrictedAgentPlanSnapshotBase {
-  schemaVersion: 3;
-  composerSnapshotHash: string;
-  finalOutputSpec: FinalOutputSpec | null;
-  actions: ToolAction[];
-  steps?: never;
-  generation?: never;
-  operation?: never;
-}
-
-export type RestrictedAgentPlanSnapshot =
-  | LegacyRestrictedAgentPlanSnapshot
-  | ToolAgentPlanSnapshot
-  | ToolAgentPlanV3Snapshot;
-
-export interface ExecutionAssetView {
-  id: string;
-  url: string;
-  mimeType: string;
-  sha256: string;
-  width: number;
-  height: number;
-  byteSize: number;
-}
-
-/** v3 action 的不可变参数、执行状态及实际使用的输入/输出资产。 */
-export interface ExecutionActionView {
-  id: string;
-  executionId: string;
-  actionIndex: number;
-  type: ToolAction['type'];
-  normalizedParams: ToolAction;
-  status: ExecutionActionStatus;
-  idempotencyKey: string;
-  error: { code: string; message: string } | null;
-  inputAssets: ExecutionAssetView[];
-  outputAssets: ExecutionAssetView[];
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  updatedAt: string;
-}
-
-export interface ExecutionActionInsert {
-  id?: string;
-  executionId: string;
-  actionIndex: number;
-  action: ToolAction;
-  idempotencyKey?: string;
-  status?: Extract<ExecutionActionStatus, 'queued' | 'executing'>;
-}
+export type RestrictedAgentPlanSnapshot = LegacyRestrictedAgentPlanSnapshot | ToolAgentPlanSnapshot;
 
 export interface ExecutionView {
   id: string;
@@ -301,9 +167,15 @@ export interface ExecutionView {
   status: ExecutionStatus;
   cancelRequested: boolean;
   error: { code: string; message: string } | null;
-  /** v1/v2 为全部已生成资产；v3 仅在 metadata.assert 完成后提供最终资产。 */
-  outputAssets: ExecutionAssetView[];
-  actions: ExecutionActionView[];
+  outputAssets: Array<{
+    id: string;
+    url: string;
+    mimeType: string;
+    sha256: string;
+    width: number;
+    height: number;
+    byteSize: number;
+  }>;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -320,23 +192,6 @@ export interface PlannerDraft {
         commands: OpenShopCanvasCommand[];
         outputFormat: 'png';
       };
-  assumptions: string[];
-  warnings: string[];
-}
-
-/** Planner 的 v3 输出；Gateway 策略会校验并规范化其变换与断言参数。 */
-export interface ToolAgentPlannerDraft {
-  summary: string;
-  actions: ToolAgentPlannerAction[];
-  assumptions: string[];
-  warnings: string[];
-}
-
-/** 已完成白名单、顺序、引用与输出规格归一化的 v3 Planner 输出。 */
-export interface ConstrainedToolAgentPlannerDraft {
-  summary: string;
-  actions: ToolAction[];
-  finalOutputSpec: FinalOutputSpec;
   assumptions: string[];
   warnings: string[];
 }

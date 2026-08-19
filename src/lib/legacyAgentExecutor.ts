@@ -2,10 +2,8 @@ import type { ApiProfile, ResponsesApiResponse, TaskParams, TaskRecord } from '.
 import { retryTaskWithExecution, submitTask, useStore } from '../store'
 import { buildAgentConversationContext, createAgentConversationId, getAgentConversationId, getConversationTasks } from './agentConversation'
 import { getActiveApiProfile } from './apiProfiles'
-import { routeAgentTurn } from './agentRoute'
 import { buildOpenAIRequestUrl, createRequestHeaders, createResponsesImageTool, parseResponsesImageResults } from './openaiCompatibleImageApi'
 import { readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
-import { getRestrictedAgentCapabilities } from './restrictedAgentApi'
 import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
@@ -18,15 +16,7 @@ import {
   MIME_MAP,
   normalizeBase64Image,
 } from './imageApiShared'
-import {
-  getAgentCapabilities,
-  getRestrictedAgentBasePath,
-  isRestrictedAgentEnabled,
-  isServerApiConfigEnabled,
-  markResponsesRuntimeAvailable,
-  markResponsesRuntimeUnavailable,
-  SERVER_MANAGED_PROFILE_ID,
-} from './serverApiConfig'
+import { getChatCapabilities } from './serverApiConfig'
 
 export interface AgentGenerationRequest {
   prompt: string
@@ -342,89 +332,6 @@ function assertAgentProfile(profile: ApiProfile) {
   }
 }
 
-/** Relay 的传输中断只说明 Gateway 链路异常，不能当成 Responses 上游健康失败。 */
-class GatewayResponsesRelayTransportError extends Error {
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause))
-    this.name = 'GatewayResponsesRelayTransportError'
-    Object.defineProperty(this, 'cause', { value: cause, configurable: true })
-  }
-}
-
-/**
- * 旧 Responses 执行器只允许承接没有严格规格的回合。严格规格会由统一执行器
- * 转交 Gateway；这里的断言防止旧调用方绕过前端分流而产生错误的 Responses 回退。
- */
-function assertResponsesAgentRoute(opts: CallApiOptions) {
-  const decision = routeAgentTurn({
-    prompt: opts.prompt,
-    hasExplicitImageInput: opts.inputImageDataUrls.length > 0,
-  })
-  if (decision.route !== 'responses_image') {
-    throw new Error(`当前 Agent 回合不能通过 Responses 执行：${decision.routeReason}`)
-  }
-}
-
-interface GatewayResponsesRelayRequest {
-  request: string
-  input: unknown
-  /** 与当前 input 隔离的已完成会话上下文；Gateway 仅在转发上游时重新编排。 */
-  conversationContext?: string
-  stream: boolean
-  imageTool: Record<string, unknown>
-}
-
-function shouldUseGatewayResponsesRelay() {
-  return isServerApiConfigEnabled() && isRestrictedAgentEnabled()
-}
-
-/**
- * Gateway capabilities 是无副作用的可达性探测；不可达时才安全回落到已有 Responses
- * 传输。真正的 POST 一旦开始发送，不会因网络错误重试到另一条路径，避免重复生成。
- */
-async function requestGatewayResponsesRelay(
-  body: GatewayResponsesRelayRequest,
-  signal: AbortSignal,
-): Promise<Response | null> {
-  if (!shouldUseGatewayResponsesRelay()) return null
-
-  let capability: Awaited<ReturnType<typeof getRestrictedAgentCapabilities>>
-  try {
-    capability = await getRestrictedAgentCapabilities({ refresh: true, signal })
-  } catch (error) {
-    // capabilities 探测属于本轮请求的一部分。若本轮已取消或超时，绝不能把中止
-    // 误判成 Gateway 不可达后改走直连 Responses。
-    if (signal.aborted) throw new GatewayResponsesRelayTransportError(error)
-    return null
-  }
-
-  const send = (csrfToken: string) => fetch(`${getRestrictedAgentBasePath()}/responses/image`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-CSRF-Token': csrfToken,
-    },
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  try {
-    return await send(capability.csrfToken)
-  } catch (error) {
-    throw new GatewayResponsesRelayTransportError(error)
-  }
-}
-
-function shouldOpenResponsesRuntimeBreaker(status: number, profile: ApiProfile) {
-  if (status >= 500) return true
-  // 仅服务端托管凭据的认证失败代表部署侧故障；BYOK 的 401/403 属于用户 4xx，
-  // 不能把整个 Agent 锁死。
-  return profile.id === SERVER_MANAGED_PROFILE_ID && (status === 401 || status === 403)
-}
-
 async function callAgentResponsesImageApiSingle(
   opts: CallApiOptions,
   profile: ApiProfile,
@@ -458,74 +365,46 @@ async function callAgentResponsesImageApiSingle(
 
     emitAgentProgress({ type: 'tool_status', taskId, status: 'queued', message: getToolStatusMessage('queued', index, total) })
 
-    const conversationContext = opts.agentConversationContext?.trim() || undefined
-    // 直连/BYOK 保持既有拼接格式；受控 Relay 必须把历史与本轮用户输入分开，
-    // 以免 Gateway 将历史中的严格规格误判为本轮需转 Tool Pipeline 的约束。
-    const input = createAgentResponsesInput(prompt, inputImageDataUrls, conversationContext)
-    const relayInput = createAgentResponsesInput(prompt, inputImageDataUrls)
-    const imageTool = createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)
-    const gatewayResponse = await requestGatewayResponsesRelay({
-      request: prompt,
-      input: relayInput,
-      ...(conversationContext ? { conversationContext } : {}),
-      stream,
-      imageTool,
-    }, controller.signal)
     const body = {
       model: profile.model,
-      input,
-      tools: [imageTool],
+      input: createAgentResponsesInput(prompt, inputImageDataUrls, opts.agentConversationContext),
+      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
       tool_choice: 'required',
       ...(stream ? { stream: true } : {}),
     }
 
-    let response: Response
-    try {
-      response = gatewayResponse ?? await fetch(buildOpenAIRequestUrl(profile, 'responses', proxyConfig, useApiProxy), {
-        method: 'POST',
-        headers: {
-          ...requestHeaders,
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (!controller.signal.aborted) markResponsesRuntimeUnavailable()
-      throw error
-    }
+    const response = await fetch(buildOpenAIRequestUrl(profile, 'responses', proxyConfig, useApiProxy), {
+      method: 'POST',
+      headers: {
+        ...requestHeaders,
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
 
     if (!response.ok) {
-      if (shouldOpenResponsesRuntimeBreaker(response.status, profile)) markResponsesRuntimeUnavailable()
       throw new Error(await getApiErrorMessage(response))
     }
 
-    let result: CallApiResult
-    if (stream) {
-      result = await readResponsesStream(response, mime, taskId, index, total)
-    } else {
-      emitAgentProgress({ type: 'tool_status', taskId, status: 'in_progress', message: getToolStatusMessage('in_progress', index, total) })
-      const payload = await response.json() as ResponsesApiResponse
-      const imageResults = parseResponsesImageResults(payload, mime)
-      const assistantText = getResponsesOutputText(payload)
-      emitAgentProgress({ type: 'tool_status', taskId, status: 'completed', message: getToolStatusMessage('completed', index, total) })
-      result = {
-        images: imageResults.map((item) => item.image),
-        actualParams: mergeActualParams(imageResults[0]?.actualParams ?? {}),
-        actualParamsList: imageResults.map((item) => mergeActualParams(item.actualParams ?? {})),
-        revisedPrompts: imageResults.map((item) => item.revisedPrompt),
-        ...(assistantText ? { assistantText } : {}),
-      }
+    if (stream) return await readResponsesStream(response, mime, taskId, index, total)
+
+    emitAgentProgress({ type: 'tool_status', taskId, status: 'in_progress', message: getToolStatusMessage('in_progress', index, total) })
+    const payload = await response.json() as ResponsesApiResponse
+    const imageResults = parseResponsesImageResults(payload, mime)
+    const assistantText = getResponsesOutputText(payload)
+    emitAgentProgress({ type: 'tool_status', taskId, status: 'completed', message: getToolStatusMessage('completed', index, total) })
+    return {
+      images: imageResults.map((result) => result.image),
+      actualParams: mergeActualParams(imageResults[0]?.actualParams ?? {}),
+      actualParamsList: imageResults.map((result) => mergeActualParams(result.actualParams ?? {})),
+      revisedPrompts: imageResults.map((result) => result.revisedPrompt),
+      ...(assistantText ? { assistantText } : {}),
     }
-    markResponsesRuntimeAvailable()
-    return result
   } catch (error) {
     if (controller.signal.aborted) {
       const cancelled = Boolean(taskId && cancelledAgentTaskIds.has(taskId))
-      if (!cancelled && timedOut && !(error instanceof GatewayResponsesRelayTransportError)) {
-        markResponsesRuntimeUnavailable()
-      }
       const message = cancelled
         ? 'Agent 请求已取消'
         : timedOut
@@ -544,7 +423,6 @@ export async function callAgentResponsesImageApi(
   opts: CallApiOptions,
   options: { stream: boolean; imageCount: number; taskId?: string } = { stream: true, imageCount: 1 },
 ): Promise<CallApiResult> {
-  assertResponsesAgentRoute(opts)
   const profile = getActiveApiProfile(opts.settings)
   assertAgentProfile(profile)
 
@@ -659,13 +537,15 @@ export async function retryAgentTask(task: TaskRecord): Promise<string | null> {
   const conversationId = getAgentConversationId(task)
   return withConversationSubmissionLock(conversationId, async () => {
     const state = useStore.getState()
-    const capabilities = getAgentCapabilities(state.settings)
-    if (!capabilities.responsesUsable) {
+    const capabilities = getChatCapabilities(state.settings)
+    if (!capabilities.chatUsable) {
       state.showToast(
-        'Agent 当前不可用：Responses 服务不可用，Tool Pipeline 也不会单独启用。',
+        capabilities.chatAllowed && !capabilities.chatConfigured
+          ? 'Agent 模式需要使用 OpenAI 兼容的 Responses API 配置'
+          : '当前 Chat API 配置不可用',
         'error',
       )
-      if (capabilities.chatAllowed && !capabilities.chatConfigured) state.setShowSettings(true)
+      if (capabilities.chatAllowed) state.setShowSettings(true)
       return null
     }
 

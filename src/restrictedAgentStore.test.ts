@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenShopToolLocalRun, RestrictedAgentExecution, RestrictedAgentPlan, TaskRecord } from './types'
-import { unifiedAgentGatewayFixture } from './test/fixtures/unifiedAgentGateway'
 
 const mocks = vi.hoisted(() => {
   const appState = {
@@ -43,9 +42,6 @@ const mocks = vi.hoisted(() => {
     runOpenShop: vi.fn(),
     saveOpenShopEdit: vi.fn(),
     getPlan: vi.fn(),
-    getExecution: vi.fn(),
-    cancelExecution: vi.fn(),
-    subscribeExecution: vi.fn<(executionId: string, next: (event: unknown) => void) => () => void>(() => vi.fn()),
   }
 })
 
@@ -92,10 +88,10 @@ vi.mock('./lib/restrictedAgentApi', async (importOriginal) => {
     executeRestrictedAgentPlan: mocks.executePlan,
     computeRestrictedAgentConfirmationHash: mocks.computeHash,
     getRestrictedAgentAsset: vi.fn(),
-    getRestrictedAgentExecution: mocks.getExecution,
+    getRestrictedAgentExecution: vi.fn(),
     getRestrictedAgentPlan: mocks.getPlan,
-    cancelRestrictedAgentExecution: mocks.cancelExecution,
-    subscribeRestrictedAgentExecution: mocks.subscribeExecution,
+    cancelRestrictedAgentExecution: vi.fn(),
+    subscribeRestrictedAgentExecution: vi.fn(() => vi.fn()),
   }
 })
 vi.mock('./lib/serverApiConfig', () => ({
@@ -106,12 +102,7 @@ vi.mock('./lib/openShopToolRunner', () => ({
   OpenShopToolRunnerError: class OpenShopToolRunnerError extends Error {},
 }))
 
-import {
-  cancelAutoPipelineTaskExecution,
-  decodePersistedAgentFlow,
-  observeAutoPipelineExecution,
-  useRestrictedAgentStore,
-} from './restrictedAgentStore'
+import { decodePersistedAgentFlow, useRestrictedAgentStore } from './restrictedAgentStore'
 
 const plan: RestrictedAgentPlan = {
   schemaVersion: 2,
@@ -241,16 +232,9 @@ describe('restricted Agent flow store', () => {
     mocks.appState.setTasks.mockClear()
     mocks.createPlan.mockReset().mockResolvedValue({ plan, assetBindings: [] })
     mocks.executePlan.mockReset().mockResolvedValue(execution)
-    mocks.getExecution.mockReset().mockResolvedValue(execution)
-    mocks.cancelExecution.mockReset().mockResolvedValue(execution)
-    mocks.subscribeExecution.mockReset().mockReturnValue(vi.fn())
     mocks.computeHash.mockReset().mockResolvedValue(plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
     mocks.putTask.mockReset().mockResolvedValue('agent-execution-1')
-    mocks.updateTask.mockReset().mockImplementation((taskId: string, patch: Partial<TaskRecord>) => {
-      mocks.appState.tasks = mocks.appState.tasks.map((task) => (
-        task.id === taskId ? { ...task, ...patch } : task
-      ))
-    })
+    mocks.updateTask.mockClear()
     mocks.clearComposerDraft.mockClear()
     mocks.durableRun = null
     mocks.outputDraft = null
@@ -326,66 +310,6 @@ describe('restricted Agent flow store', () => {
       localRunId: null,
       localRun: null,
     })
-  })
-
-  it('v3 自动执行按 taskId 写入 action SSE 快照，取消不影响同页其他 execution', async () => {
-    const firstPipeline = {
-      plan: structuredClone(unifiedAgentGatewayFixture.plan),
-      execution: structuredClone(unifiedAgentGatewayFixture.execution),
-      assetBindings: [],
-    }
-    const secondPipeline = {
-      plan: { ...structuredClone(unifiedAgentGatewayFixture.plan), id: '77777777-7777-4777-8777-777777777777' },
-      execution: { ...structuredClone(unifiedAgentGatewayFixture.execution), id: '88888888-8888-4888-8888-888888888888', planId: '77777777-7777-4777-8777-777777777777' },
-      assetBindings: [],
-    }
-    const firstTask: TaskRecord = {
-      id: 'auto-task-1', prompt: '严格尺寸 A', params: mocks.appState.params, inputImageIds: [], outputImages: [],
-      status: 'running', error: null, createdAt: 1, finishedAt: null, elapsed: null, origin: 'agent',
-      agentPlanSnapshot: firstPipeline.plan as unknown as TaskRecord['agentPlanSnapshot'],
-      agentExecutionId: firstPipeline.execution.id,
-    }
-    const secondTask: TaskRecord = {
-      ...firstTask,
-      id: 'auto-task-2', prompt: '严格尺寸 B',
-      agentPlanSnapshot: secondPipeline.plan as unknown as TaskRecord['agentPlanSnapshot'],
-      agentExecutionId: secondPipeline.execution.id,
-    }
-    mocks.appState.tasks = [firstTask, secondTask]
-    mocks.getExecution.mockResolvedValue(firstPipeline.execution)
-    const listeners = new Map<string, (event: unknown) => void>()
-    mocks.subscribeExecution.mockImplementation((_executionId: string, next: (event: unknown) => void) => {
-      listeners.set(_executionId, next)
-      return vi.fn()
-    })
-    const NativeEventSource = globalThis.EventSource
-    vi.stubGlobal('EventSource', class EventSource {})
-    try {
-      observeAutoPipelineExecution('auto-task-1', firstPipeline as never)
-      observeAutoPipelineExecution('auto-task-2', secondPipeline as never)
-      await Promise.resolve()
-      listeners.get(firstPipeline.execution.id)?.({
-        type: 'action.started',
-        data: structuredClone(unifiedAgentGatewayFixture.actionStarted),
-      })
-
-      expect(mocks.updateTask).toHaveBeenCalledWith('auto-task-1', expect.objectContaining({
-        agentExecutionSnapshot: expect.objectContaining({ id: firstPipeline.execution.id }),
-      }))
-      expect(mocks.updateTask).toHaveBeenCalledWith('auto-task-1', expect.objectContaining({
-        agentExecutionSnapshot: expect.objectContaining({
-          actions: expect.arrayContaining([expect.objectContaining({ actionIndex: 1, status: 'executing' })]),
-        }),
-      }))
-      mocks.cancelExecution.mockResolvedValue({ ...firstPipeline.execution, status: 'cancelled', cancelRequested: true })
-
-      await expect(cancelAutoPipelineTaskExecution('auto-task-1')).resolves.toBe(true)
-
-      expect(mocks.cancelExecution).toHaveBeenCalledWith(firstPipeline.execution.id)
-      expect(mocks.cancelExecution).not.toHaveBeenCalledWith(secondPipeline.execution.id)
-    } finally {
-      vi.stubGlobal('EventSource', NativeEventSource)
-    }
   })
 
   it('规划阶段不创建历史任务，并保存服务端计划与本地binding', async () => {

@@ -1,10 +1,11 @@
 import { useRef, useEffect, useCallback, useState, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached } from '../store'
-import { DEFAULT_PARAMS, type AgentCapabilities } from '../types'
+import { getComposerDraftSnapshot, useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached } from '../store'
+import { DEFAULT_PARAMS, type AgentCapabilities, type AgentMode } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import {
   getAgentCapabilities,
+  getChatCapabilities,
   getChatUnavailableMessage,
   getEffectiveApiProfile,
   getRuntimeConfigState,
@@ -18,8 +19,9 @@ import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
-import { submitUnifiedAgentTurn } from '../lib/agentExecutor'
-import { Paperclip, Send } from 'lucide-react'
+import { storeBackedAgentExecutor } from '../lib/agentExecutor'
+import { useRestrictedAgentStore } from '../restrictedAgentStore'
+import { Globe } from 'lucide-react'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
@@ -269,28 +271,6 @@ function ButtonTooltip({ visible, text }: { visible: boolean; text: ReactNode })
 
 /** API 支持的最大参考图数量 */
 const API_MAX_IMAGES = 16
-export const AGENT_INPUT_PLACEHOLDER = '描述想生成或编辑的图片；可添加参考图，也可指定尺寸、裁剪或旋转。'
-
-/**
- * Agent 提交会在创建回合前保留草稿；用同步锁避免用户在 React 状态刷新前重复创建回合。
- */
-export function tryAcquireAgentSubmitLock(lock: { current: boolean }) {
-  if (lock.current) return false
-  lock.current = true
-  return true
-}
-
-export function startAgentSubmission<T>(
-  lock: { current: boolean },
-  submit: () => Promise<T>,
-): Promise<T> | null {
-  if (!tryAcquireAgentSubmitLock(lock)) return null
-  return Promise.resolve()
-    .then(submit)
-    .finally(() => {
-      lock.current = false
-    })
-}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640)
@@ -306,13 +286,14 @@ interface InputBarProps {
   onTaskSubmitted?: (taskId: string) => void
   layout?: 'default' | 'agent'
   presentation?: 'fixed' | 'embedded'
+  agentMode?: AgentMode
   agentCapabilities?: AgentCapabilities
   /** 当前默认 Agent 会话；为空时下一次提交会创建新会话。 */
   agentConversationId?: string | null
 }
 
-export function getInputBarSubmitRoute(layout: 'default' | 'agent'): 'gallery' | 'agent' {
-  return layout === 'agent' ? 'agent' : 'gallery'
+export function getInputBarSubmitRoute(layout: 'default' | 'agent', agentMode: AgentMode): 'gallery' | AgentMode {
+  return layout === 'agent' ? agentMode : 'gallery'
 }
 
 export function getInputBarPresentationClass(presentation: 'fixed' | 'embedded') {
@@ -325,6 +306,7 @@ export default function InputBar({
   onTaskSubmitted,
   layout = 'default',
   presentation = 'fixed',
+  agentMode = 'chat',
   agentCapabilities,
   agentConversationId = null,
 }: InputBarProps) {
@@ -348,6 +330,9 @@ export default function InputBar({
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const searchQuery = useStore((s) => s.searchQuery)
+  const agentFlowPhase = useRestrictedAgentStore((s) => s.phase)
+  const createAgentPlan = useRestrictedAgentStore((s) => s.createPlanFromCurrentInput)
+
   const filteredTasks = useMemo(() => {
     return filterAndSortTasks(tasks, { searchQuery, filterStatus, filterFavorite })
   }, [tasks, searchQuery, filterStatus, filterFavorite])
@@ -454,6 +439,7 @@ export default function InputBar({
   const [isDragging, setIsDragging] = useState(false)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [compressionHintVisible, setCompressionHintVisible] = useState(false)
   const [moderationHintVisible, setModerationHintVisible] = useState(false)
   const [sizeHintVisible, setSizeHintVisible] = useState(false)
@@ -475,7 +461,6 @@ export default function InputBar({
   const imageDragPreviewRef = useRef<HTMLElement | null>(null)
   const suppressImageClickRef = useRef(false)
   const isUserInputRef = useRef(false)
-  const agentSubmitLockRef = useRef(false)
   const imageHintLockedRef = useRef(false)
   const imageHintReleaseRef = useRef<(() => void) | null>(null)
   const [cursorPos, setCursorPos] = useState(0)
@@ -493,7 +478,6 @@ export default function InputBar({
   const [nInput, setNInput] = useState(String(params.n))
   const [nInputFocused, setNInputFocused] = useState(false)
   const [nLimitHintVisible, setNLimitHintVisible] = useState(false)
-  const [isAgentSubmitting, setIsAgentSubmitting] = useState(false)
   const dragCounter = useRef(0)
   const isMobile = useIsMobile()
 
@@ -519,61 +503,69 @@ export default function InputBar({
     return normalizeSettings({ ...settings, profiles, activeProfileId: activeProfile.id })
   }, [activeProfile, currentActiveProfile.id, serverManaged, settings])
   const isAgentLayout = layout === 'agent'
-  const submitRoute = getInputBarSubmitRoute(layout)
+  const submitRoute = getInputBarSubmitRoute(layout, agentMode)
+  const isRestrictedAgentLayout = submitRoute === 'tool'
+  const chatCapabilities = useMemo(() => getChatCapabilities(effectiveSettings), [effectiveSettings])
   const resolvedAgentCapabilities = useMemo(
     () => agentCapabilities ?? getAgentCapabilities(effectiveSettings),
     [agentCapabilities, effectiveSettings],
   )
-  const responsesUsable = resolvedAgentCapabilities.responsesUsable
-    ?? resolvedAgentCapabilities.agentUsable
-    ?? resolvedAgentCapabilities.chatUsable
-  const hasSubmitApiConfig = isAgentLayout
-    ? responsesUsable
-    : (serverManaged ? serverConfigUsable : Boolean(activeProfile.apiKey))
-  const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && (!isAgentLayout || !isAgentSubmitting))
+  const hasSubmitApiConfig = isRestrictedAgentLayout
+    ? resolvedAgentCapabilities.tool
+    : isAgentLayout
+      ? chatCapabilities.chatUsable
+      : (serverManaged ? serverConfigUsable : Boolean(activeProfile.apiKey))
+  const agentBusy = isRestrictedAgentLayout && (agentFlowPhase === 'planning' || agentFlowPhase === 'confirming' || agentFlowPhase === 'executing')
+  const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !agentBusy)
   const handleSubmit = useCallback(async () => {
-    if (isAgentLayout) {
-      if (!responsesUsable) {
-        showToast('Agent 当前不可用：Responses 服务不可用，Tool Pipeline 也不会单独启用。', 'error')
-        return
-      }
-      const submission = startAgentSubmission(
-        agentSubmitLockRef,
-        () => submitUnifiedAgentTurn({ conversationId: agentConversationId }),
-      )
-      if (!submission) return
-
-      setIsAgentSubmitting(true)
-      try {
-        const taskId = await submission
-        if (taskId) onTaskSubmitted?.(taskId)
-      } finally {
-        setIsAgentSubmitting(false)
-      }
+    if (isRestrictedAgentLayout) {
+      await createAgentPlan(getComposerDraftSnapshot('tool'), webSearchEnabled)
       return
     }
 
-    const taskId = await submitTask()
+    if (isAgentLayout) {
+      if (!chatCapabilities.chatUsable) {
+        const message = chatCapabilities.status === 'loading'
+          ? '运行时配置加载中'
+          : chatCapabilities.status === 'error'
+            ? '服务端 API 配置不可用，请联系部署管理员'
+            : chatCapabilities.status === 'images_only'
+              ? chatCapabilities.chatAllowed
+                ? '当前 API 配置仅启用 Images，请切换到 Responses'
+                : '当前部署仅启用 Images，未启用 Chat Responses 能力'
+              : '当前 Responses API 配置缺少 API Key'
+        showToast(message, 'error')
+        if (chatCapabilities.source === 'direct') setShowSettings(true)
+        return
+      }
+    }
+
+    const taskId = isAgentLayout
+      ? await storeBackedAgentExecutor.submit({
+        prompt: prompt.trim(),
+        inputImageIds: inputImages.map((image) => image.id),
+        params,
+        stream: settings.agentStreaming,
+        imageCount: settings.agentImageCount,
+        conversationId: agentConversationId,
+      })
+      : await submitTask()
     if (taskId) onTaskSubmitted?.(taskId)
-  }, [agentConversationId, isAgentLayout, onTaskSubmitted, responsesUsable, showToast])
+  }, [agentConversationId, chatCapabilities, createAgentPlan, inputImages, isAgentLayout, isRestrictedAgentLayout, onTaskSubmitted, params, prompt, setShowSettings, settings.agentImageCount, settings.agentStreaming, showToast, webSearchEnabled])
   const chatUnavailableMessage = getChatUnavailableMessage(effectiveSettings)
-  const missingApiConfigMessage = isAgentLayout
+  const missingApiConfigMessage = isAgentLayout && !isRestrictedAgentLayout
     ? chatUnavailableMessage
+    : isRestrictedAgentLayout
+      ? '当前部署未启用 Tool Agent Gateway'
     : serverManaged
       ? '服务端 API 配置不可用，请联系部署管理员'
       : '尚未完成 API 配置，请在右上角设置中进行'
   const missingApiConfigTitle = isAgentLayout || serverManaged ? missingApiConfigMessage : '请先配置 API'
-  const agentInputDisabled = isAgentLayout && !responsesUsable
-  const submitDisabled = isAgentLayout
-    ? !canSubmit
-    : hasSubmitApiConfig
-      ? !canSubmit
-      : serverManaged
   const activeProvider = activeProfile.provider
   const isFalProvider = !isAgentLayout && activeProvider === 'fal'
   const moderationDisabled = isAgentLayout || activeProfile.apiMode === 'responses' || isFalProvider
   const compressionDisabled = params.output_format === 'png' || isFalProvider
-  const outputImageLimit = submitRoute === 'agent' ? 4 : getOutputImageLimitForSettings(effectiveSettings)
+  const outputImageLimit = isAgentLayout ? 4 : getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nLimitHintText = isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
@@ -1898,6 +1890,7 @@ export default function InputBar({
             )}
             <div
               ref={textareaRef}
+              contentEditable
               suppressContentEditableWarning
               onInput={(e) => {
                 isUserInputRef.current = true
@@ -1939,10 +1932,7 @@ export default function InputBar({
 
                 syncMentionTagSelection(el)
               }}
-              contentEditable={!agentInputDisabled}
-              aria-disabled={agentInputDisabled || undefined}
-              tabIndex={agentInputDisabled ? -1 : undefined}
-              data-placeholder={isAgentLayout ? AGENT_INPUT_PLACEHOLDER : '描述你想生成的图片，可输入 @ 指定当前参考图...'}
+              data-placeholder="描述你想生成的图片，可输入 @ 指定当前参考图..."
               className="min-h-[42px] w-full whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 px-4 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 empty:before:pointer-events-none empty:before:text-gray-400 empty:before:content-[attr(data-placeholder)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30 dark:empty:before:text-gray-500"
             />
           </div>
@@ -1954,6 +1944,22 @@ export default function InputBar({
               {renderParams('grid-cols-6')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
+                {isRestrictedAgentLayout && (
+                  <button
+                    type="button"
+                    onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+                    disabled={agentBusy}
+                    aria-pressed={webSearchEnabled}
+                    title={webSearchEnabled ? '联网搜索已开启：本次 Tool 计划将自动检索参考资料' : '开启联网搜索'}
+                    className={`p-2.5 rounded-xl transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                      webSearchEnabled
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                    }`}
+                  >
+                    <Globe className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}
@@ -1961,8 +1967,7 @@ export default function InputBar({
                 >
                   <ButtonTooltip visible={atImageLimit && attachHover} text={`参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`} />
                   <button
-                    onClick={() => !agentInputDisabled && !atImageLimit && fileInputRef.current?.click()}
-                    disabled={agentInputDisabled || atImageLimit}
+                    onClick={() => !atImageLimit && fileInputRef.current?.click()}
                     className={`p-2.5 rounded-xl transition-all shadow-sm ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
@@ -1970,7 +1975,9 @@ export default function InputBar({
                     }`}
                     title={atImageLimit ? `已达上限 ${API_MAX_IMAGES} 张` : '添加参考图'}
                   >
-                    <Paperclip className="h-5 w-5" aria-hidden="true" />
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
                   </button>
                 </div>
                 <div
@@ -1982,18 +1989,19 @@ export default function InputBar({
                   <button
                     onClick={() => {
                       if (hasSubmitApiConfig) void handleSubmit()
-                      else if (!isAgentLayout && !serverManaged) setShowSettings(true)
+                      else if (!serverManaged) setShowSettings(true)
                     }}
-                    disabled={submitDisabled}
+                    disabled={hasSubmitApiConfig ? !canSubmit : serverManaged}
                     className={`p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
                       !hasSubmitApiConfig
-                        ? `bg-gray-300 dark:bg-white/[0.06] text-white ${serverManaged || isAgentLayout ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`
+                        ? `bg-gray-300 dark:bg-white/[0.06] text-white ${serverManaged ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`
                         : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
                     }`}
-                    title={hasSubmitApiConfig ? (isAgentLayout ? '发送 (Ctrl+Enter)' : maskDraft ? '遮罩编辑 (Ctrl+Enter)' : '生成 (Ctrl+Enter)') : missingApiConfigTitle}
-                    aria-label={isAgentLayout ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    title={hasSubmitApiConfig ? (isRestrictedAgentLayout ? '生成执行计划 (Ctrl+Enter)' : maskDraft ? '遮罩编辑 (Ctrl+Enter)' : '生成 (Ctrl+Enter)') : missingApiConfigTitle}
                   >
-                    <Send className="h-5 w-5" aria-hidden="true" />
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -2009,6 +2017,22 @@ export default function InputBar({
               </div>
 
               <div className="flex items-center gap-2">
+                {isRestrictedAgentLayout && (
+                  <button
+                    type="button"
+                    onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+                    disabled={agentBusy}
+                    aria-pressed={webSearchEnabled}
+                    title={webSearchEnabled ? '联网搜索已开启：本次 Tool 计划将自动检索参考资料' : '开启联网搜索'}
+                    className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      webSearchEnabled
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300'
+                    }`}
+                  >
+                    <Globe className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}
@@ -2016,8 +2040,7 @@ export default function InputBar({
                 >
                   <ButtonTooltip visible={atImageLimit && attachHover} text={`参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`} />
                   <button
-                    onClick={() => !agentInputDisabled && !atImageLimit && fileInputRef.current?.click()}
-                    disabled={agentInputDisabled || atImageLimit}
+                    onClick={() => !atImageLimit && fileInputRef.current?.click()}
                     className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
@@ -2025,7 +2048,9 @@ export default function InputBar({
                     }`}
                     title={atImageLimit ? `已达上限 ${API_MAX_IMAGES} 张` : '添加参考图'}
                   >
-                    <Paperclip className="h-5 w-5" aria-hidden="true" />
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
                   </button>
                 </div>
                 <div
@@ -2037,19 +2062,20 @@ export default function InputBar({
                   <button
                     onClick={() => {
                       if (hasSubmitApiConfig) void handleSubmit()
-                      else if (!isAgentLayout && !serverManaged) setShowSettings(true)
+                      else if (!serverManaged) setShowSettings(true)
                     }}
-                    disabled={submitDisabled}
+                    disabled={hasSubmitApiConfig ? !canSubmit : serverManaged}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
                       !hasSubmitApiConfig
-                        ? `bg-gray-300 dark:bg-white/[0.06] text-white ${serverManaged || isAgentLayout ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`
+                        ? `bg-gray-300 dark:bg-white/[0.06] text-white ${serverManaged ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`
                         : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
                     }`}
-                    title={hasSubmitApiConfig ? (isAgentLayout ? '发送' : maskDraft ? '遮罩编辑' : '生成图像') : missingApiConfigTitle}
-                    aria-label={isAgentLayout ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    title={hasSubmitApiConfig ? (isRestrictedAgentLayout ? '生成执行计划' : maskDraft ? '遮罩编辑' : '生成图像') : missingApiConfigTitle}
                   >
-                    <Send className="h-4 w-4" aria-hidden="true" />
-                    {isAgentLayout ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                    {isRestrictedAgentLayout ? (agentFlowPhase === 'planning' ? '规划中…' : '生成计划') : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
               </div>

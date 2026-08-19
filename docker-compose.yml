@@ -21,9 +21,6 @@ services:
       SERVER_API_CODEX_CLI: ${SERVER_API_CODEX_CLI:-false}
       SERVER_API_RESPONSE_FORMAT_B64_JSON: ${SERVER_API_RESPONSE_FORMAT_B64_JSON:-false}
       SERVER_API_TIMEOUT_SECONDS: ${SERVER_API_TIMEOUT_SECONDS:-600}
-      # This only publishes the Gateway capability and /agent-api/ route. The unified Agent still
-      # requires a usable Responses configuration; normal server-managed Responses may use the
-      # Gateway relay when it is reachable.
       RESTRICTED_AGENT_ENABLED: ${RESTRICTED_AGENT_ENABLED:-false}
       RESTRICTED_AGENT_ONLY: ${RESTRICTED_AGENT_ONLY:-false}
       AGENT_REQUEST_TIMEOUT_SECONDS: ${AGENT_REQUEST_TIMEOUT_SECONDS:-600}
@@ -57,8 +54,6 @@ services:
       RESTRICTED_AGENT_ENABLED: ${RESTRICTED_AGENT_ENABLED:-false}
       AGENT_PUBLIC_ORIGIN: ${AGENT_PUBLIC_ORIGIN:-}
       AGENT_SESSION_SECRET: ${AGENT_SESSION_SECRET:-}
-      # Reused by both the strict action chain and the server-managed Responses relay; there are
-      # intentionally no separate relay upstream or credential variables.
       AGENT_UPSTREAM_BASE_URL: ${AGENT_UPSTREAM_BASE_URL:-https://api.openai.com/v1}
       AGENT_API_KEY: ${AGENT_API_KEY:-}
       AGENT_PLANNER_MODEL: ${AGENT_PLANNER_MODEL:-gpt-5.5}

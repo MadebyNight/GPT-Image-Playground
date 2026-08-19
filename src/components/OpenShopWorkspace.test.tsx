@@ -1,15 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import OpenShopWorkspace, {
-  createOpenShopHelloRetryController,
   isOpenShopConfigurationRequestCurrent,
-  OPEN_SHOP_HELLO_RETRY_INTERVAL_MS,
   shouldSendOpenShopConfiguration,
 } from './OpenShopWorkspace'
-
-afterEach(() => {
-  vi.useRealTimers()
-})
 
 describe('OpenShopWorkspace', () => {
   it('renders a full-page editor workspace with explicit history saving', () => {
@@ -81,44 +75,5 @@ describe('OpenShopWorkspace', () => {
       ...request,
       editorReady: false,
     })).toBe(false)
-  })
-
-  it('冷启动时按固定间隔重发同一个 hello，收到 ready 后停止', () => {
-    vi.useFakeTimers()
-    const helloId = 'hello-cold-start'
-    const postedIds: string[] = []
-    const retry = createOpenShopHelloRetryController(() => postedIds.push(helloId))
-
-    retry.start()
-    vi.advanceTimersByTime(OPEN_SHOP_HELLO_RETRY_INTERVAL_MS * 2)
-
-    expect(postedIds).toEqual([helloId, helloId, helloId])
-    expect(vi.getTimerCount()).toBe(1)
-
-    retry.stop()
-    vi.advanceTimersByTime(OPEN_SHOP_HELLO_RETRY_INTERVAL_MS * 2)
-
-    expect(postedIds).toEqual([helloId, helloId, helloId])
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('iframe load/reload 重启 hello 时清理旧 timer，卸载时不遗留 timer', () => {
-    vi.useFakeTimers()
-    const retryHello = vi.fn()
-    const retry = createOpenShopHelloRetryController(retryHello)
-
-    retry.start()
-    vi.advanceTimersByTime(OPEN_SHOP_HELLO_RETRY_INTERVAL_MS)
-    expect(retryHello).toHaveBeenCalledTimes(2)
-
-    retry.start()
-    expect(retryHello).toHaveBeenCalledTimes(3)
-    expect(vi.getTimerCount()).toBe(1)
-
-    vi.advanceTimersByTime(OPEN_SHOP_HELLO_RETRY_INTERVAL_MS)
-    expect(retryHello).toHaveBeenCalledTimes(4)
-
-    retry.stop()
-    expect(vi.getTimerCount()).toBe(0)
   })
 })

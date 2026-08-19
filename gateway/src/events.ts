@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { ExecutionActionView, ExecutionStatus, ExecutionView } from './types.js';
+import type { ExecutionStatus, ExecutionView } from './types.js';
 
 export interface ExecutionStateEvent {
   executionId: string;
@@ -12,8 +12,6 @@ export interface AssetReadyEvent {
   executionId: string;
   asset: ExecutionView['outputAssets'][number];
 }
-
-export type ActionEventName = 'action.started' | 'action.completed' | 'action.failed' | 'action.cancelled' | 'action.failed_unknown';
 
 export class ExecutionEvents {
   private readonly emitter = new EventEmitter();
@@ -39,14 +37,6 @@ export class ExecutionEvents {
   emitAsset(executionId: string, asset: ExecutionView['outputAssets'][number]): void {
     try {
       this.emitter.emit(`execution:${executionId}`, 'asset.ready', { executionId, asset } satisfies AssetReadyEvent);
-    } catch {
-      // 事件订阅者不能改变确定性执行状态。
-    }
-  }
-
-  emitAction(event: ActionEventName, action: ExecutionActionView): void {
-    try {
-      this.emitter.emit(`execution:${action.executionId}`, event, action);
     } catch {
       // 事件订阅者不能改变确定性执行状态。
     }

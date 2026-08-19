@@ -113,62 +113,13 @@ export const DEFAULT_PARAMS: TaskParams = {
 
 export type AgentMode = 'chat' | 'tool'
 
-/** 用户回合的统一图片 Agent 路由结果。 */
-export type AgentRoute = 'responses_image' | 'tool_pipeline' | 'clarify' | 'unsupported'
-
-/** 实际执行该 Agent 回合的后端路径，用于任务审计。 */
-export type AgentExecutionRoute =
-  | 'responses_image'
-  | 'gateway_image_generate'
-  | 'gateway_image_edit'
-  | 'image_transform'
-  | 'openshop'
-
-/** 由 Gateway 在最终发布前校验的严格图片输出规格。 */
-export interface FinalOutputSpec {
-  width?: number
-  height?: number
-  fit?: 'cover' | 'contain' | 'fill'
-  position?: 'center' | 'left' | 'right' | 'top' | 'bottom'
-  crop?: { x: number; y: number; width: number; height: number }
-  rotate?: 90 | -90 | 180 | -180
-  flip?: 'horizontal' | 'vertical'
-  outputFormat?: 'png' | 'jpeg' | 'webp'
-  transparent?: boolean
-  background?: string
-  outputCompression?: number | null
-}
-
-/** 路由器输出的不可变审计快照。 */
-export interface AgentRouteDecision {
-  route: AgentRoute
-  routeReason: string
-  hardConstraints: string[]
-  fallbackForbidden: boolean
-  finalOutputSpec: FinalOutputSpec | null
-}
-
 export interface AgentCapabilities {
-  /**
-   * 统一 Agent 的新能力字段。当前仍有旧 Chat/Tool 界面消费者，先以可选字段
-   * 保持它们可读；可用性收敛任务会由唯一生产方填充并改用这三个字段。
-   */
-  agentUsable?: boolean
-  responsesUsable?: boolean
-  toolPipelineUsable?: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatAllowed: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatConfigured: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   chatUsable: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   tool: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   openShopTool: boolean
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   defaultMode: AgentMode | null
-  /** @deprecated 旧 Chat/Tool UI 兼容字段。 */
   modeSwitching: boolean
 }
 
@@ -243,18 +194,6 @@ export interface TaskRecord {
   agentConversationId?: string
   /** 默认 Agent 对话中的轮次，从 1 开始。 */
   agentTurn?: number
-  /** 路由器的不可变决策，用于确认实际执行路径符合用户约束。 */
-  agentRoute?: AgentRoute
-  /** 路由器选择该路径的面向用户原因。 */
-  agentRouteReason?: string
-  /** 本回合识别出的硬约束；命中时不得静默降级。 */
-  agentHardConstraints?: string[]
-  /** 本回合失败时是否禁止切换至近似的 Responses 路径。 */
-  agentFallbackForbidden?: boolean
-  /** Gateway 在完成前必须断言的最终图片规格。 */
-  agentFinalOutputSpec?: FinalOutputSpec
-  /** 实际执行该回合的后端路径，与路由决策分开记录。 */
-  agentExecutionRoute?: AgentExecutionRoute
   /** 默认 Agent 返回的文本；done 时是最终文本，error 时可保存非空流式 partial，仅用于恢复展示。 */
   agentAssistantText?: string
   /** OpenShop 编辑结果对应的源任务 ID。 */
@@ -263,8 +202,6 @@ export interface TaskRecord {
   agentPlanId?: string
   /** 受限 Agent 服务端执行 ID，用于刷新后恢复状态。 */
   agentExecutionId?: string
-  /** 受限 Agent 服务端执行的最后已知快照，用于刷新后的统一回合展示。 */
-  agentExecutionSnapshot?: RestrictedAgentExecution
   /** 用户在规划阶段提交的原始需求。 */
   agentOriginalRequest?: string
   /** 用户实际确认的不可变计划快照。 */
@@ -367,46 +304,6 @@ export type RestrictedAgentToolOperation =
       outputFormat: 'png'
     }
 
-/** v3 action 链的资产引用；不会暴露浏览器 IndexedDB 图片 ID。 */
-export type RestrictedAgentArtifactReference =
-  | { kind: 'plan_input'; assetId: string }
-  | { kind: 'action_output'; actionIndex: number }
-
-/** Gateway 确定性图片处理所需的完整变换参数。 */
-export interface RestrictedAgentImageTransform {
-  width?: number
-  height?: number
-  fit?: 'cover' | 'contain' | 'fill'
-  position?: 'center' | 'left' | 'right' | 'top' | 'bottom'
-  crop?: { x: number; y: number; width: number; height: number }
-  rotate?: 90 | -90 | 180 | -180
-  flip?: 'horizontal' | 'vertical'
-  background?: string
-  outputFormat: NonNullable<FinalOutputSpec['outputFormat']>
-  outputCompression?: number | null
-}
-
-/** 自动执行接口唯一接受的受限 action 目录。 */
-export type RestrictedAgentToolAction =
-  | {
-      type: 'image.generate'
-      generation: RestrictedAgentPlanGeneration & { action: 'generate' }
-    }
-  | {
-      type: 'image.edit'
-      generation: RestrictedAgentPlanGeneration & { action: 'edit' }
-    }
-  | {
-      type: 'image.transform'
-      input: RestrictedAgentArtifactReference
-      transform: RestrictedAgentImageTransform
-    }
-  | {
-      type: 'metadata.assert'
-      input: RestrictedAgentArtifactReference
-      expected: FinalOutputSpec
-    }
-
 export interface LegacyRestrictedAgentPlan extends RestrictedAgentPlanBase {
   schemaVersion?: never
   composerSnapshotHash?: never
@@ -424,18 +321,7 @@ export interface ToolAgentPlan extends RestrictedAgentPlanBase {
   actions?: never
 }
 
-/** v3 计划只经自动提交接口创建；最终规格与 action 链均不可变。 */
-export interface ToolAgentPlanV3 extends RestrictedAgentPlanBase {
-  schemaVersion: 3
-  composerSnapshotHash: string
-  finalOutputSpec: FinalOutputSpec
-  actions: RestrictedAgentToolAction[]
-  steps?: never
-  generation?: never
-  operation?: never
-}
-
-export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan | ToolAgentPlanV3
+export type RestrictedAgentPlan = LegacyRestrictedAgentPlan | ToolAgentPlan
 
 export type OpenShopToolLocalRunStatus =
   | 'running'
@@ -531,26 +417,6 @@ export interface RestrictedAgentOutputAsset {
   byteSize: number
 }
 
-/** 与 Gateway action 持久化状态一一对应的前端进度快照。 */
-export type RestrictedAgentExecutionActionStatus = RestrictedAgentExecutionStatus
-
-export interface RestrictedAgentExecutionAction {
-  id: string
-  executionId: string
-  actionIndex: number
-  type: RestrictedAgentToolAction['type']
-  normalizedParams: RestrictedAgentToolAction
-  status: RestrictedAgentExecutionActionStatus
-  idempotencyKey: string
-  error: { code: string; message: string } | null
-  inputAssets: RestrictedAgentOutputAsset[]
-  outputAssets: RestrictedAgentOutputAsset[]
-  createdAt: string
-  startedAt: string | null
-  completedAt: string | null
-  updatedAt: string
-}
-
 export interface RestrictedAgentExecution {
   id: string
   planId: string
@@ -558,8 +424,6 @@ export interface RestrictedAgentExecution {
   cancelRequested: boolean
   error: { code: string; message: string } | null
   outputAssets: RestrictedAgentOutputAsset[]
-  /** 旧 Gateway v1/v2 响应可缺失；严格 decoder 会将其规范化为空数组。 */
-  actions?: RestrictedAgentExecutionAction[]
   createdAt: string
   startedAt: string | null
   completedAt: string | null
@@ -571,7 +435,7 @@ export interface RestrictedAgentCapabilities {
   csrfToken: string
   policyVersion?: string
   planSchemaVersions?: number[]
-  operationTypes?: Array<RestrictedAgentToolOperation['type'] | RestrictedAgentToolAction['type']>
+  operationTypes?: RestrictedAgentToolOperation['type'][]
   limits?: {
     maxReferenceImages?: number
     maxFileBytes?: number
