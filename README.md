@@ -308,10 +308,10 @@ services:
 
 **1. 环境准备与启动**
 
-你可以在项目根目录新建 `.env.local` 文件配置默认 API URL（如 `VITE_DEFAULT_API_URL=https://api.openai.com/v1`）。然后安装依赖并启动：
+需要 Node.js 22 或更高版本。你可以在项目根目录新建 `.env.local` 文件配置默认 API URL（如 `VITE_DEFAULT_API_URL=https://api.openai.com/v1`）。然后安装依赖并启动：
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -332,8 +332,6 @@ cp dev-proxy.config.example.json dev-proxy.config.json
 ```powershell
 npm run mock:api
 ```
-
-使用方式见 [本地故障模拟 API](docs/mock-image-api.md)。
 
 **4. 构建静态产物**
 
@@ -447,7 +445,7 @@ JSON 结构示例：
 }
 ```
 
-第三方服务商可以参考 [自定义服务商 LLM 提示词](docs/custom-provider-llm-prompt.md)，让 LLM 根据自己的 API 文档生成可导入的完整配置。导入后只需要在设置里补充 API Key。
+第三方服务商可让 LLM 根据各自的 API 文档生成可导入的完整配置。导入后只需要在设置里补充 API Key。
 
 ---
 
