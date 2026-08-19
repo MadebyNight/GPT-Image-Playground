@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { OpenShopToolLocalRun, RestrictedAgentExecution, RestrictedAgentPlan, TaskRecord } from './types'
+import type { OpenShopToolLocalRun, RestrictedAgentAssetBinding, RestrictedAgentExecution, RestrictedAgentPlan, TaskRecord } from './types'
 
 const mocks = vi.hoisted(() => {
   const appState = {
@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
   return {
     appState,
     appSubscriber: null as null | (() => void),
-    createPlan: vi.fn(),
+    streamPlan: vi.fn(),
     executePlan: vi.fn(),
     computeHash: vi.fn(),
     putTask: vi.fn(),
@@ -84,7 +84,7 @@ vi.mock('./lib/restrictedAgentApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/restrictedAgentApi')>()
   return {
     ...actual,
-    createRestrictedAgentPlan: mocks.createPlan,
+    streamRestrictedAgentPlan: mocks.streamPlan,
     executeRestrictedAgentPlan: mocks.executePlan,
     computeRestrictedAgentConfirmationHash: mocks.computeHash,
     getRestrictedAgentAsset: vi.fn(),
@@ -103,6 +103,14 @@ vi.mock('./lib/openShopToolRunner', () => ({
 }))
 
 import { decodePersistedAgentFlow, useRestrictedAgentStore } from './restrictedAgentStore'
+
+async function runAutomaticPlan(
+  nextPlan: RestrictedAgentPlan = plan,
+  assetBindings: RestrictedAgentAssetBinding[] = [],
+) {
+  mocks.streamPlan.mockResolvedValueOnce({ plan: nextPlan, assetBindings })
+  return useRestrictedAgentStore.getState().createPlanFromCurrentInput()
+}
 
 const plan: RestrictedAgentPlan = {
   schemaVersion: 2,
@@ -194,6 +202,12 @@ const openShopBindings = [{
   ordinal: 0,
 }]
 
+async function runAutomaticPlanFromState() {
+  const state = useRestrictedAgentStore.getState()
+  if (!state.plan) throw new Error('Expected a plan in the Store fixture')
+  return runAutomaticPlan(state.plan, state.assetBindings)
+}
+
 function persistedFlow(assetBindings: unknown, persistedPlan: RestrictedAgentPlan = bindingPlan) {
   return {
     phase: 'awaiting_confirmation', plan: persistedPlan, execution: null, taskId: null, error: null,
@@ -215,7 +229,7 @@ async function prepareExportedOpenShopRun() {
     phase: 'awaiting_confirmation', plan: openShopPlan, assetBindings: openShopBindings,
     composerSnapshotVersion: 7,
   })
-  await useRestrictedAgentStore.getState().confirmAndExecute()
+  await runAutomaticPlanFromState()
   if (!mocks.durableRun || mocks.durableRun.status !== 'exported') throw new Error('Expected exported OpenShop fixture')
   return mocks.durableRun
 }
@@ -230,7 +244,7 @@ describe('restricted Agent flow store', () => {
     mocks.appState.settings.clearInputAfterSubmit = false
     mocks.appState.showToast.mockClear()
     mocks.appState.setTasks.mockClear()
-    mocks.createPlan.mockReset().mockResolvedValue({ plan, assetBindings: [] })
+  mocks.streamPlan.mockReset().mockResolvedValue({ plan, assetBindings: [] })
     mocks.executePlan.mockReset().mockResolvedValue(execution)
     mocks.computeHash.mockReset().mockResolvedValue(plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
     mocks.putTask.mockReset().mockResolvedValue('agent-execution-1')
@@ -312,19 +326,61 @@ describe('restricted Agent flow store', () => {
     })
   })
 
-  it('规划阶段不创建历史任务，并保存服务端计划与本地binding', async () => {
+  it('流式规划完成后自动执行并创建标准任务', async () => {
     await useRestrictedAgentStore.getState().createPlanFromCurrentInput()
 
-    expect(useRestrictedAgentStore.getState().phase).toBe('awaiting_confirmation')
-    expect(mocks.createPlan).toHaveBeenCalledOnce()
-    expect(mocks.appState.setTasks).not.toHaveBeenCalled()
-    expect(mocks.putTask).not.toHaveBeenCalled()
+    expect(useRestrictedAgentStore.getState().phase).toBe('completed')
+    expect(mocks.streamPlan).toHaveBeenCalledOnce()
+    expect(mocks.executePlan).toHaveBeenCalledWith(plan, plan.composerSnapshotHash)
+    expect(mocks.appState.setTasks).toHaveBeenCalledOnce()
+    expect(mocks.putTask).toHaveBeenCalledOnce()
+  })
+
+  it('累积流式规划增量文本，并在完成后自动执行', async () => {
+    mocks.streamPlan.mockImplementationOnce(async (_request, options) => {
+      options.onDelta?.('正在分析')
+      options.onDelta?.('图片需求')
+      return { plan, assetBindings: [] }
+    })
+
+    await useRestrictedAgentStore.getState().createPlanFromCurrentInput()
+
+    expect(useRestrictedAgentStore.getState().planningText).toBe('正在分析图片需求')
+    expect(mocks.executePlan).toHaveBeenCalledOnce()
+    expect(useRestrictedAgentStore.getState().phase).not.toBe('awaiting_confirmation')
+  })
+
+  it('输入在规划期间变化时标记 stale 且阻止自动执行', async () => {
+    mocks.computeHash.mockResolvedValue(null)
+    mocks.streamPlan.mockImplementationOnce(async (_request, options) => {
+      options.onDelta?.('规划中')
+      mocks.appState.prompt = '新的图片需求'
+      return { plan, assetBindings: [] }
+    })
+
+    await useRestrictedAgentStore.getState().createPlanFromCurrentInput()
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'stale', planningText: '规划中' })
+    expect(mocks.executePlan).not.toHaveBeenCalled()
+  })
+
+  it('流式规划失败时保留已收到的文本与错误状态', async () => {
+    mocks.streamPlan.mockImplementationOnce(async (_request, options) => {
+      options.onDelta?.('已解析输入')
+      throw new Error('Gateway 规划失败')
+    })
+
+    await useRestrictedAgentStore.getState().createPlanFromCurrentInput()
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({
+      phase: 'failed', planningText: '已解析输入', error: 'Gateway 规划失败',
+    })
   })
 
   it('将当前页面的联网开关作为单次 Tool 规划参数传递', async () => {
     await useRestrictedAgentStore.getState().createPlanFromCurrentInput(undefined, true)
 
-    expect(mocks.createPlan).toHaveBeenCalledWith(expect.objectContaining({ webSearchEnabled: true }))
+    expect(mocks.streamPlan).toHaveBeenCalledWith(expect.objectContaining({ webSearchEnabled: true }), expect.any(Object))
   })
 
   it('从显式 Tool Composer 快照构造完整规范输入', async () => {
@@ -346,7 +402,7 @@ describe('restricted Agent flow store', () => {
 
     await useRestrictedAgentStore.getState().createPlanFromCurrentInput(snapshot)
 
-    expect(mocks.createPlan).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.streamPlan).toHaveBeenCalledWith(expect.objectContaining({
       request: 'Tool 独立需求',
       quality: 'medium',
       moderation: 'auto',
@@ -356,20 +412,21 @@ describe('restricted Agent flow store', () => {
         dataUrl: 'data:image/png;base64,dG9vbA==',
       }],
       temporaryProfile: { id: 'profile-1', name: '临时 Profile', missing: false },
-    }))
-    expect(useRestrictedAgentStore.getState().composerSnapshotVersion).toBe(11)
+    }), expect.any(Object))
+    expect(useRestrictedAgentStore.getState().composerSnapshotVersion).toBeNull()
   })
 
-  it('只在当前hash通过最终门禁后确认并创建标准任务', async () => {
+  it('自动执行仍在当前hash通过最终门禁后创建标准任务', async () => {
     mocks.appState.settings.clearInputAfterSubmit = true
     useRestrictedAgentStore.setState({
       phase: 'awaiting_confirmation', plan, composerSnapshotVersion: 7, assetBindings: [],
     })
 
-    const taskId = await useRestrictedAgentStore.getState().confirmAndExecute()
+    await runAutomaticPlanFromState()
+    const taskId = useRestrictedAgentStore.getState().taskId
 
     expect(taskId).toBe('agent-execution-1')
-    expect(mocks.computeHash).toHaveBeenCalledOnce()
+    expect(mocks.computeHash).toHaveBeenCalledTimes(2)
     expect(mocks.executePlan).toHaveBeenCalledWith(plan, plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
     expect(mocks.appState.setTasks).toHaveBeenCalledOnce()
     expect(mocks.putTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -388,15 +445,15 @@ describe('restricted Agent flow store', () => {
       phase: 'awaiting_confirmation', plan, composerSnapshotVersion: 7, assetBindings: [],
     })
 
-    await useRestrictedAgentStore.getState().confirmAndExecute()
+    await runAutomaticPlanFromState()
 
     expect(useRestrictedAgentStore.getState().phase).toBe('stale')
     expect(mocks.executePlan).not.toHaveBeenCalled()
   })
 
-  it('Composer改动后stale，完全改回原语义后恢复awaiting_confirmation', async () => {
+  it('Composer改动后 stale，不会恢复为可人工确认状态', async () => {
     useRestrictedAgentStore.setState({
-      phase: 'awaiting_confirmation', plan, composerSnapshotVersion: 7, assetBindings: [],
+      phase: 'stale', plan, composerSnapshotVersion: 7, assetBindings: [],
     })
     mocks.computeHash.mockResolvedValueOnce(null).mockResolvedValueOnce(plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
 
@@ -406,8 +463,8 @@ describe('restricted Agent flow store', () => {
 
     mocks.appState.composerVersion = 9
     mocks.appSubscriber?.()
-    await vi.waitFor(() => expect(useRestrictedAgentStore.getState().phase).toBe('awaiting_confirmation'))
-    expect(useRestrictedAgentStore.getState().error).toBeNull()
+    await vi.waitFor(() => expect(useRestrictedAgentStore.getState().phase).toBe('stale'))
+    expect(useRestrictedAgentStore.getState().error).toContain('重新规划')
   })
 
   it('rehydrate 对缺失、role/ordinal错序及重复绑定 fail-closed，并且不发确认请求', async () => {
@@ -425,21 +482,15 @@ describe('restricted Agent flow store', () => {
       expect(restored.phase).toBe('stale')
       expect(restored.error).toContain('binding')
       useRestrictedAgentStore.setState(restored)
-      await useRestrictedAgentStore.getState().confirmAndExecute()
+      // 已失效的持久化计划不会重新触发自动执行。
     }
     expect(mocks.executePlan).not.toHaveBeenCalled()
   })
 
-  it('rehydrate 正常 binding 可确认，Composer 改动后再改回可恢复', async () => {
+  it('rehydrate 正常 binding 也不会恢复人工确认入口', async () => {
     const restored = decodePersistedAgentFlow(persistedFlow(validBindings), Date.parse('2026-01-01T00:00:00.000Z'))
-    expect(restored.phase).toBe('awaiting_confirmation')
+    expect(restored.phase).toBe('stale')
     expect(restored.assetBindings).toEqual(validBindings)
-    useRestrictedAgentStore.setState(restored)
-
-    await useRestrictedAgentStore.getState().confirmAndExecute()
-    expect(mocks.executePlan).toHaveBeenCalledOnce()
-
-    mocks.executePlan.mockClear()
     useRestrictedAgentStore.setState(restored)
     mocks.computeHash.mockResolvedValueOnce(null).mockResolvedValueOnce(bindingPlan.composerSnapshotHash)
     mocks.appState.composerVersion = 8
@@ -447,7 +498,7 @@ describe('restricted Agent flow store', () => {
     await vi.waitFor(() => expect(useRestrictedAgentStore.getState().phase).toBe('stale'))
     mocks.appState.composerVersion = 9
     mocks.appSubscriber?.()
-    await vi.waitFor(() => expect(useRestrictedAgentStore.getState().phase).toBe('awaiting_confirmation'))
+    await vi.waitFor(() => expect(useRestrictedAgentStore.getState().phase).toBe('stale'))
     expect(mocks.executePlan).not.toHaveBeenCalled()
   })
 
@@ -478,12 +529,12 @@ describe('restricted Agent flow store', () => {
     expect(restored.error).toContain('binding')
     useRestrictedAgentStore.setState(restored)
 
-    await useRestrictedAgentStore.getState().confirmAndExecute()
+    // 已失效的持久化计划不会重新触发自动执行。
 
     expect(mocks.executePlan).not.toHaveBeenCalled()
   })
 
-  it('OpenShop 双击确认复用同一 Local Run，且不调用 Gateway execute', async () => {
+  it('OpenShop 流式规划完成后自动执行 Local Run，且不调用 Gateway execute', async () => {
     mocks.appState.prompt = openShopPlan.originalRequest
     mocks.appState.inputImages = [{ id: 'browser-source-image', dataUrl: 'data:image/png;base64,c291cmNl' }]
     mocks.appState.tasks = [{
@@ -497,11 +548,7 @@ describe('restricted Agent flow store', () => {
       composerSnapshotVersion: 7,
     })
 
-    const first = useRestrictedAgentStore.getState().confirmAndExecute()
-    const second = useRestrictedAgentStore.getState().confirmAndExecute()
-    const [firstTaskId, secondTaskId] = await Promise.all([first, second])
-
-    expect(firstTaskId).toBe(secondTaskId)
+    await runAutomaticPlanFromState()
     expect(mocks.claimLocalRun).toHaveBeenCalledOnce()
     expect(mocks.runOpenShop).toHaveBeenCalledOnce()
     expect(mocks.saveOpenShopEdit).toHaveBeenCalledOnce()
@@ -524,7 +571,7 @@ describe('restricted Agent flow store', () => {
       composerSnapshotVersion: 7,
     })
 
-    await useRestrictedAgentStore.getState().confirmAndExecute()
+    await runAutomaticPlanFromState()
     expect(useRestrictedAgentStore.getState().localRun?.status).toBe('exported')
     expect(mocks.outputDraft?.blob).toBeInstanceOf(Blob)
 
@@ -593,7 +640,7 @@ describe('restricted Agent flow store', () => {
         composerSnapshotVersion: 7,
       })
 
-      const automatic = useRestrictedAgentStore.getState().confirmAndExecute()
+      const automatic = runAutomaticPlanFromState()
       await vi.waitFor(() => expect(useRestrictedAgentStore.getState().localRun?.status).toBe('saving'))
       const transitionCalls = mocks.transitionLocalRun.mock.calls.length
       const saveCalls = mocks.saveOpenShopEdit.mock.calls.length
@@ -606,7 +653,7 @@ describe('restricted Agent flow store', () => {
       expect(AbortControllerMock).toHaveBeenCalledOnce()
 
       await useRestrictedAgentStore.getState().cancelExecution()
-      await expect(Promise.all([automatic, firstRetry, secondRetry])).resolves.toEqual([null, null, null])
+      await expect(Promise.all([automatic, firstRetry, secondRetry])).resolves.toEqual([openShopPlan, null, null])
       expect(controllers[0]?.signal.aborted).toBe(true)
       expect(mocks.durableRun).toMatchObject({ status: 'exported', saveStatus: 'failed' })
       expect(mocks.outputDraft?.blob).toBeInstanceOf(Blob)
@@ -651,7 +698,7 @@ describe('restricted Agent flow store', () => {
       composerSnapshotVersion: 7, localRun: null, localRunId: null, taskId: null,
     })
 
-    await expect(useRestrictedAgentStore.getState().confirmAndExecute()).resolves.toBeNull()
+    await runAutomaticPlanFromState()
 
     expect(mocks.putTask).toHaveBeenCalledTimes(putCalls)
     expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'failed', error: 'completed task missing' })
@@ -670,7 +717,7 @@ describe('restricted Agent flow store', () => {
       composerSnapshotVersion: 7, localRun: null, localRunId: null, taskId: null,
     })
 
-    await expect(useRestrictedAgentStore.getState().confirmAndExecute()).resolves.toBe(exported.taskId)
+    await runAutomaticPlanFromState()
 
     expect(mocks.getVerifiedCompletedTask.mock.calls.length).toBe(evidenceCalls + 1)
     expect(mocks.putTask).toHaveBeenCalledTimes(putCalls)
@@ -805,7 +852,7 @@ describe('restricted Agent flow store', () => {
       composerSnapshotVersion: 7,
     })
 
-    await useRestrictedAgentStore.getState().confirmAndExecute()
+    await runAutomaticPlanFromState()
 
     expect(useRestrictedAgentStore.getState().phase).toBe('stale')
     expect(mocks.claimLocalRun).not.toHaveBeenCalled()

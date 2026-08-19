@@ -134,6 +134,8 @@ interface RestrictedAgentPlanSnapshotBase {
   status: PlanStatus;
   expiresAt: string;
   originalRequest: string;
+  /** 新建计划始终存在；旧版已持久化计划兼容时可缺失。 */
+  assistantMessage?: string;
   summary: string;
   inputs: PlanInputView[];
   assumptions: string[];
@@ -183,6 +185,7 @@ export interface ExecutionView {
 }
 
 export interface PlannerDraft {
+  assistantMessage: string;
   summary: string;
   operation:
     | ImageToolOperation

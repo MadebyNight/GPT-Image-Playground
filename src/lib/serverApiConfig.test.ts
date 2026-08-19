@@ -3,7 +3,6 @@ import type { AppSettings } from '../types'
 import { createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import {
   getAgentCapabilities,
-  getAgentModePreference,
   getChatCapabilities,
   getEffectiveApiProfile,
   getEffectiveSettings,
@@ -19,7 +18,6 @@ import {
   isServerApiConfigUsable,
   loadRuntimeConfig,
   resolveAgentMode,
-  setAgentModePreference,
   sanitizeSettingsPatchForServerMode,
 } from './serverApiConfig'
 
@@ -368,11 +366,10 @@ describe('initializeRuntimeConfig', () => {
     expect(dual).toMatchObject({
       chatUsable: true,
       tool: true,
-      defaultMode: 'chat',
-      modeSwitching: true,
+      defaultMode: 'tool',
     })
     expect(resolveAgentMode(dual, 'tool')).toBe('tool')
-    expect(resolveAgentMode(dual, 'invalid')).toBe('chat')
+    expect(resolveAgentMode(dual, 'invalid')).toBe('tool')
 
     initializeRuntimeConfig({
       version: 1,
@@ -384,41 +381,13 @@ describe('initializeRuntimeConfig', () => {
       },
     })
     const toolOnly = getAgentCapabilities(DEFAULT_SETTINGS)
-    expect(toolOnly).toMatchObject({ chatUsable: false, tool: true, defaultMode: 'tool', modeSwitching: false })
+    expect(toolOnly).toMatchObject({ chatUsable: false, tool: true, defaultMode: 'tool' })
     expect(resolveAgentMode(toolOnly, 'chat')).toBe('tool')
 
     initializeRuntimeConfig({ version: 1, serverApi: { enabled: false } })
     const unavailable = getAgentCapabilities(DEFAULT_SETTINGS)
-    expect(unavailable).toMatchObject({ chatUsable: false, tool: false, defaultMode: null, modeSwitching: false })
+    expect(unavailable).toMatchObject({ chatUsable: false, tool: false, defaultMode: null })
     expect(resolveAgentMode(unavailable, 'tool')).toBeNull()
-  })
-
-  it('reads and writes mode preference only for valid values', () => {
-    const storage = {
-      value: null as string | null,
-      getItem: vi.fn(() => storage.value),
-      setItem: vi.fn((_key: string, value: string) => { storage.value = value }),
-    }
-
-    expect(getAgentModePreference(storage)).toBeNull()
-    setAgentModePreference('tool', storage)
-    expect(getAgentModePreference(storage)).toBe('tool')
-    storage.value = 'invalid'
-    expect(getAgentModePreference(storage)).toBeNull()
-  })
-
-  it('silently degrades when the browser localStorage getter throws', () => {
-    const restrictedWindow = {}
-    Object.defineProperty(restrictedWindow, 'localStorage', {
-      configurable: true,
-      get() {
-        throw new DOMException('blocked', 'SecurityError')
-      },
-    })
-    vi.stubGlobal('window', restrictedWindow)
-
-    expect(getAgentModePreference()).toBeNull()
-    expect(() => setAgentModePreference('tool')).not.toThrow()
   })
 
   it('uses deployment-provided API mode options and allows safe custom models by default', () => {

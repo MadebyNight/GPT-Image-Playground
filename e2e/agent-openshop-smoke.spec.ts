@@ -94,6 +94,40 @@ function hashComposerSnapshotFixture(manifest: ComposerSnapshotFixture) {
     .digest('hex')
 }
 
+function createPlanStreamFixture(plan: Record<string, unknown>, planningText: string) {
+  return [
+    `event: plan.delta\ndata: ${JSON.stringify({ text: planningText })}\n\n`,
+    `event: plan.completed\ndata: ${JSON.stringify(plan)}\n\n`,
+  ].join('')
+}
+
+async function installQueuedImageExecutionFixture(page: Page, planId: string, executionId: string) {
+  let executeRequests = 0
+  await page.route(`**/agent-api/v1/plans/${planId}/execute`, async (route) => {
+    executeRequests += 1
+    expect(route.request().method()).toBe('POST')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: executionId,
+          planId,
+          status: 'queued',
+          cancelRequested: false,
+          error: null,
+          outputAssets: [],
+          createdAt: '2026-08-19T00:00:00.000Z',
+          startedAt: null,
+          completedAt: null,
+          updatedAt: '2026-08-19T00:00:00.000Z',
+        },
+      }),
+    })
+  })
+  return { getExecuteRequests: () => executeRequests }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', async (route) => {
     const requestUrl = new URL(route.request().url())
@@ -566,7 +600,11 @@ async function installOpenShopToolFixture(page: Page, options: { executeDelayMs?
   return { getFrameLoads: () => frameLoads }
 }
 
-async function installToolOpenShopGateway(page: Page, prompt: string) {
+async function installToolOpenShopGateway(
+  page: Page,
+  prompt: string,
+  options: { beforePlanCompleted?: () => Promise<void> } = {},
+) {
   let frozenPlan: Record<string, unknown> | null = null
   let executeRequests = 0
   let planRequests = 0
@@ -595,7 +633,20 @@ async function installToolOpenShopGateway(page: Page, prompt: string) {
       }),
     })
   })
-  await page.route('**/agent-api/v1/plans', async (route) => {
+  await page.route('**/agent-api/v1/plans/**', async (route) => {
+    if (route.request().url().endsWith('/execute')) {
+      executeRequests += 1
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'client_operation_requires_browser', message: 'browser required' } }),
+      })
+      return
+    }
+    if (!frozenPlan) throw new Error('plan was not created')
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: frozenPlan }) })
+  })
+  await page.route('**/agent-api/v1/plans/stream', async (route) => {
     planRequests += 1
     const body = route.request().postData() ?? ''
     const manifest = parseComposerSnapshotFixture(body)
@@ -623,20 +674,13 @@ async function installToolOpenShopGateway(page: Page, prompt: string) {
       warnings: [],
       policyVersion: 'tool-operation-v2',
     }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: frozenPlan }) })
-  })
-  await page.route('**/agent-api/v1/plans/**', async (route) => {
-    if (route.request().url().endsWith('/execute')) {
-      executeRequests += 1
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'client_operation_requires_browser', message: 'browser required' } }),
-      })
-      return
-    }
-    if (!frozenPlan) throw new Error('plan was not created')
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: frozenPlan }) })
+    await options.beforePlanCompleted?.()
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache' },
+      body: createPlanStreamFixture(frozenPlan, '正在规划 OpenShop 编辑步骤。'),
+    })
   })
   return {
     getExecuteRequests: () => executeRequests,
@@ -644,20 +688,31 @@ async function installToolOpenShopGateway(page: Page, prompt: string) {
   }
 }
 
-async function prepareToolOpenShopComposer(page: Page, prompt: string, sourceDataUrl: string) {
+async function submitToolOpenShopPlan(page: Page) {
+  await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
+  await expect(page.locator('[data-agent-tool-response]:visible')).toContainText('正在规划 OpenShop 编辑步骤。')
+  await expect(page.getByRole('button', { name: '确认并在浏览器执行' })).toHaveCount(0)
+}
+
+async function prepareToolOpenShopComposer(page: Page, prompt: string, sourceDataUrl: string, submit = true) {
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('tablist', { name: '工作区模式' })).toBeVisible()
   await page.getByRole('tab', { name: 'Agent' }).click()
-  const toolTab = page.getByRole('tab', { name: 'Tool' })
-  if (await toolTab.count()) await toolTab.click()
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(async (sourceTaskId) => {
+    const { useStore } = await import('/src/store.ts')
+    return useStore.getState().tasks.some((task) => task.id === sourceTaskId)
+  }, SOURCE_TASK_ID)).toBe(true)
   await page.evaluate(async ({ nextPrompt, dataUrl, imageId }) => {
     const { useStore } = await import('/src/store.ts')
     const state = useStore.getState()
     state.setPrompt(nextPrompt)
     state.setInputImages([{ id: imageId, dataUrl }])
   }, { nextPrompt: prompt, dataUrl: sourceDataUrl, imageId: SOURCE_IMAGE_ID })
-  await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
-  await expect(page.getByRole('heading', { name: 'OpenShop Chromium Tool Plan' })).toBeVisible()
+  if (submit) {
+    await submitToolOpenShopPlan(page)
+  }
 }
 
 test('Chat Agent 使用固定 SSE fixture 完成 Chromium 最小流程', async ({ page }) => {
@@ -727,7 +782,7 @@ test('Chat Agent 失败终态出现后立即刷新仍保留 partial 与错误', 
   await expect(latestResponse).toContainText('执行失败')
 })
 
-test('双能力部署可切换 Chat 与 Tool，并隔离完整输入草稿', async ({ page }) => {
+test('双能力部署进入 Agent 后默认 Tool，且与 Gallery 草稿隔离', async ({ page }) => {
   await page.route('**/runtime-config.json', async (route) => {
     await route.fulfill({
       status: 200,
@@ -759,20 +814,21 @@ test('双能力部署可切换 Chat 与 Tool，并隔离完整输入草稿', asy
   await gotoGallery(page)
   await page.getByRole('tab', { name: 'Agent' }).click()
   const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible')
-  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
-  await editor.fill('Chat 独立草稿')
-
-  await page.getByRole('tab', { name: 'Tool' }).click()
-  await expect(editor).toHaveText('')
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
   await editor.fill('Tool 独立草稿')
 
-  await page.getByRole('tab', { name: 'Chat' }).click()
-  await expect(editor).toHaveText('Chat 独立草稿')
-  await page.getByRole('tab', { name: 'Tool' }).click()
+  await page.getByRole('tab', { name: '画廊' }).click()
+  await expect(editor).toHaveText('')
+  await editor.fill('Gallery 独立草稿')
+
+  await page.getByRole('tab', { name: 'Agent' }).click()
   await expect(editor).toHaveText('Tool 独立草稿')
+  await page.getByRole('tab', { name: '画廊' }).click()
+  await expect(editor).toHaveText('Gallery 独立草稿')
 })
 
-test('Tool-only agentOnly 刷新后从 Tool 草稿生成执行计划', async ({ page }) => {
+test('Tool-only agentOnly 刷新后流式规划并自动执行 Tool 草稿', async ({ page }) => {
   const prompt = 'tool-scope-after-refresh'
   let planRequestBody = ''
   await page.route('**/runtime-config.json', async (route) => {
@@ -797,41 +853,42 @@ test('Tool-only agentOnly 刷新后从 Tool 草稿生成执行计划', async ({ 
       body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }),
     })
   })
-  await page.route('**/agent-api/v1/plans', async (route) => {
+  const execution = await installQueuedImageExecutionFixture(page, 'e2e-plan', 'e2e-tool-execution')
+  await page.route('**/agent-api/v1/plans/stream', async (route) => {
     planRequestBody = route.request().postData() ?? ''
     const manifest = parseComposerSnapshotFixture(planRequestBody)
     const composerSnapshotHash = hashComposerSnapshotFixture(manifest)
+    const plan = {
+      schemaVersion: 2,
+      composerSnapshotHash,
+      id: 'e2e-plan',
+      version: 1,
+      status: 'awaiting_confirmation',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      originalRequest: prompt,
+      summary: 'Tool scope E2E plan',
+      operation: {
+        type: 'image.generate',
+        generation: {
+          exactPrompt: prompt,
+          action: 'generate',
+          size: '1024x1024',
+          quality: 'auto',
+          outputFormat: 'png',
+          outputCompression: null,
+          imageCount: 1,
+        },
+      },
+      inputs: [],
+      assumptions: [],
+      warnings: [],
+      policyVersion: 'tool-operation-v2',
+    }
     await route.fulfill({
       status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        data: {
-          schemaVersion: 2,
-          composerSnapshotHash,
-          id: 'e2e-plan',
-          version: 1,
-          status: 'awaiting_confirmation',
-          expiresAt: '2099-01-01T00:00:00.000Z',
-          originalRequest: prompt,
-          summary: 'Tool scope E2E plan',
-          operation: {
-            type: 'image.generate',
-            generation: {
-              exactPrompt: prompt,
-              action: 'generate',
-              size: '1024x1024',
-              quality: 'auto',
-              outputFormat: 'png',
-              outputCompression: null,
-              imageCount: 1,
-            },
-          },
-          inputs: [],
-          assumptions: [],
-          warnings: [],
-          policyVersion: 'tool-operation-v2',
-        },
-      }),
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache' },
+      body: createPlanStreamFixture(plan, '正在梳理 Tool 草稿的执行步骤。'),
     })
   })
 
@@ -847,8 +904,10 @@ test('Tool-only agentOnly 刷新后从 Tool 草稿生成执行计划', async ({ 
   await expect(editor).toHaveText(prompt)
   await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
 
-  await expect(page.getByRole('heading', { name: 'Tool scope E2E plan' })).toBeVisible()
+  await expect(page.locator('[data-agent-tool-response]:visible')).toContainText('正在梳理 Tool 草稿的执行步骤。')
+  await expect(page.locator('[data-agent-tool-response]:visible')).toContainText('已进入受限执行队列')
   expect(planRequestBody).toContain(prompt)
+  await expect.poll(() => execution.getExecuteRequests()).toBe(1)
 })
 
 test('Tool Agent 联网开关仅在当前页面生效，并随计划请求提交', async ({ page }) => {
@@ -867,20 +926,23 @@ test('Tool Agent 联网开关仅在当前页面生效，并随计划请求提交
   await page.route('**/agent-api/v1/capabilities', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }) })
   })
-  await page.route('**/agent-api/v1/plans', async (route) => {
+  const execution = await installQueuedImageExecutionFixture(page, 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'e2e-web-search-execution')
+  await page.route('**/agent-api/v1/plans/stream', async (route) => {
     planRequestBody = route.request().postData() ?? ''
     const manifest = parseComposerSnapshotFixture(planRequestBody)
+    const plan = {
+      schemaVersion: 2,
+      composerSnapshotHash: hashComposerSnapshotFixture(manifest),
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', version: 1, status: 'awaiting_confirmation',
+      expiresAt: '2099-01-01T00:00:00.000Z', originalRequest: manifest.prompt, summary: '联网计划',
+      operation: { type: 'image.generate', generation: { exactPrompt: manifest.prompt, action: 'generate', size: '1024x1024', quality: 'auto', outputFormat: 'png', outputCompression: null, imageCount: 1 } },
+      inputs: [], assumptions: [], warnings: [], policyVersion: 'tool-operation-v2',
+    }
     await route.fulfill({
       status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ data: {
-        schemaVersion: 2,
-        composerSnapshotHash: hashComposerSnapshotFixture(manifest),
-        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', version: 1, status: 'awaiting_confirmation',
-        expiresAt: '2099-01-01T00:00:00.000Z', originalRequest: manifest.prompt, summary: '联网计划',
-        operation: { type: 'image.generate', generation: { exactPrompt: manifest.prompt, action: 'generate', size: '1024x1024', quality: 'auto', outputFormat: 'png', outputCompression: null, imageCount: 1 } },
-        inputs: [], assumptions: [], warnings: [], policyVersion: 'tool-operation-v2',
-      } }),
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache' },
+      body: createPlanStreamFixture(plan, '正在结合联网搜索整理海报方案。'),
     })
   })
 
@@ -892,14 +954,16 @@ test('Tool Agent 联网开关仅在当前页面生效，并随计划请求提交
   await expect(page.locator('button[title^="联网搜索已开启"]:visible')).toHaveAttribute('aria-pressed', 'true')
   await page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible').fill('制作科技产品海报')
   await page.locator('button[title="生成执行计划 (Ctrl+Enter)"]:visible').click()
-  await expect(page.getByRole('heading', { name: '联网计划' })).toBeVisible()
+  await expect(page.locator('[data-agent-tool-response]:visible')).toContainText('正在结合联网搜索整理海报方案。')
+  await expect(page.locator('[data-agent-tool-response]:visible')).toContainText('已进入受限执行队列')
   expect(planRequestBody).toContain('name="webSearchEnabled"\r\n\r\ntrue')
+  await expect.poll(() => execution.getExecuteRequests()).toBe(1)
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('button[title="开启联网搜索"]:visible')).toHaveAttribute('aria-pressed', 'false')
 })
 
-test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由', async ({ page }) => {
+test('双能力部署中 Agent 默认 Tool，Gallery 保持独立草稿与提交路由', async ({ page }) => {
   let galleryRequests = 0
   let galleryRequestUrl = ''
   let galleryRequestBody: unknown = null
@@ -950,7 +1014,7 @@ test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由
       body: JSON.stringify({ data: { enabled: true, csrfToken: 'e2e-csrf' } }),
     })
   })
-  await page.route('**/agent-api/v1/plans', async (route) => {
+  await page.route('**/agent-api/v1/plans/stream', async (route) => {
     toolPlanRequests += 1
     await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'wrong route' }) })
   })
@@ -963,10 +1027,12 @@ test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由
   await page.getByRole('button', { name: '关闭' }).click()
 
   await page.getByRole('tab', { name: 'Agent' }).click()
-  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toBeVisible()
-  await page.getByRole('tab', { name: 'Chat' }).click()
-  await page.getByRole('tab', { name: '画廊' }).click()
+  await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
   const editor = page.locator('[contenteditable][data-placeholder^="描述你想生成的图片"]:visible')
+  await editor.fill('Tool 独立草稿')
+  await page.getByRole('tab', { name: '画廊' }).click()
+  await expect(editor).toHaveText('')
   await editor.fill('Gallery 独立草稿')
 
   await page.getByRole('button', { name: '设置' }).click()
@@ -1000,6 +1066,7 @@ test('Gallery 中 Chat 失效回退 Tool 时保持 Gallery 草稿与提交路由
   await page.getByRole('tab', { name: 'Agent' }).click()
   await expect(page.getByRole('heading', { name: 'Tool Agent 工作区' })).toBeVisible()
   await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
+  await expect(editor).toHaveText('Tool 独立草稿')
   await page.getByRole('tab', { name: '画廊' }).click()
   await expect(editor).toHaveText('Gallery 独立草稿')
 })
@@ -1923,17 +1990,12 @@ test('OpenShop Tool command 失败不创建 Task，并销毁一次性 iframe', a
   })).toBe(0)
 })
 
-test('Tool Agent OpenShop 双击确认只创建一个本地 Run，且不调用 Gateway execute', async ({ page }) => {
-  const prompt = 'Tool Agent 双击确认旋转图片'
+test('Tool Agent OpenShop 提交后自动只创建一个本地 Run，且不调用 Gateway execute', async ({ page }) => {
+  const prompt = 'Tool Agent 自动执行旋转图片'
   const gateway = await installToolOpenShopGateway(page, prompt)
   const fixture = await installOpenShopToolFixture(page)
   const sourceDataUrl = await seedOpenShopHistory(page)
   await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
-
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).evaluate((button) => {
-    ;(button as HTMLButtonElement).click()
-    ;(button as HTMLButtonElement).click()
-  })
 
   await expect(page.locator('[data-openshop-local-run-status="completed"]:visible')).toBeVisible()
   expect(fixture.getFrameLoads()).toBe(1)
@@ -1978,17 +2040,17 @@ test('Tool Agent OpenShop 同一 BrowserContext 两个页面通过 IndexedDB CAS
   await installToolOpenShopGateway(page, prompt)
   const firstFixture = await installOpenShopToolFixture(page, { executeDelayMs: 500 })
   const sourceDataUrl = await seedOpenShopHistory(page)
-  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
+  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl, false)
 
   const secondPage = await context.newPage()
   await installToolOpenShopGateway(secondPage, prompt)
   const secondFixture = await installOpenShopToolFixture(secondPage, { executeDelayMs: 500 })
   await gotoGallery(secondPage)
-  await prepareToolOpenShopComposer(secondPage, prompt, sourceDataUrl)
+  await prepareToolOpenShopComposer(secondPage, prompt, sourceDataUrl, false)
 
   await Promise.all([
-    page.getByRole('button', { name: '确认并在浏览器执行' }).click(),
-    secondPage.getByRole('button', { name: '确认并在浏览器执行' }).click(),
+    submitToolOpenShopPlan(page),
+    submitToolOpenShopPlan(secondPage),
   ])
 
   await expect.poll(() => firstFixture.getFrameLoads() + secondFixture.getFrameLoads()).toBe(1)
@@ -2017,15 +2079,13 @@ test('Tool Agent OpenShop 刷新 running Run 后标记 interrupted 且不重放 
   const sourceDataUrl = await seedOpenShopHistory(page)
   await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
 
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
   await expect(page.locator('[data-openshop-local-run-status="running"]:visible')).toBeVisible()
   await expect(page.locator('[data-openshop-tool-frame]')).toHaveCount(1)
   expect(fixture.getFrameLoads()).toBe(1)
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('tab', { name: 'Agent' }).click()
-  const recoveredToolTab = page.getByRole('tab', { name: 'Tool' })
-  if (await recoveredToolTab.count()) await recoveredToolTab.click()
+  await expect(page.getByRole('tablist', { name: 'Agent 模式' })).toHaveCount(0)
   await expect(page.locator('[data-openshop-local-run-status="interrupted"]:visible')).toBeVisible()
   await expect(page.locator('[data-openshop-tool-frame]')).toHaveCount(0)
   expect(fixture.getFrameLoads()).toBe(1)
@@ -2036,7 +2096,7 @@ test('Tool Agent OpenShop 原子保存失败后只重试保存已导出 Blob', a
   await installToolOpenShopGateway(page, prompt)
   const fixture = await installOpenShopToolFixture(page)
   const sourceDataUrl = await seedOpenShopHistory(page)
-  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
+  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl, false)
   await page.evaluate(() => {
     const prototype = IDBDatabase.prototype as IDBDatabase & { __toolFailedFinalSave?: boolean }
     const original = IDBDatabase.prototype.transaction
@@ -2056,7 +2116,7 @@ test('Tool Agent OpenShop 原子保存失败后只重试保存已导出 Blob', a
     }
   })
 
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
+  await submitToolOpenShopPlan(page)
   await expect(page.locator('[data-openshop-local-run-status="exported"]:visible')).toBeVisible()
   await expect(page.getByRole('button', { name: '仅重试保存' })).toBeVisible()
   expect(fixture.getFrameLoads()).toBe(1)
@@ -2071,7 +2131,7 @@ test('Tool Agent OpenShop 并发重试后取消唯一保存 attempt，回滚 exp
   await installToolOpenShopGateway(page, prompt)
   const fixture = await installOpenShopToolFixture(page)
   const sourceDataUrl = await seedOpenShopHistory(page)
-  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
+  await prepareToolOpenShopComposer(page, prompt, sourceDataUrl, false)
   await page.evaluate(() => {
     const prototype = IDBDatabase.prototype as IDBDatabase & { __toolFailedFinalSave?: boolean }
     const original = IDBDatabase.prototype.transaction
@@ -2091,7 +2151,7 @@ test('Tool Agent OpenShop 并发重试后取消唯一保存 attempt，回滚 exp
     }
   })
 
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
+  await submitToolOpenShopPlan(page)
   await expect(page.locator('[data-openshop-local-run-status="exported"]:visible')).toBeVisible()
   await page.evaluate(() => {
     const original = Blob.prototype.arrayBuffer
@@ -2150,20 +2210,21 @@ test('Tool Agent OpenShop 并发重试后取消唯一保存 attempt，回滚 exp
   expect(fixture.getFrameLoads()).toBe(1)
 })
 
-test('Tool Agent OpenShop sourceTask binding 错误时不 claim、不创建 iframe', async ({ page }) => {
+test('Tool Agent OpenShop sourceTask binding 在流式规划期间失效时不 claim、不创建 iframe', async ({ page }) => {
   const prompt = 'Tool Agent binding 错误验证'
-  await installToolOpenShopGateway(page, prompt)
+  await installToolOpenShopGateway(page, prompt, {
+    beforePlanCompleted: async () => {
+      await page.evaluate(async (sourceTaskId) => {
+        const { updateTaskInStore } = await import('/src/store.ts')
+        updateTaskInStore(sourceTaskId, { outputImages: ['different-image'] })
+      }, SOURCE_TASK_ID)
+    },
+  })
   const fixture = await installOpenShopToolFixture(page)
   const sourceDataUrl = await seedOpenShopHistory(page)
   await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
-  await page.evaluate(async (sourceTaskId) => {
-    const { updateTaskInStore } = await import('/src/store.ts')
-    updateTaskInStore(sourceTaskId, { outputImages: ['different-image'] })
-  }, SOURCE_TASK_ID)
 
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
-
-  await expect(page.locator('[data-agent-error-summary]:visible')).toHaveText('OpenShop sourceTaskId 与浏览器图片来源不匹配')
+  await expect(page.locator('[data-agent-error-summary]:visible')).toHaveText('输入已在规划期间变化，旧计划不可确认')
   expect(fixture.getFrameLoads()).toBe(0)
   const runCount = await page.evaluate(async () => {
     const request = indexedDB.open('gpt-image-playground', 3)
@@ -2185,8 +2246,6 @@ test('Tool Agent 使用真实 public OpenShop 完成本地 Run，Gateway OpenSho
   const gateway = await installToolOpenShopGateway(page, prompt)
   const sourceDataUrl = await seedOpenShopHistory(page)
   await prepareToolOpenShopComposer(page, prompt, sourceDataUrl)
-
-  await page.getByRole('button', { name: '确认并在浏览器执行' }).click()
 
   await expect(page.locator('[data-openshop-local-run-status="completed"]:visible')).toBeVisible({ timeout: 60_000 })
   expect(gateway.getExecuteRequests()).toBe(0)

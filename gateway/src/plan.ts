@@ -95,6 +95,7 @@ const planBaseShape = {
   status: planStatusSchema,
   expiresAt: z.string().datetime(),
   originalRequest: z.string(),
+  assistantMessage: z.string().trim().min(1).max(240).optional(),
   summary: z.string().min(1),
   inputs: z.array(inputSchema),
   assumptions: z.array(z.string()),

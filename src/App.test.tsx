@@ -31,13 +31,14 @@ vi.mock('./lib/serverApiConfig', () => ({
     chatUsable: runtimeConfigMock.chatUsable,
     tool: runtimeConfigMock.tool,
     openShopTool: false,
-    defaultMode: runtimeConfigMock.chatUsable ? 'chat' : runtimeConfigMock.tool ? 'tool' : null,
-    modeSwitching: runtimeConfigMock.chatUsable && runtimeConfigMock.tool,
+    defaultMode: runtimeConfigMock.tool ? 'tool' : runtimeConfigMock.chatUsable ? 'chat' : null,
   }),
-  getAgentModePreference: () => null,
   getRuntimeConfigState: () => ({ status: 'ready', config: { version: 1, serverApi: { enabled: false } } }),
-  resolveAgentMode: (capabilities: { defaultMode: 'chat' | 'tool' | null }, preferred: 'chat' | 'tool' | null) => preferred ?? capabilities.defaultMode,
-  setAgentModePreference: vi.fn(),
+  resolveAgentMode: (capabilities: { chatUsable: boolean; tool: boolean; defaultMode: 'chat' | 'tool' | null }, preferred: 'chat' | 'tool' | null) => {
+    if (preferred === 'chat' && capabilities.chatUsable) return 'chat'
+    if (preferred === 'tool' && capabilities.tool) return 'tool'
+    return capabilities.defaultMode
+  },
   isRestrictedAgentEnabled: () => runtimeConfigMock.tool,
   isRestrictedAgentOnly: () => runtimeConfigMock.tool && runtimeConfigMock.agentOnly,
 }))
@@ -118,6 +119,15 @@ describe('App workspace entry', () => {
     expect(markup).toContain('data-component="task-grid"')
     expect(markup).toContain('data-component="agent-workspace"')
     expect(markup).toContain('data-agent-workspace-mounted')
+  })
+
+  it('opens Agent in Tool mode when both capabilities are available', () => {
+    runtimeConfigMock.chatUsable = true
+    runtimeConfigMock.tool = true
+
+    const markup = renderToStaticMarkup(<App />)
+
+    expect(markup).toContain('data-component="agent-workspace" data-mode="tool"')
   })
 
   it('opens the Agent workspace directly in agent-only mode', () => {

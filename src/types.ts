@@ -120,7 +120,6 @@ export interface AgentCapabilities {
   tool: boolean
   openShopTool: boolean
   defaultMode: AgentMode | null
-  modeSwitching: boolean
 }
 
 // ===== 输入图片（UI 层面） =====
@@ -280,6 +279,8 @@ interface RestrictedAgentPlanBase {
   expiresAt: string
   originalRequest: string
   summary: string
+  /** Agent 生成的面向用户说明；旧计划可能缺失。 */
+  assistantMessage?: string
   inputs: RestrictedAgentPlanInput[]
   assumptions: string[]
   warnings: string[]

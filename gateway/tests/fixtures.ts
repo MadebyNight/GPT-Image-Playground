@@ -9,6 +9,7 @@ export const RESTRICTED_PLAN_RESPONSE_FIXTURE = {
   status: 'awaiting_confirmation',
   expiresAt: '<expires-at>',
   originalRequest: '生成一张红色图片',
+  assistantMessage: '我会生成一张红色测试图片。',
   composerSnapshotHash: '<composer-snapshot-hash>',
   summary: '生成一张测试图片',
   operation: {
@@ -107,6 +108,7 @@ export function normalizeRestrictedExecutionResponse(value: unknown, expectedPla
 export function createDeterministicPlannerFixture(action: 'generate' | 'edit' | 'openshop.edit' = 'generate'): Planner {
   return {
     createDraft: vi.fn(async () => ({
+      assistantMessage: action === 'openshop.edit' ? '我会旋转现有图片。' : '我会生成一张红色测试图片。',
       summary: action === 'openshop.edit' ? '旋转现有图片' : '生成一张测试图片',
       operation: action === 'openshop.edit'
         ? {

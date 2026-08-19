@@ -14,7 +14,6 @@ import {
 import {
   cancelRestrictedAgentExecution,
   computeRestrictedAgentConfirmationHash,
-  createRestrictedAgentPlan,
   decodeRestrictedAgentAssetBindings,
   decodeRestrictedAgentPlan,
   executeRestrictedAgentPlan,
@@ -23,6 +22,7 @@ import {
   getRestrictedAgentPlan,
   subscribeRestrictedAgentExecution,
   getRestrictedAgentPlanOperation,
+  streamRestrictedAgentPlan,
   type RestrictedAgentPlanRequest,
 } from './lib/restrictedAgentApi'
 import { openShopToolRunner, OpenShopToolRunnerError } from './lib/openShopToolRunner'
@@ -68,8 +68,8 @@ export interface PersistedAgentFlow {
 
 interface RestrictedAgentState extends PersistedAgentFlow {
   localRun: OpenShopToolLocalRun | null
+  planningText: string
   createPlanFromCurrentInput: (draftSnapshot?: ComposerDraftSnapshot, webSearchEnabled?: boolean) => Promise<RestrictedAgentPlan | null>
-  confirmAndExecute: () => Promise<string | null>
   retryOpenShopSave: (options?: OpenShopSaveAttemptOptions) => Promise<string | null>
   returnToEditing: () => void
   cancelExecution: () => Promise<void>
@@ -152,6 +152,7 @@ export function decodePersistedAgentFlow(value: unknown, now = Date.now()): Pers
     const plan = parsed.plan ? decodeRestrictedAgentPlan(parsed.plan) : null
     const expired = Boolean(plan?.expiresAt && Date.parse(plan.expiresAt) <= now)
     const persistedPhase = parsed.phase ?? 'idle'
+    const interruptedAutomaticExecution = persistedPhase === 'awaiting_confirmation' || persistedPhase === 'confirming'
     const needsConfirmationBindings = plan?.schemaVersion === 2
       && ['awaiting_confirmation', 'confirming', 'stale'].includes(persistedPhase)
     let assetBindings: RestrictedAgentAssetBinding[] = []
@@ -166,13 +167,16 @@ export function decodePersistedAgentFlow(value: unknown, now = Date.now()): Pers
       assetBindings = parsed.assetBindings
     }
     return {
-      phase: expired && persistedPhase === 'awaiting_confirmation'
+      phase: expired && interruptedAutomaticExecution
         ? 'expired'
-        : bindingError ? 'stale' : persistedPhase,
+        : bindingError || interruptedAutomaticExecution ? 'stale' : persistedPhase,
       plan,
       execution: parsed.execution ?? null,
       taskId: parsed.taskId ?? null,
-      error: bindingError ? `计划输入 binding 已失效：${bindingError}` : parsed.error ?? null,
+      error: bindingError
+        ? `计划输入 binding 已失效：${bindingError}`
+        : interruptedAutomaticExecution ? '自动执行在页面刷新前中断，请重新规划'
+          : parsed.error ?? null,
       composerSnapshotVersion: typeof parsed.composerSnapshotVersion === 'number' ? parsed.composerSnapshotVersion : null,
       assetBindings,
       localRunId: typeof parsed.localRunId === 'string' && parsed.localRunId ? parsed.localRunId : null,
@@ -962,6 +966,7 @@ async function confirmOpenShopPlan(
 export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) => ({
   ...readPersistedState(),
   localRun: null,
+  planningText: '',
 
   async createPlanFromCurrentInput(draftSnapshot = getComposerDraftSnapshot('tool'), webSearchEnabled = false) {
     if (['planning', 'confirming', 'executing'].includes(get().phase)) return null
@@ -981,13 +986,17 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       execution: null,
       taskId: null,
       error: null,
+      planningText: '',
       composerSnapshotVersion: draftSnapshot.composerVersion,
       assetBindings: [],
       localRunId: null,
       localRun: null,
     })
     try {
-      const creation = await createRestrictedAgentPlan(createPlanRequestFromDraft(draftSnapshot, webSearchEnabled))
+      const creation = await streamRestrictedAgentPlan(
+        createPlanRequestFromDraft(draftSnapshot, webSearchEnabled),
+        { onDelta: (text) => set((state) => ({ planningText: state.planningText + text })) },
+      )
       const currentDraft = getComposerDraftSnapshot('tool')
       const currentHash = await computeRestrictedAgentConfirmationHash(
         creation.plan,
@@ -996,7 +1005,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
       )
       const fresh = creation.plan.schemaVersion !== 2 || currentHash === creation.plan.composerSnapshotHash
       set({
-        phase: fresh ? 'awaiting_confirmation' : 'stale',
+        phase: fresh ? 'confirming' : 'stale',
         plan: creation.plan,
         assetBindings: creation.assetBindings,
         execution: null,
@@ -1006,75 +1015,12 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
         localRun: null,
       })
       const plan = creation.plan
+      if (fresh) await automaticallyExecutePlan(plan, creation.assetBindings)
       return plan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       set({ phase: 'failed', error: message })
       app.showToast(message, 'error')
-      return null
-    }
-  },
-
-  async confirmAndExecute() {
-    const current = get()
-    const { plan, assetBindings } = current
-    if (!plan) return null
-    const operation = getRestrictedAgentPlanOperation(plan)
-    if (operation.type === 'openshop.edit' && plan.schemaVersion === 2) {
-      const runId = createOpenShopRunId(plan)
-      const pending = openShopRunPromises.get(runId)
-      if (pending) return pending
-      if (current.phase !== 'awaiting_confirmation') return current.taskId
-      const confirmation = confirmOpenShopPlan(plan, assetBindings)
-        .finally(() => openShopRunPromises.delete(runId))
-      openShopRunPromises.set(runId, confirmation)
-      return confirmation
-    }
-    if (current.phase === 'confirming' || current.phase === 'executing') return current.taskId
-    if (current.phase !== 'awaiting_confirmation') return null
-    if (Date.parse(plan.expiresAt) <= Date.now()) {
-      set({ phase: 'expired', error: '计划已过期，请重新生成计划' })
-      return null
-    }
-    set({ phase: 'confirming', error: null })
-    try {
-      let composerSnapshotHash: string | null = null
-      if (plan.schemaVersion === 2) {
-        const currentDraft = getComposerDraftSnapshot('tool')
-        composerSnapshotHash = await computeRestrictedAgentConfirmationHash(
-          plan,
-          assetBindings,
-          createPlanRequestFromDraft(currentDraft),
-        )
-        if (composerSnapshotHash !== plan.composerSnapshotHash) {
-          set({ phase: 'stale', error: 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认' })
-          return null
-        }
-      }
-      const execution = await executeRestrictedAgentPlan(plan, composerSnapshotHash)
-      set({
-        phase: isTerminalExecution(execution) ? (execution.status === 'completed' ? 'completed' : 'failed') : 'executing',
-        execution,
-        error: execution.error?.message ?? null,
-      })
-      if (!isTerminalExecution(execution)) watchExecution(execution.id, null)
-      const taskId = await createTaskForExecution(plan, execution)
-      set({ taskId, composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null })
-      const latestExecution = get().execution?.id === execution.id ? get().execution! : execution
-      await applyExecution(latestExecution, taskId)
-      if (!isTerminalExecution(latestExecution)) watchExecution(latestExecution.id, taskId)
-      return taskId
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const expired = /过期|expired/i.test(message)
-      const acceptedExecution = get().execution
-      set({
-        phase: acceptedExecution && !isTerminalExecution(acceptedExecution)
-          ? 'executing'
-          : expired ? 'expired' : 'failed',
-        error: message,
-      })
-      useStore.getState().showToast(message, 'error')
       return null
     }
   },
@@ -1088,7 +1034,7 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
   returnToEditing() {
     set({
       phase: 'idle', plan: null, execution: null, taskId: null, error: null,
-      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null,
+      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null, planningText: '',
     })
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-bar] [contenteditable="true"]')?.focus())
   },
@@ -1188,12 +1134,12 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
         reflectOpenShopRunInTask(run)
       }
     } else if (!get().execution && get().phase === 'confirming' && get().plan) {
-      set({ phase: 'awaiting_confirmation', error: '上次确认未开始本地 Run，请再次确认' })
+      set({ phase: 'stale', error: '自动执行未开始本地 Run，请重新规划' })
     }
 
     const active = get().execution
     if (!persistedRunId && !active && get().phase === 'confirming' && get().plan) {
-      set({ phase: 'awaiting_confirmation', error: '上次确认未取得执行编号，请再次确认；服务端会按计划幂等返回同一执行。' })
+      set({ phase: 'stale', error: '自动执行未取得执行编号，请重新规划' })
     }
     let activeTaskId = get().taskId
     if (active && get().plan && !tasks.some((task) => task.agentExecutionId === active.id)) {
@@ -1215,10 +1161,76 @@ export const useRestrictedAgentStore = create<RestrictedAgentState>((set, get) =
     if (executionId) stopExecutionWatch(executionId)
     set({
       phase: 'idle', plan: null, execution: null, taskId: null, error: null,
-      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null,
+      composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null, planningText: '',
     })
   },
 }))
+
+async function automaticallyExecutePlan(
+  plan: RestrictedAgentPlan,
+  assetBindings: RestrictedAgentAssetBinding[],
+): Promise<string | null> {
+  const current = useRestrictedAgentStore.getState()
+  if (current.phase !== 'confirming' || current.plan?.id !== plan.id || current.plan.version !== plan.version) {
+    return current.taskId
+  }
+  const operation = getRestrictedAgentPlanOperation(plan)
+  if (operation.type === 'openshop.edit' && plan.schemaVersion === 2) {
+    const runId = createOpenShopRunId(plan)
+    const pending = openShopRunPromises.get(runId)
+    if (pending) return pending
+    const confirmation = confirmOpenShopPlan(plan, assetBindings)
+      .finally(() => openShopRunPromises.delete(runId))
+    openShopRunPromises.set(runId, confirmation)
+    return confirmation
+  }
+  if (Date.parse(plan.expiresAt) <= Date.now()) {
+    useRestrictedAgentStore.setState({ phase: 'expired', error: '计划已过期，请重新生成计划' })
+    return null
+  }
+  try {
+    let composerSnapshotHash: string | null = null
+    if (plan.schemaVersion === 2) {
+      const currentDraft = getComposerDraftSnapshot('tool')
+      composerSnapshotHash = await computeRestrictedAgentConfirmationHash(
+        plan,
+        assetBindings,
+        createPlanRequestFromDraft(currentDraft),
+      )
+      if (composerSnapshotHash !== plan.composerSnapshotHash) {
+        useRestrictedAgentStore.setState({ phase: 'stale', error: 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认' })
+        return null
+      }
+    }
+    const execution = await executeRestrictedAgentPlan(plan, composerSnapshotHash)
+    useRestrictedAgentStore.setState({
+      phase: isTerminalExecution(execution) ? (execution.status === 'completed' ? 'completed' : 'failed') : 'executing',
+      execution,
+      error: execution.error?.message ?? null,
+    })
+    if (!isTerminalExecution(execution)) watchExecution(execution.id, null)
+    const taskId = await createTaskForExecution(plan, execution)
+    useRestrictedAgentStore.setState({ taskId, composerSnapshotVersion: null, assetBindings: [], localRunId: null, localRun: null })
+    const latestExecution = useRestrictedAgentStore.getState().execution?.id === execution.id
+      ? useRestrictedAgentStore.getState().execution!
+      : execution
+    await applyExecution(latestExecution, taskId)
+    if (!isTerminalExecution(latestExecution)) watchExecution(latestExecution.id, taskId)
+    return taskId
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const expired = /过期|expired/i.test(message)
+    const acceptedExecution = useRestrictedAgentStore.getState().execution
+    useRestrictedAgentStore.setState({
+      phase: acceptedExecution && !isTerminalExecution(acceptedExecution)
+        ? 'executing'
+        : expired ? 'expired' : 'failed',
+      error: message,
+    })
+    useStore.getState().showToast(message, 'error')
+    return null
+  }
+}
 
 useRestrictedAgentStore.subscribe(persistState)
 
@@ -1228,8 +1240,7 @@ let lastToolComposerVersion = getComposerDraftSnapshot('tool').composerVersion
 async function refreshPlanFreshness() {
   const revision = ++freshnessRevision
   const flow = useRestrictedAgentStore.getState()
-  if ((flow.phase !== 'awaiting_confirmation' && flow.phase !== 'stale')
-    || !flow.plan
+  if (flow.phase !== 'stale' || !flow.plan
     || flow.plan.schemaVersion !== 2) return
   if (Date.parse(flow.plan.expiresAt) <= Date.now()) {
     useRestrictedAgentStore.setState({ phase: 'expired', error: '计划已过期，请重新生成计划' })
@@ -1243,12 +1254,13 @@ async function refreshPlanFreshness() {
       createPlanRequestFromDraft(draft),
     )
     const latest = useRestrictedAgentStore.getState()
-    if (revision !== freshnessRevision || latest.plan?.id !== flow.plan.id
-      || (latest.phase !== 'awaiting_confirmation' && latest.phase !== 'stale')) return
+    if (revision !== freshnessRevision || latest.plan?.id !== flow.plan.id || latest.phase !== 'stale') return
     const fresh = currentHash === flow.plan.composerSnapshotHash
     useRestrictedAgentStore.setState({
-      phase: fresh ? 'awaiting_confirmation' : 'stale',
-      error: fresh ? null : 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认',
+      phase: 'stale',
+      error: fresh
+        ? '计划曾在自动执行前失效，请重新规划'
+        : 'Prompt、输入图片、Mask、参数或临时 Profile 已变化，旧计划不可确认',
     })
   } catch (error) {
     if (revision !== freshnessRevision) return

@@ -50,30 +50,24 @@ const openShopPlan: ToolAgentPlan = {
 }
 
 describe('AgentPlanCard', () => {
-  it('直接展示冻结的 image operation 并保留显式确认', () => {
+  it('直接展示冻结的 image operation 作为只读执行详情', () => {
     const markup = renderToStaticMarkup(
-      <AgentPlanCard plan={imagePlan} onConfirm={vi.fn()} onReturnToEditing={vi.fn()} />,
+      <AgentPlanCard plan={imagePlan} onReturnToEditing={vi.fn()} />,
     )
 
     expect(markup).toContain('image.generate')
     expect(markup).toContain('一张极简产品发布海报')
     expect(markup).toContain('1024x1024')
     expect(markup).toContain('图片生成会消耗服务端额度')
-    expect(markup).toContain('确认并执行')
+    expect(markup).toContain('执行详情')
+    expect(markup).not.toContain('确认')
+    expect(markup).not.toContain('等待确认')
   })
 
-  it('展示实际 OpenShop 命令、隐藏原始ID并允许浏览器确认', () => {
+  it('展示实际 OpenShop 命令且不暴露原始 ID', () => {
     const markup = renderToStaticMarkup(
       <AgentPlanCard
         plan={openShopPlan}
-        assetBindings={[{
-          gatewayAssetId: 'gateway-asset-private-id',
-          browserImageId: 'browser-indexeddb-private-id',
-          sourceTaskId: 'source-task-private-id',
-          role: 'reference',
-          ordinal: 0,
-        }]}
-        onConfirm={vi.fn()}
         onReturnToEditing={vi.fn()}
       />,
     )
@@ -81,27 +75,29 @@ describe('AgentPlanCard', () => {
     expect(markup).toContain('openshop.edit')
     expect(markup).toContain('canvas.rotate')
     expect(markup).toContain('旋转：90°')
-    expect(markup).toContain('历史任务输出')
-    expect(markup).toContain('确认并在浏览器执行')
-    expect(markup).not.toContain('disabled=""')
+    expect(markup).toContain('一次性 OpenShop iframe')
+    expect(markup).not.toContain('确认')
     expect(markup).not.toContain('gateway-asset-private-id')
     expect(markup).not.toContain('browser-indexeddb-private-id')
     expect(markup).not.toContain('source-task-private-id')
   })
 
-  it('OpenShop binding 缺失时 fail closed 并禁用确认', () => {
+  it('过期计划保留返回修改入口，且无确认控件', () => {
+    const expiredPlan = { ...imagePlan, expiresAt: '2000-01-01T00:00:00.000Z' }
     const markup = renderToStaticMarkup(
-      <AgentPlanCard plan={openShopPlan} assetBindings={[]} onConfirm={vi.fn()} onReturnToEditing={vi.fn()} />,
+      <AgentPlanCard plan={expiredPlan} onReturnToEditing={vi.fn()} />,
     )
-    expect(markup).toContain('输入映射无效')
-    expect(markup).toContain('disabled=""')
+    expect(markup).toContain('计划已过期')
+    expect(markup).toContain('返回修改')
+    expect(markup).not.toContain('确认')
   })
 
-  it('stale计划禁用确认并提示重新规划', () => {
+  it('stale 计划保留返回修改入口且不显示等待确认', () => {
     const markup = renderToStaticMarkup(
-      <AgentPlanCard plan={imagePlan} stale onConfirm={vi.fn()} onReturnToEditing={vi.fn()} />,
+      <AgentPlanCard plan={imagePlan} stale onReturnToEditing={vi.fn()} />,
     )
     expect(markup).toContain('计划已过时')
-    expect(markup).toContain('disabled')
+    expect(markup).toContain('返回修改')
+    expect(markup).not.toContain('确认')
   })
 })
