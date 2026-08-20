@@ -172,6 +172,154 @@ function parseComposerSnapshotHeader(header: string | string[] | undefined): str
   return value?.trim() || null;
 }
 
+interface PlanCreationDependencies {
+  config: GatewayConfig;
+  db: GatewayDatabase;
+  assetStore: AssetStore;
+  planner: Planner;
+  webSearch: WebSearchService;
+  rateLimiter: SlidingWindowRateLimiter;
+}
+
+async function createPlan(
+  request: FastifyRequest,
+  session: SessionContext,
+  dependencies: PlanCreationDependencies,
+  onAssistantMessageDelta?: (text: string) => void,
+): Promise<RestrictedAgentPlanSnapshot> {
+  const { config, db, assetStore, planner, webSearch, rateLimiter } = dependencies;
+  rateLimiter.consume(`plan:${session.id}`, config.planRatePerMinute, 60_000);
+  if (!request.isMultipart()) throw new AppError(415, 'multipart_required', '创建计划必须使用 multipart/form-data');
+
+  const rawFields: Record<string, string> = {};
+  const uploads: UploadedPlanAsset[] = [];
+  const roleCounts = new Map<string, number>();
+  let totalUploadedBytes = 0;
+  try {
+    for await (const part of request.parts()) {
+      if (part.type === 'field') {
+        if (!(part.fieldname in fieldSchema.shape)) throw new AppError(400, 'unknown_field', `不允许字段 ${part.fieldname}`);
+        if (rawFields[part.fieldname] !== undefined) throw new AppError(400, 'duplicate_field', `字段 ${part.fieldname} 重复`);
+        if (typeof part.value !== 'string') throw new AppError(400, 'invalid_field', `字段 ${part.fieldname} 必须是文本`);
+        rawFields[part.fieldname] = part.value;
+        continue;
+      }
+      if (!['reference', 'mask_target', 'mask'].includes(part.fieldname)) {
+        part.file.resume();
+        throw new AppError(400, 'unknown_file_field', `不允许文件字段 ${part.fieldname}`);
+      }
+      const role = part.fieldname as 'reference' | 'mask_target' | 'mask';
+      const roleOrdinal = roleCounts.get(role) ?? 0;
+      const count = roleOrdinal + 1;
+      roleCounts.set(role, count);
+      if (role === 'reference' && count > config.maxReferenceImages) throw new AppError(400, 'too_many_references', '参考图数量超过限制');
+      if (role !== 'reference' && count > 1) throw new AppError(400, 'duplicate_mask_input', `${role} 只能上传一张`);
+      const stored = await assetStore.storeUpload(part, session.id, role);
+      uploads.push({ ...stored, roleOrdinal });
+      totalUploadedBytes += Math.max(stored.uploadedByteSize, stored.byteSize);
+      if (totalUploadedBytes > config.maxUploadBytes) throw new AppError(413, 'upload_too_large', '上传总大小超过限制');
+    }
+
+    const parsedFields = fieldSchema.safeParse(rawFields);
+    if (!parsedFields.success) throw new AppError(400, 'invalid_plan_request', '计划请求字段无效');
+    if (parsedFields.data.imageCount && parsedFields.data.imageCount > config.maxOutputImages) {
+      throw new AppError(400, 'invalid_image_count', `输出图片数量必须为 1-${config.maxOutputImages}`);
+    }
+    const preferences: PlanPreferences = {
+      size: parsedFields.data.size,
+      quality: parsedFields.data.quality,
+      outputFormat: parsedFields.data.outputFormat,
+      outputCompression: parsedFields.data.outputCompression,
+      imageCount: parsedFields.data.imageCount,
+    };
+    const webSearchRequested = parsedFields.data.webSearchEnabled === 'true';
+    let webSearchSources: import('./types.js').WebSearchSource[] | undefined;
+    let webSearchWarning: string | null = null;
+    if (webSearchRequested) {
+      try {
+        rateLimiter.consume(`web-search:${session.id}`, config.webSearchRatePerMinute, 60_000);
+        webSearchSources = await webSearch.search(parsedFields.data.request);
+      } catch (error) {
+        webSearchSources = [];
+        webSearchWarning = `联网搜索未完成：${error instanceof Error ? error.message : '服务不可用'}；本计划按离线信息生成。`;
+      }
+    }
+    const manifest = parsedFields.data.composerSnapshot
+      ? assertComposerFields(parseComposerSnapshotManifest(parsedFields.data.composerSnapshot, config), parsedFields.data)
+      : null;
+    const orderedUploads = manifest ? bindComposerUploads(manifest, uploads) : uploads;
+    const inputs = orderedUploads.map(assetToPlanInput);
+    const plannerInput = {
+      request: parsedFields.data.request,
+      preferences,
+      assets: orderedUploads,
+      allowOpenShop: Boolean(manifest),
+      webSearchSources,
+    };
+    const rawDraft = onAssistantMessageDelta
+      ? await planner.createDraft(plannerInput, { onAssistantMessageDelta })
+      : await planner.createDraft(plannerInput);
+    const draft = validateAndConstrainDraft(
+      rawDraft,
+      preferences,
+      inputs,
+      config,
+      Boolean(manifest),
+    );
+    const id = randomUUID();
+    const basePlan = {
+      id,
+      version: 1,
+      status: 'awaiting_confirmation' as const,
+      expiresAt: new Date(Date.now() + config.planTtlSeconds * 1000).toISOString(),
+      originalRequest: parsedFields.data.request,
+      assistantMessage: draft.assistantMessage,
+      summary: draft.summary,
+      inputs,
+      assumptions: draft.assumptions,
+      warnings: draft.warnings,
+      ...(webSearchRequested ? { webSearch: { enabled: true as const, sources: webSearchSources ?? [] } } : {}),
+      ...(webSearchWarning ? { warnings: [...draft.warnings, webSearchWarning] } : {}),
+    };
+    let plan: RestrictedAgentPlanSnapshot;
+    if (manifest) {
+      plan = {
+        ...basePlan,
+        schemaVersion: 2,
+        composerSnapshotHash: hashComposerSnapshot(manifest),
+        operation: resolveToolOperation(draft.operation, inputs),
+        policyVersion: POLICY_VERSION,
+      };
+    } else {
+      if (draft.operation.type === 'openshop.edit') {
+        throw new AppError(502, 'invalid_planner_output', '旧版客户端计划不能包含 OpenShop operation');
+      }
+      plan = {
+        ...basePlan,
+        steps: [{
+          title: draft.operation.type === 'image.generate' ? '生成图片' : '编辑图片',
+          operation: draft.operation.generation.action,
+        }],
+        generation: draft.operation.generation,
+        policyVersion: LEGACY_POLICY_VERSION,
+      };
+    }
+    db.insertPlan(plan, session.id, orderedUploads);
+    return plan;
+  } catch (error) {
+    await Promise.all(uploads.map((asset) => assetStore.remove(asset)));
+    throw error;
+  }
+}
+
+function writeSseEvent(reply: { raw: { write: (chunk: string) => unknown } }, event: string, data: unknown): void {
+  reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function streamFailureMessage(error: unknown): string {
+  return error instanceof AppError ? error.message : '计划生成失败';
+}
+
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
   const app = Fastify({
@@ -286,123 +434,31 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   app.post('/v1/plans', async (request, reply) => {
     const session = sessionForMutation(request, reply, config);
-    rateLimiter.consume(`plan:${session.id}`, config.planRatePerMinute, 60_000);
-    if (!request.isMultipart()) throw new AppError(415, 'multipart_required', '创建计划必须使用 multipart/form-data');
+    const plan = await createPlan(request, session, { config, db, assetStore, planner, webSearch, rateLimiter });
+    reply.header('etag', `"${plan.version}"`).header('cache-control', 'no-store').status(201);
+    return { data: plan };
+  });
 
-    const rawFields: Record<string, string> = {};
-    const uploads: UploadedPlanAsset[] = [];
-    const roleCounts = new Map<string, number>();
-    let totalUploadedBytes = 0;
+  app.post('/v1/plans/stream', async (request, reply) => {
+    const session = sessionForMutation(request, reply, config);
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+    });
     try {
-      for await (const part of request.parts()) {
-        if (part.type === 'field') {
-          if (!(part.fieldname in fieldSchema.shape)) throw new AppError(400, 'unknown_field', `不允许字段 ${part.fieldname}`);
-          if (rawFields[part.fieldname] !== undefined) throw new AppError(400, 'duplicate_field', `字段 ${part.fieldname} 重复`);
-          if (typeof part.value !== 'string') throw new AppError(400, 'invalid_field', `字段 ${part.fieldname} 必须是文本`);
-          rawFields[part.fieldname] = part.value;
-          continue;
-        }
-        if (!['reference', 'mask_target', 'mask'].includes(part.fieldname)) {
-          part.file.resume();
-          throw new AppError(400, 'unknown_file_field', `不允许文件字段 ${part.fieldname}`);
-        }
-        const role = part.fieldname as 'reference' | 'mask_target' | 'mask';
-        const roleOrdinal = roleCounts.get(role) ?? 0;
-        const count = roleOrdinal + 1;
-        roleCounts.set(role, count);
-        if (role === 'reference' && count > config.maxReferenceImages) throw new AppError(400, 'too_many_references', '参考图数量超过限制');
-        if (role !== 'reference' && count > 1) throw new AppError(400, 'duplicate_mask_input', `${role} 只能上传一张`);
-        const stored = await assetStore.storeUpload(part, session.id, role);
-        uploads.push({ ...stored, roleOrdinal });
-        totalUploadedBytes += Math.max(stored.uploadedByteSize, stored.byteSize);
-        if (totalUploadedBytes > config.maxUploadBytes) throw new AppError(413, 'upload_too_large', '上传总大小超过限制');
-      }
-
-      const parsedFields = fieldSchema.safeParse(rawFields);
-      if (!parsedFields.success) throw new AppError(400, 'invalid_plan_request', '计划请求字段无效');
-      if (parsedFields.data.imageCount && parsedFields.data.imageCount > config.maxOutputImages) {
-        throw new AppError(400, 'invalid_image_count', `输出图片数量必须为 1-${config.maxOutputImages}`);
-      }
-      const preferences: PlanPreferences = {
-        size: parsedFields.data.size,
-        quality: parsedFields.data.quality,
-        outputFormat: parsedFields.data.outputFormat,
-        outputCompression: parsedFields.data.outputCompression,
-        imageCount: parsedFields.data.imageCount,
-      };
-      const webSearchRequested = parsedFields.data.webSearchEnabled === 'true';
-      let webSearchSources: import('./types.js').WebSearchSource[] | undefined;
-      let webSearchWarning: string | null = null;
-      if (webSearchRequested) {
-        try {
-          rateLimiter.consume(`web-search:${session.id}`, config.webSearchRatePerMinute, 60_000);
-          webSearchSources = await webSearch.search(parsedFields.data.request);
-        } catch (error) {
-          webSearchSources = [];
-          webSearchWarning = `联网搜索未完成：${error instanceof Error ? error.message : '服务不可用'}；本计划按离线信息生成。`;
-        }
-      }
-      const manifest = parsedFields.data.composerSnapshot
-        ? assertComposerFields(parseComposerSnapshotManifest(parsedFields.data.composerSnapshot, config), parsedFields.data)
-        : null;
-      const orderedUploads = manifest ? bindComposerUploads(manifest, uploads) : uploads;
-      const inputs = orderedUploads.map(assetToPlanInput);
-      const draft = validateAndConstrainDraft(
-        await planner.createDraft({
-          request: parsedFields.data.request,
-          preferences,
-          assets: orderedUploads,
-          allowOpenShop: Boolean(manifest),
-          webSearchSources,
-        }),
-        preferences,
-        inputs,
-        config,
-        Boolean(manifest),
+      const plan = await createPlan(
+        request,
+        session,
+        { config, db, assetStore, planner, webSearch, rateLimiter },
+        (text) => writeSseEvent(reply, 'plan.delta', { text }),
       );
-      const id = randomUUID();
-      const basePlan = {
-        id,
-        version: 1,
-        status: 'awaiting_confirmation' as const,
-        expiresAt: new Date(Date.now() + config.planTtlSeconds * 1000).toISOString(),
-        originalRequest: parsedFields.data.request,
-        summary: draft.summary,
-        inputs,
-        assumptions: draft.assumptions,
-        warnings: draft.warnings,
-        ...(webSearchRequested ? { webSearch: { enabled: true as const, sources: webSearchSources ?? [] } } : {}),
-        ...(webSearchWarning ? { warnings: [...draft.warnings, webSearchWarning] } : {}),
-      };
-      let plan: RestrictedAgentPlanSnapshot;
-      if (manifest) {
-        plan = {
-          ...basePlan,
-          schemaVersion: 2,
-          composerSnapshotHash: hashComposerSnapshot(manifest),
-          operation: resolveToolOperation(draft.operation, inputs),
-          policyVersion: POLICY_VERSION,
-        };
-      } else {
-        if (draft.operation.type === 'openshop.edit') {
-          throw new AppError(502, 'invalid_planner_output', '旧版客户端计划不能包含 OpenShop operation');
-        }
-        plan = {
-          ...basePlan,
-          steps: [{
-            title: draft.operation.type === 'image.generate' ? '生成图片' : '编辑图片',
-            operation: draft.operation.generation.action,
-          }],
-          generation: draft.operation.generation,
-          policyVersion: LEGACY_POLICY_VERSION,
-        };
-      }
-      db.insertPlan(plan, session.id, orderedUploads);
-      reply.header('etag', `"${plan.version}"`).header('cache-control', 'no-store').status(201);
-      return { data: plan };
+      writeSseEvent(reply, 'plan.completed', plan);
     } catch (error) {
-      await Promise.all(uploads.map((asset) => assetStore.remove(asset)));
-      throw error;
+      writeSseEvent(reply, 'plan.failed', { message: streamFailureMessage(error) });
+    } finally {
+      reply.raw.end();
     }
   });
 

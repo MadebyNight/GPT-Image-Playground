@@ -93,7 +93,7 @@ function resetRestrictedState(overrides: Record<string, unknown> = {}) {
     error: null,
     assetBindings: [],
     localRun: null,
-    confirmAndExecute: vi.fn(),
+    planningText: '',
     retryOpenShopSave: vi.fn(),
     returnToEditing: vi.fn(),
     cancelExecution: vi.fn(),
@@ -202,8 +202,8 @@ describe('AgentMainWorkspace', () => {
     expect(markup).not.toContain('尝试取消')
   })
 
-  it('未绑定 task 的 planning 在选中历史任务时覆盖旧消息并显示当前草稿', () => {
-    resetRestrictedState({ phase: 'planning', taskId: null })
+  it('未绑定 task 的 planning 在选中历史任务时覆盖旧消息并显示流式文本', () => {
+    resetRestrictedState({ phase: 'planning', taskId: null, planningText: '正在梳理蓝色海报的构图。' })
     const historical = {
       ...task('historical-planning-task'),
       agentOriginalRequest: '不应显示的旧历史请求',
@@ -214,15 +214,15 @@ describe('AgentMainWorkspace', () => {
     )
 
     expect(markup).toContain('规划中的用户请求')
-    expect(markup).toContain('Planner 正在生成可审查的执行计划')
+    expect(markup).toContain('正在梳理蓝色海报的构图。')
     expect(markup).not.toContain('不应显示的旧历史请求')
     expect(markup).not.toContain('任务完成')
     expect(markup).not.toContain('data-agent-result-images')
     expect(markup).not.toContain('data-task-action-row="agent"')
   })
 
-  it('未绑定 task 的待确认计划在选中历史任务时显示新计划卡', () => {
-    resetRestrictedState({ phase: 'awaiting_confirmation', taskId: null, plan })
+  it('兼容中的 awaiting_confirmation 立即作为执行启动展示，不显示计划确认卡', () => {
+    resetRestrictedState({ phase: 'awaiting_confirmation', taskId: null, plan, planningText: '规划完成，准备执行。' })
     const historical = {
       ...task('historical-confirmation-task'),
       agentOriginalRequest: '不应显示的旧确认历史请求',
@@ -233,8 +233,10 @@ describe('AgentMainWorkspace', () => {
     )
 
     expect(markup).toContain(plan.originalRequest)
-    expect(markup).toContain('data-component="plan-card"')
-    expect(markup).toContain(plan.summary)
+    expect(markup).toContain('规划完成，准备执行。')
+    expect(markup).toContain('正在启动执行')
+    expect(markup).not.toContain('data-component="plan-card"')
+    expect(markup).not.toContain('确认')
     expect(markup).not.toContain('不应显示的旧确认历史请求')
     expect(markup).not.toContain('任务完成')
     expect(markup).not.toContain('execution-recorded')
@@ -261,27 +263,22 @@ describe('AgentMainWorkspace', () => {
     expect(markup).not.toContain('data-task-action-row="agent"')
   })
 
-  it('planning、确认和 execution 在同一 Agent 回复位置演进，执行中直显取消动作', () => {
-    resetRestrictedState({ phase: 'planning' })
+  it('流式规划文字在规划和执行中保留，且不提供确认控件', () => {
+    const planningText = '我会先确定画面构图，再生成蓝色产品海报。'
+    resetRestrictedState({ phase: 'planning', planningText })
     const planningMarkup = renderToStaticMarkup(
       <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
     )
     expect(planningMarkup).toContain('data-agent-tool-response')
     expect(planningMarkup).toContain('data-agent-tool-user-message')
     expect(planningMarkup).toContain('规划中的用户请求')
-    expect(planningMarkup).toContain('Planner 正在生成可审查的执行计划')
-
-    resetRestrictedState({ phase: 'awaiting_confirmation', plan })
-    const confirmationMarkup = renderToStaticMarkup(
-      <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
-    )
-    expect(confirmationMarkup).toContain('data-agent-tool-user-message')
-    expect(confirmationMarkup).toContain('data-agent-tool-response')
-    expect(confirmationMarkup).toContain('data-component="plan-card"')
+    expect(planningMarkup).toContain(planningText)
+    expect(planningMarkup).not.toContain('确认')
 
     resetRestrictedState({
       phase: 'executing',
       plan,
+      planningText,
       taskId: 'live-task',
       execution: {
         id: 'execution-live',
@@ -301,9 +298,11 @@ describe('AgentMainWorkspace', () => {
       <AgentMainWorkspace mode="tool" chatTask={null} toolTask={runningTask} />,
     )
     expect(executionMarkup).toContain('data-agent-tool-response')
-    expect(executionMarkup).toContain('Gateway 正在执行已确认计划')
+    expect(executionMarkup).toContain(planningText)
+    expect(executionMarkup).toContain('Gateway 正在执行计划')
     expect(executionMarkup).toContain('尝试取消')
     expect(executionMarkup).toContain('execution-live')
+    expect(executionMarkup).not.toContain('确认')
   })
 
   it('OpenShop 导出等待保存时只直显重试保存，并将 Run 信息放入详情', () => {
@@ -345,12 +344,14 @@ describe('AgentMainWorkspace', () => {
   })
 
   it('失败、取消、过期和 stale 的恢复动作保持直接可见', () => {
-    resetRestrictedState({ phase: 'failed', error: '规划服务不可用' })
+    resetRestrictedState({ phase: 'failed', error: '规划服务不可用', planningText: '此前已完成规划说明。' })
     const failedMarkup = renderToStaticMarkup(
       <AgentMainWorkspace mode="tool" chatTask={null} toolTask={null} />,
     )
     expect(failedMarkup).toContain('规划服务不可用')
+    expect(failedMarkup).toContain('此前已完成规划说明。')
     expect(failedMarkup).toContain('返回修改')
+    expect(failedMarkup).not.toContain('确认')
 
     resetRestrictedState({ phase: 'stale', plan, error: '输入已变化' })
     const staleMarkup = renderToStaticMarkup(

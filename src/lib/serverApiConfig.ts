@@ -7,7 +7,6 @@ export const SERVER_MANAGED_PROFILE_ID = 'server-managed-openai'
 export const DEFAULT_SERVER_API_PROXY_PATH = '/api-proxy'
 export const DEFAULT_RESTRICTED_AGENT_BASE_PATH = '/agent-api/v1'
 export const SERVER_API_CONFIG_UNAVAILABLE_MESSAGE = '服务端 API 配置不可用，请联系部署管理员'
-export const AGENT_MODE_PREFERENCE_KEY = 'agent-mode-v1'
 
 interface DisabledServerApiConfig {
   enabled: false
@@ -322,7 +321,7 @@ export function getChatCapabilities(settings: AppSettings): ChatCapabilities {
 export function getAgentCapabilities(settings: AppSettings): AgentCapabilities {
   const chat = getChatCapabilities(settings)
   const tool = isRestrictedAgentEnabled()
-  const defaultMode: AgentMode | null = chat.chatUsable ? 'chat' : tool ? 'tool' : null
+  const defaultMode: AgentMode | null = tool ? 'tool' : chat.chatUsable ? 'chat' : null
   return {
     chatAllowed: chat.chatAllowed,
     chatConfigured: chat.chatConfigured,
@@ -330,7 +329,6 @@ export function getAgentCapabilities(settings: AppSettings): AgentCapabilities {
     tool,
     openShopTool: false,
     defaultMode,
-    modeSwitching: chat.chatUsable && tool,
   }
 }
 
@@ -338,39 +336,6 @@ export function resolveAgentMode(capabilities: AgentCapabilities, preferredMode:
   if (preferredMode === 'chat' && capabilities.chatUsable) return 'chat'
   if (preferredMode === 'tool' && capabilities.tool) return 'tool'
   return capabilities.defaultMode
-}
-
-type AgentModeStorage = Pick<Storage, 'getItem' | 'setItem'>
-
-function getDefaultModeStorage(): AgentModeStorage | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage
-  } catch {
-    return null
-  }
-}
-
-export function getAgentModePreference(storage?: AgentModeStorage | null): AgentMode | null {
-  if (runtimeState.status !== 'ready') return null
-  try {
-    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
-    if (!targetStorage) return null
-    const value = targetStorage.getItem(AGENT_MODE_PREFERENCE_KEY)
-    return value === 'chat' || value === 'tool' ? value : null
-  } catch {
-    return null
-  }
-}
-
-export function setAgentModePreference(mode: AgentMode, storage?: AgentModeStorage | null): void {
-  if (runtimeState.status !== 'ready') return
-  try {
-    const targetStorage = storage === undefined ? getDefaultModeStorage() : storage
-    if (!targetStorage) return
-    targetStorage.setItem(AGENT_MODE_PREFERENCE_KEY, mode)
-  } catch {
-    // 隐私模式或禁用存储时保持当前会话内选择即可。
-  }
 }
 
 export function getChatUnavailableMessage(settings: AppSettings): string {

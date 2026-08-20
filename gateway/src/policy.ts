@@ -42,6 +42,7 @@ const openShopDraftOperationSchema = z.object({
 }).strict();
 
 export const plannerDraftSchema = z.object({
+  assistantMessage: z.string().trim().min(1).max(240),
   summary: z.string().trim().min(1).max(1000),
   operation: z.discriminatedUnion('type', [
     imageGenerateOperationSchema,
@@ -154,8 +155,9 @@ const commandJsonSchemas = [
 export const plannerJsonSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'operation', 'assumptions', 'warnings'],
+  required: ['assistantMessage', 'summary', 'operation', 'assumptions', 'warnings'],
   properties: {
+    assistantMessage: { type: 'string', minLength: 1, maxLength: 240, description: '展示给用户的简短计划说明；不包含 JSON、内部推理或执行细节。' },
     summary: { type: 'string', minLength: 1, maxLength: 1000 },
     operation: {
       anyOf: [
@@ -328,6 +330,7 @@ export function validateAndConstrainDraft(
       throw new AppError(400, 'invalid_openshop_input', 'OpenShop inputIndex 必须引用唯一输入图片');
     }
     return {
+      assistantMessage: draft.assistantMessage,
       summary: draft.summary,
       operation: {
         type: 'openshop.edit',

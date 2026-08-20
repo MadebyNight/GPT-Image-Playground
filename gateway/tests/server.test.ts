@@ -225,6 +225,143 @@ async function createPlan(context: Awaited<ReturnType<typeof setup>>, fields: Re
   });
 }
 
+async function streamPlan(context: Awaited<ReturnType<typeof setup>>, fields: Record<string, string> = { request: '生成一张红色图片' }) {
+  const request = fields.request ?? '生成一张红色图片';
+  const form = multipart({
+    size: '1024x1024',
+    quality: 'medium',
+    outputFormat: 'png',
+    imageCount: '1',
+    ...fields,
+    composerSnapshot: fields.composerSnapshot ?? composerSnapshot({
+      request,
+      params: {
+        size: fields.size ?? '1024x1024',
+        quality: (fields.quality as 'auto' | 'low' | 'medium' | 'high' | undefined) ?? 'medium',
+        outputFormat: (fields.outputFormat as 'png' | 'jpeg' | 'webp' | undefined) ?? 'png',
+        outputCompression: fields.outputFormat === 'png' || !fields.outputFormat
+          ? null
+          : fields.outputCompression ? Number(fields.outputCompression) : 90,
+        imageCount: fields.imageCount ? Number(fields.imageCount) : 1,
+      },
+    }),
+  });
+  return context.app.inject({
+    method: 'POST', url: '/v1/plans/stream', payload: form.payload,
+    headers: { ...context.mutationHeaders, 'content-type': form.contentType },
+  });
+}
+
+function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
+  return body.trim().split(/\r?\n\r?\n/).filter(Boolean).map((block) => {
+    const lines = block.split(/\r?\n/);
+    const event = lines.find((line) => line.startsWith('event:'))?.slice('event:'.length).trim();
+    const data = lines.filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice('data:'.length).trim()).join('\n');
+    if (!event) throw new Error(`缺少 SSE event：${block}`);
+    return { event, data: JSON.parse(data) };
+  });
+}
+
+describe('流式计划', () => {
+  const streamingDraft = {
+    assistantMessage: '我会生成一张红色测试图片。',
+    summary: '生成一张测试图片',
+    operation: {
+      type: 'image.generate' as const,
+      generation: {
+        exactPrompt: '一张红色测试图片', action: 'generate' as const, size: '1024x1024', quality: 'medium' as const,
+        outputFormat: 'png' as const, outputCompression: null, imageCount: 1,
+      },
+    },
+    assumptions: [],
+    warnings: [],
+  };
+
+  it('以 stream:true 读取上游 delta，并且只回调 assistantMessage 文本', async () => {
+    const config = await makeConfig();
+    const output = JSON.stringify(streamingDraft);
+    const splitAt = output.indexOf('我会') + '我会'.length;
+    const first = output.slice(0, splitAt);
+    const second = output.slice(splitAt);
+    const upstream = [
+      `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta: first })}\n\n`,
+      `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta: second })}\n\n`,
+      'data: [DONE]\n\n',
+    ].join('');
+    const bytes = new TextEncoder().encode(upstream);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 37));
+        controller.enqueue(bytes.slice(37));
+        controller.close();
+      },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+
+    const deltas: string[] = [];
+    const draft = await new ResponsesPlanner(config).createDraft(
+      { request: '生成一张红色图片', preferences: {}, assets: [], allowOpenShop: true },
+      { onAssistantMessageDelta: (text) => deltas.push(text) },
+    );
+
+    const body = JSON.parse(String(vi.mocked(globalThis.fetch).mock.calls[0]?.[1]?.body));
+    expect(body.stream).toBe(true);
+    expect(deltas).toEqual(['我会', '生成一张红色测试图片。']);
+    expect(draft).toEqual(streamingDraft);
+  });
+
+  it('转发可见增量，在完成校验和持久化后才输出完整计划', async () => {
+    const planner: Planner = {
+      createDraft: vi.fn(async (_input, options) => {
+        options?.onAssistantMessageDelta?.('我会');
+        options?.onAssistantMessageDelta?.('生成一张红色测试图片。');
+        return streamingDraft;
+      }),
+    };
+    const context = await setup({ planner });
+    const response = await streamPlan(context);
+    const events = parseSseEvents(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(events.slice(0, 2)).toEqual([
+      { event: 'plan.delta', data: { text: '我会' } },
+      { event: 'plan.delta', data: { text: '生成一张红色测试图片。' } },
+    ]);
+    expect(events).toHaveLength(3);
+    expect(events[2]).toMatchObject({
+      event: 'plan.completed',
+      data: { assistantMessage: streamingDraft.assistantMessage, status: 'awaiting_confirmation' },
+    });
+    const plan = (events[2]!.data as { id: string });
+    const stored = await context.app.inject({ method: 'GET', url: `/v1/plans/${plan.id}`, headers: { host: 'app.internal', cookie: context.cookie } });
+    expect(stored.statusCode).toBe(200);
+    expect(stored.json().data.assistantMessage).toBe(streamingDraft.assistantMessage);
+  });
+
+  it('Planner 流中失败输出 terminal plan.failed，且不持久化半成品计划', async () => {
+    const planner: Planner = {
+      createDraft: vi.fn(async (_input, options) => {
+        options?.onAssistantMessageDelta?.('我会处理这张图片。');
+        throw new Error('upstream raw failure');
+      }),
+    };
+    const context = await setup({ planner });
+    const response = await streamPlan(context);
+    const events = parseSseEvents(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(events).toEqual([
+      { event: 'plan.delta', data: { text: '我会处理这张图片。' } },
+      { event: 'plan.failed', data: { message: '计划生成失败' } },
+    ]);
+    const db = new GatewayDatabase(context.config);
+    const count = db.raw.prepare('SELECT COUNT(*) AS count FROM plans').get() as { count: number };
+    db.close();
+    expect(count.count).toBe(0);
+  });
+});
+
 async function waitForTerminal(app: FastifyInstance, id: string, cookie: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const response = await app.inject({ method: 'GET', url: `/v1/executions/${id}`, headers: { host: 'app.internal', cookie } });
@@ -476,6 +613,7 @@ describe('two phase gateway', () => {
 
     const invalidCommandPlanner: Planner = {
       createDraft: vi.fn(async () => ({
+        assistantMessage: '我会编辑现有图片。',
         summary: '非法编辑',
         operation: {
           type: 'openshop.edit',
@@ -502,6 +640,7 @@ describe('two phase gateway', () => {
 
     const tooManyPlanner: Planner = {
       createDraft: vi.fn(async () => ({
+        assistantMessage: '我会编辑现有图片。',
         summary: '过多命令',
         operation: {
           type: 'openshop.edit',
@@ -529,6 +668,7 @@ describe('two phase gateway', () => {
   it('OpenShop crop 接受 8000 万像素边界并拒绝超限 Planner 输出', async () => {
     const cropPlanner = (width: number, height: number): Planner => ({
       createDraft: vi.fn(async () => ({
+        assistantMessage: '我会裁剪现有图片。',
         summary: '裁剪现有图片',
         operation: {
           type: 'openshop.edit', inputIndex: 0, outputFormat: 'png',
@@ -568,6 +708,7 @@ describe('two phase gateway', () => {
     const config = await makeConfig();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output_text: JSON.stringify({
+        assistantMessage: '我会生成图片。',
         summary: '生成图片',
         operation: {
           type: 'image.generate',

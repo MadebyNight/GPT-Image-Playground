@@ -30,7 +30,7 @@ interface AgentMainWorkspaceProps {
 
 const STATUS_LABELS: Record<RestrictedAgentExecutionStatus, string> = {
   queued: '已进入受限执行队列',
-  executing: 'Gateway 正在执行已确认计划',
+  executing: 'Gateway 正在执行计划',
   completed: '执行完成',
   failed: '执行失败',
   cancelled: '执行已取消',
@@ -215,6 +215,7 @@ function getLiveReplyState({
   execution,
   localRun,
   error,
+  planningText,
   retryOpenShopSave,
   returnToEditing,
   cancelExecution,
@@ -223,20 +224,30 @@ function getLiveReplyState({
   execution: RestrictedAgentExecution | null
   localRun: OpenShopToolLocalRun | null
   error: string | null
+  planningText: string
   retryOpenShopSave: () => Promise<string | null>
   returnToEditing: () => void
   cancelExecution: () => Promise<void>
 }): LiveReplyState {
+  const streamedText = planningText.trim() || undefined
   if (phase === 'planning') {
     return {
-      assistantText: 'Planner 正在生成可审查的执行计划，此阶段不会调用图片接口。',
+      assistantText: streamedText || '正在规划执行步骤…',
       status: { label: '规划中', tone: 'progress' },
+    }
+  }
+
+  if (phase === 'awaiting_confirmation' || phase === 'confirming') {
+    return {
+      assistantText: streamedText,
+      status: { label: '正在启动执行', tone: 'progress' },
     }
   }
 
   if (execution) {
     const terminal = ['failed', 'failed_unknown', 'cancelled'].includes(execution.status)
     return {
+      assistantText: streamedText,
       status: {
         label: STATUS_LABELS[execution.status],
         detail: `执行 ID：${execution.id}`,
@@ -258,6 +269,7 @@ function getLiveReplyState({
   if (localRun) {
     const terminal = ['cancelled', 'failed', 'interrupted', 'expired'].includes(localRun.status)
     return {
+      assistantText: streamedText,
       status: {
         label: LOCAL_RUN_STATUS_LABELS[localRun.status],
         detail: `本地 Run：${localRun.id}`,
@@ -282,6 +294,7 @@ function getLiveReplyState({
 
   if (phase === 'expired' || phase === 'stale') {
     return {
+      assistantText: streamedText,
       status: { label: phase === 'expired' ? '计划已过期' : '计划已过时', tone: 'warning' },
       errorMessage: error || (phase === 'expired'
         ? '计划已过期。返回修改后重新生成计划，旧计划不会被执行。'
@@ -291,6 +304,7 @@ function getLiveReplyState({
 
   if (phase === 'failed' && error) {
     return {
+      assistantText: streamedText,
       status: { label: 'Agent 流程失败', tone: 'error' },
       errorMessage: error,
       recoveryActions: (
@@ -310,9 +324,8 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const liveExecution = useRestrictedAgentStore((state) => state.execution)
   const flowTaskId = useRestrictedAgentStore((state) => state.taskId)
   const liveError = useRestrictedAgentStore((state) => state.error)
-  const assetBindings = useRestrictedAgentStore((state) => state.assetBindings)
+  const planningText = useRestrictedAgentStore((state) => state.planningText)
   const liveLocalRun = useRestrictedAgentStore((state) => state.localRun)
-  const confirmAndExecute = useRestrictedAgentStore((state) => state.confirmAndExecute)
   const retryOpenShopSave = useRestrictedAgentStore((state) => state.retryOpenShopSave)
   const returnToEditing = useRestrictedAgentStore((state) => state.returnToEditing)
   const cancelExecution = useRestrictedAgentStore((state) => state.cancelExecution)
@@ -333,15 +346,14 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
   const requestText = hasLiveFlow
     ? livePlan?.originalRequest || displayedTask?.agentOriginalRequest || displayedTask?.prompt || liveDraftRequest
     : displayedTask?.agentOriginalRequest || displayedTask?.prompt || ''
-  const showPlanCard = Boolean(hasLiveFlow && livePlan && (
-    phase === 'awaiting_confirmation' || phase === 'confirming' || phase === 'expired' || phase === 'stale'
-  ))
+  const showPlanCard = Boolean(hasLiveFlow && livePlan && (phase === 'expired' || phase === 'stale'))
   const liveReply = hasLiveFlow
     ? getLiveReplyState({
         phase,
         execution,
         localRun,
         error: liveError,
+        planningText,
         retryOpenShopSave,
         returnToEditing,
         cancelExecution,
@@ -372,6 +384,7 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
     execution?.status,
     localRun?.status,
     localRun?.saveStatus,
+    planningText,
     errorMessage ? String(errorMessage) : '',
   ].join(':')
 
@@ -385,7 +398,7 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
           <div>
             <h2 id="tool-agent-workspace-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">Tool Agent 工作区</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
-              输入图片需求后先生成执行计划。你确认 Prompt、参数和步骤后，Gateway 才会调用图片接口。
+              输入图片需求后，Agent 会展示规划说明并自动执行。
             </p>
           </div>
         </section>
@@ -425,10 +438,7 @@ function RestrictedAgentMainWorkspace({ task }: { task: TaskRecord | null }) {
                 <div className="mt-3">
                   <AgentPlanCard
                     plan={livePlan}
-                    assetBindings={assetBindings}
-                    confirming={phase === 'confirming'}
                     stale={phase === 'stale'}
-                    onConfirm={() => { void confirmAndExecute() }}
                     onReturnToEditing={returnToEditing}
                   />
                   {details ? <div className="mt-4">{details}</div> : null}

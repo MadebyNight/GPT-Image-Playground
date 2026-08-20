@@ -56,6 +56,10 @@ export interface RestrictedAgentPlanCreation {
   assetBindings: RestrictedAgentAssetBinding[]
 }
 
+export interface RestrictedAgentPlanStreamOptions {
+  onDelta?: (text: string) => void
+}
+
 export interface RestrictedAgentExecutionEvent {
   type:
     | 'execution.queued'
@@ -378,13 +382,14 @@ export function decodeRestrictedAgentPlan(value: unknown): RestrictedAgentPlan {
     || typeof value.expiresAt !== 'string' || !ISO_DATETIME_PATTERN.test(value.expiresAt)
     || typeof value.originalRequest !== 'string'
     || !isNonEmptyString(value.summary)
+    || (value.assistantMessage !== undefined && !isNonEmptyString(value.assistantMessage))
     || !isStringArray(value.assumptions)
     || !isStringArray(value.warnings)
     || !isNonEmptyString(value.policyVersion)) {
     throw new Error('计划公共字段 schema 无效')
   }
   if (value.schemaVersion === undefined) {
-    if (!hasExactKeys(value, [...commonRequired, 'steps', 'generation'], ['webSearch'])) throw new Error('旧版计划 schema 无效')
+    if (!hasExactKeys(value, [...commonRequired, 'steps', 'generation'], ['webSearch', 'assistantMessage'])) throw new Error('旧版计划 schema 无效')
     if (!Array.isArray(value.steps) || value.steps.length < 1 || !Array.isArray(value.inputs)) throw new Error('旧版计划 schema 无效')
     const generation = decodeGeneration(value.generation)
     const steps = value.steps.map((step) => {
@@ -404,7 +409,7 @@ export function decodeRestrictedAgentPlan(value: unknown): RestrictedAgentPlan {
     } as unknown as RestrictedAgentPlan
   }
   if (value.schemaVersion !== 2
-    || !hasExactKeys(value, [...commonRequired, 'schemaVersion', 'composerSnapshotHash', 'operation'], ['webSearch'])
+    || !hasExactKeys(value, [...commonRequired, 'schemaVersion', 'composerSnapshotHash', 'operation'], ['webSearch', 'assistantMessage'])
     || typeof value.composerSnapshotHash !== 'string'
     || !/^[a-f0-9]{64}$/.test(value.composerSnapshotHash)
     || !Array.isArray(value.inputs)) {
@@ -596,7 +601,7 @@ export async function getRestrictedAgentCapabilities(options: { refresh?: boolea
   return capabilitiesPromise
 }
 
-async function postWithCsrf<T>(path: string, init: Omit<RequestInit, 'method'> = {}) {
+async function postWithCsrfResponse(path: string, init: Omit<RequestInit, 'method'> = {}) {
   const capability = await getRestrictedAgentCapabilities()
   const request = () => fetch(`${getAgentApiBase()}${path}`, {
     ...init,
@@ -625,10 +630,15 @@ async function postWithCsrf<T>(path: string, init: Omit<RequestInit, 'method'> =
       },
     })
   }
+  return response
+}
+
+async function postWithCsrf<T>(path: string, init: Omit<RequestInit, 'method'> = {}) {
+  const response = await postWithCsrfResponse(path, init)
   return readEnvelope<T>(response)
 }
 
-export async function createRestrictedAgentPlan(input: RestrictedAgentPlanRequest): Promise<RestrictedAgentPlanCreation> {
+async function createPlanForm(input: RestrictedAgentPlanRequest) {
   const manifest = await createComposerSnapshotManifest(input)
   const expectedHash = await hashComposerSnapshotManifest(manifest)
   const form = new FormData()
@@ -649,8 +659,122 @@ export async function createRestrictedAgentPlan(input: RestrictedAgentPlanReques
     const name = input.mask.fileName ?? `mask.${extensionForDataUrl(input.mask.dataUrl)}`
     form.set('mask', dataUrlToFile(input.mask.dataUrl, name))
   }
+  return { expectedHash, form }
+}
+
+function decodePlanStreamEvent(block: string) {
+  let type = 'message'
+  const data: string[] = []
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue
+    const separator = line.indexOf(':')
+    const field = separator === -1 ? line : line.slice(0, separator)
+    const value = separator === -1 ? '' : line.slice(separator + 1).replace(/^ /, '')
+    if (field === 'event') type = value
+    if (field === 'data') data.push(value)
+  }
+  return data.length ? { type, data: data.join('\n') } : null
+}
+
+function decodePlanStreamPayload(data: string) {
+  try {
+    return JSON.parse(data) as unknown
+  } catch {
+    throw new Error('Agent Gateway 流式规划事件 JSON 无效')
+  }
+}
+
+function decodePlanDelta(value: unknown) {
+  if (!isRecord(value) || !hasExactKeys(value, ['text']) || typeof value.text !== 'string') {
+    throw new Error('Agent Gateway 流式规划增量格式无效')
+  }
+  return value.text
+}
+
+function decodePlanStreamFailure(value: unknown) {
+  if (!isRecord(value) || !hasExactKeys(value, ['message']) || !isNonEmptyString(value.message)) {
+    throw new Error('Agent Gateway 流式规划失败事件格式无效')
+  }
+  return value.message
+}
+
+export async function createRestrictedAgentPlan(input: RestrictedAgentPlanRequest): Promise<RestrictedAgentPlanCreation> {
+  const { expectedHash, form } = await createPlanForm(input)
 
   const plan = decodeRestrictedAgentPlan(await postWithCsrf<unknown>('/plans', { body: form }))
+  if (plan.schemaVersion !== 2 || plan.composerSnapshotHash !== expectedHash) {
+    throw new Error('Gateway 返回的 Composer 快照哈希与本地冻结输入不一致')
+  }
+  return { plan, assetBindings: createBindings(plan, input) }
+}
+
+export async function streamRestrictedAgentPlan(
+  input: RestrictedAgentPlanRequest,
+  options: RestrictedAgentPlanStreamOptions = {},
+): Promise<RestrictedAgentPlanCreation> {
+  const { expectedHash, form } = await createPlanForm(input)
+  const response = await postWithCsrfResponse('/plans/stream', {
+    body: form,
+    headers: { Accept: 'text/event-stream' },
+  })
+  if (!response.ok) {
+    let payload: unknown = null
+    try {
+      payload = await response.json()
+    } catch {
+      // 非 JSON 错误由统一状态文本兜底。
+    }
+    throw readApiError(payload, response)
+  }
+  if (!response.body) throw new Error('Agent Gateway 未返回流式规划响应')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completedPlan: RestrictedAgentPlan | null = null
+  const consume = (flush = false) => {
+    if (flush && buffer.trim()) {
+      const event = decodePlanStreamEvent(buffer)
+      buffer = ''
+      if (event) handle(event)
+      return
+    }
+    const boundary = /\r?\n\r?\n/
+    let match = boundary.exec(buffer)
+    while (match) {
+      const event = decodePlanStreamEvent(buffer.slice(0, match.index))
+      buffer = buffer.slice(match.index + match[0].length)
+      if (event) handle(event)
+      match = boundary.exec(buffer)
+    }
+  }
+  const handle = (event: { type: string; data: string }) => {
+    const payload = decodePlanStreamPayload(event.data)
+    if (event.type === 'plan.delta') {
+      options.onDelta?.(decodePlanDelta(payload))
+      return
+    }
+    if (event.type === 'plan.failed') throw new Error(decodePlanStreamFailure(payload))
+    if (event.type === 'plan.completed') {
+      if (completedPlan) throw new Error('Agent Gateway 重复发送规划完成事件')
+      completedPlan = decodeRestrictedAgentPlan(payload)
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      consume()
+    }
+    buffer += decoder.decode()
+    consume(true)
+  } finally {
+    reader.releaseLock()
+  }
+  const plan = completedPlan as RestrictedAgentPlan | null
+  if (!plan) throw new Error('Agent Gateway 流式规划未返回完成事件')
   if (plan.schemaVersion !== 2 || plan.composerSnapshotHash !== expectedHash) {
     throw new Error('Gateway 返回的 Composer 快照哈希与本地冻结输入不一致')
   }

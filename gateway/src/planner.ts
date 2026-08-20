@@ -12,8 +12,12 @@ export interface PlannerInput {
   webSearchSources?: WebSearchSource[];
 }
 
+export interface PlannerOptions {
+  onAssistantMessageDelta?: (text: string) => void;
+}
+
 export interface Planner {
-  createDraft(input: PlannerInput): Promise<unknown>;
+  createDraft(input: PlannerInput, options?: PlannerOptions): Promise<unknown>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,14 +86,122 @@ function extractOutputText(payload: unknown): string | null {
   return null;
 }
 
+interface SseEvent {
+  event: string;
+  data: string;
+}
+
+function parseSseEvent(block: string): SseEvent | null {
+  let event = 'message';
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue;
+    const colon = line.indexOf(':');
+    const field = colon === -1 ? line : line.slice(0, colon);
+    const value = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '');
+    if (field === 'event') event = value;
+    if (field === 'data') data.push(value);
+  }
+  return data.length ? { event, data: data.join('\n') } : null;
+}
+
+async function* readSseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const separator = /\r?\n\r?\n/;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      if (done) {
+        buffer += decoder.decode();
+      }
+      while (true) {
+        const match = separator.exec(buffer);
+        if (!match || match.index === undefined) break;
+        const parsed = parseSseEvent(buffer.slice(0, match.index));
+        buffer = buffer.slice(match.index + match[0].length);
+        if (parsed) yield parsed;
+      }
+      if (done) break;
+    }
+    const parsed = parseSseEvent(buffer);
+    if (parsed) yield parsed;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function decodeJsonStringPrefix(input: string, start: number): string {
+  let result = '';
+  for (let index = start; index < input.length; index += 1) {
+    const char = input[index]!;
+    if (char === '"') return result;
+    if (char !== '\\') {
+      if (char < ' ') return result;
+      result += char;
+      continue;
+    }
+    const escape = input[index + 1];
+    if (!escape) return result;
+    if (escape === 'u') {
+      const code = input.slice(index + 2, index + 6);
+      if (!/^[0-9a-f]{4}$/i.test(code)) return result;
+      result += String.fromCharCode(Number.parseInt(code, 16));
+      index += 5;
+      continue;
+    }
+    const decoded = ({ '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' } as Record<string, string>)[escape];
+    if (decoded === undefined) return result;
+    result += decoded;
+    index += 1;
+  }
+  return result;
+}
+
+class AssistantMessageDeltaParser {
+  private output = '';
+  private valueStart = -1;
+  private emittedLength = 0;
+
+  append(delta: string): string | null {
+    this.output += delta;
+    if (this.valueStart === -1) {
+      const match = /"assistantMessage"\s*:\s*"/.exec(this.output);
+      if (!match || match.index === undefined) return null;
+      this.valueStart = match.index + match[0].length;
+    }
+    const message = decodeJsonStringPrefix(this.output, this.valueStart);
+    if (message.length <= this.emittedLength) return null;
+    const next = message.slice(this.emittedLength);
+    this.emittedLength = message.length;
+    return next || null;
+  }
+
+  get outputText(): string {
+    return this.output;
+  }
+}
+
+function streamFailure(payload: unknown): AppError {
+  const root = isRecord(payload) ? payload : undefined;
+  const response = root && isRecord(root.response) ? root.response : undefined;
+  const error = (root && isRecord(root.error) ? root.error : undefined)
+    ?? (response && isRecord(response.error) ? response.error : undefined);
+  const message = error && sanitizeUpstreamText(error.message);
+  return new AppError(502, 'planner_stream_failed', `Planner 流式响应失败${message ? `：${message}` : ''}`);
+}
+
 export class ResponsesPlanner implements Planner {
   constructor(private readonly config: GatewayConfig) {}
 
-  async createDraft(input: PlannerInput): Promise<unknown> {
+  async createDraft(input: PlannerInput, options: PlannerOptions = {}): Promise<unknown> {
     const content: Array<Record<string, unknown>> = [{
       type: 'input_text',
       text: [
         '你是一个受限图片工具计划器。只返回符合 schema 的单一 operation，不执行任何工具。',
+        'assistantMessage 是展示给用户的简短说明，直接说明即将处理什么；不得包含 JSON、内部推理或执行细节，最多 120 个字符。',
         '精确描述最终图像，并把用户未明确说明但执行所必需的判断列入 assumptions。',
         '图片 API 只能选择 image.generate 或 image.edit，operation.type 必须与 generation.action 一致。',
         input.allowOpenShop
@@ -133,6 +245,7 @@ export class ResponsesPlanner implements Planner {
               schema: plannerJsonSchema,
             },
           },
+          ...(options.onAssistantMessageDelta ? { stream: true } : {}),
         }),
         redirect: 'error',
         signal,
@@ -149,6 +262,39 @@ export class ResponsesPlanner implements Planner {
         `Planner 上游返回 HTTP ${response.status}${upstreamError.message ? `：${upstreamError.message}` : ''}`,
         upstreamError.details,
       );
+    }
+
+    if (options.onAssistantMessageDelta) {
+      if (!response.body) throw new AppError(502, 'invalid_planner_response', 'Planner 未返回流式响应体');
+      const output = new AssistantMessageDeltaParser();
+      try {
+        for await (const event of readSseEvents(response.body)) {
+          if (event.data === '[DONE]') continue;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(event.data) as unknown;
+          } catch {
+            throw new AppError(502, 'invalid_planner_response', 'Planner 返回了无效流事件');
+          }
+          const type = isRecord(payload) && typeof payload.type === 'string' ? payload.type : event.event;
+          if (type === 'error' || type === 'response.failed' || type === 'response.incomplete') {
+            throw streamFailure(payload);
+          }
+          if (type !== 'response.output_text.delta' || !isRecord(payload) || typeof payload.delta !== 'string') continue;
+          const delta = output.append(payload.delta);
+          if (delta) options.onAssistantMessageDelta(delta);
+        }
+      } catch (error) {
+        if (signal.aborted) throw new AppError(504, 'planner_timeout', 'Planner 请求超时');
+        if (error instanceof AppError) throw error;
+        throw new AppError(502, 'planner_stream_failed', 'Planner 流式响应失败');
+      }
+      if (!output.outputText) throw new AppError(502, 'missing_planner_output', 'Planner 未返回结构化计划');
+      try {
+        return JSON.parse(output.outputText) as PlannerDraft;
+      } catch {
+        throw new AppError(502, 'invalid_planner_output', 'Planner 计划不是有效 JSON');
+      }
     }
 
     let payload: unknown;

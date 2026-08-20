@@ -7,12 +7,10 @@ import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigration
 import { useRestrictedAgentStore } from './restrictedAgentStore'
 import {
   getAgentCapabilities,
-  getAgentModePreference,
   getRuntimeConfigState,
   isRestrictedAgentEnabled,
   isRestrictedAgentOnly,
   resolveAgentMode,
-  setAgentModePreference,
 } from './lib/serverApiConfig'
 import type { AgentMode } from './types'
 import Header from './components/Header'
@@ -47,7 +45,7 @@ export default function App() {
   const restrictedAgentEnabled = isRestrictedAgentEnabled()
   const restrictedAgentOnly = restrictedAgentEnabled && isRestrictedAgentOnly()
   const agentCapabilities = useMemo(() => getAgentCapabilities(settings), [settings])
-  const initialAgentMode = resolveAgentMode(agentCapabilities, getAgentModePreference()) ?? 'chat'
+  const initialAgentMode = resolveAgentMode(agentCapabilities, 'tool') ?? 'chat'
   const [workspaceMode, setWorkspaceMode] = useState<'gallery' | 'agent'>(() => restrictedAgentOnly ? 'agent' : 'gallery')
   const [agentMode, setAgentMode] = useState<AgentMode>(initialAgentMode)
   const [activeTaskByMode, setActiveTaskByMode] = useState<Record<AgentMode, string | null>>({ chat: null, tool: null })
@@ -68,12 +66,6 @@ export default function App() {
     setActiveTaskByMode((current) => current[mode] === taskId ? current : { ...current, [mode]: taskId })
   }, [])
 
-  const changeAgentMode = useCallback((nextMode: AgentMode) => {
-    if (resolveAgentMode(agentCapabilities, nextMode) !== nextMode) return
-    setAgentMode(nextMode)
-    if (getRuntimeConfigState().status === 'ready') setAgentModePreference(nextMode)
-  }, [agentCapabilities])
-
   const changeWorkspaceMode = useCallback((nextMode: 'gallery' | 'agent') => {
     if (nextMode === 'agent' && !agentCapabilities.defaultMode) return
     setWorkspaceMode(nextMode)
@@ -86,7 +78,7 @@ export default function App() {
 
   useEffect(() => {
     if (getRuntimeConfigState().status !== 'ready') return
-    const resolvedMode = resolveAgentMode(agentCapabilities, getAgentModePreference() ?? agentMode)
+    const resolvedMode = resolveAgentMode(agentCapabilities, 'tool')
     if (!resolvedMode) {
       if (!restrictedAgentOnly && workspaceMode === 'agent') {
         setWorkspaceMode('gallery')
@@ -96,7 +88,6 @@ export default function App() {
     if (resolvedMode !== agentMode) {
       setAgentMode(resolvedMode)
     }
-    setAgentModePreference(resolvedMode)
   }, [agentCapabilities, agentMode, restrictedAgentOnly, workspaceMode])
 
   useEffect(() => {
@@ -254,7 +245,6 @@ export default function App() {
               capabilities={agentCapabilities}
               activeTaskByMode={activeTaskByMode}
               onActiveTaskChange={setActiveAgentTask}
-              onModeChange={changeAgentMode}
               composer={(
                 <InputBar
                   presentation="embedded"

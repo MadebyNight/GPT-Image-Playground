@@ -1,13 +1,10 @@
 import { getRestrictedAgentPlanOperation } from '../lib/restrictedAgentApi'
 import type { OpenShopCanvasCommand } from '../lib/openshopBridge'
-import type { RestrictedAgentAssetBinding, RestrictedAgentPlan } from '../types'
+import type { RestrictedAgentPlan } from '../types'
 
 interface AgentPlanCardProps {
   plan: RestrictedAgentPlan
-  assetBindings?: RestrictedAgentAssetBinding[]
-  confirming?: boolean
   stale?: boolean
-  onConfirm: () => void
   onReturnToEditing: () => void
 }
 
@@ -26,10 +23,7 @@ function formatCommand(command: OpenShopCanvasCommand) {
 
 export default function AgentPlanCard({
   plan,
-  assetBindings = [],
-  confirming = false,
   stale = false,
-  onConfirm,
   onReturnToEditing,
 }: AgentPlanCardProps) {
   const expiresAt = new Date(plan.expiresAt)
@@ -39,13 +33,6 @@ export default function AgentPlanCard({
   const generation = operation.type === 'image.generate' || operation.type === 'image.edit'
     ? operation.generation
     : null
-  const openShopBinding = openShopOperation
-    ? assetBindings.find((binding) => binding.gatewayAssetId === openShopOperation.inputAssetId)
-    : null
-  const openShopBindingReady = Boolean(
-    openShopBinding?.browserImageId && openShopBinding.role === 'reference',
-  )
-  const confirmationDisabled = confirming || expired || stale || Boolean(openShopOperation && !openShopBindingReady)
   const badge = operation.type === 'image.generate'
     ? '图片生成'
     : operation.type === 'image.edit'
@@ -57,7 +44,7 @@ export default function AgentPlanCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs font-medium uppercase tracking-wider text-blue-500">
-            {stale ? '计划已过时' : '等待确认'}
+            {stale ? '计划已过时' : expired ? '计划已过期' : '执行详情'}
           </div>
           <h2 id="agent-plan-title" className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{plan.summary}</h2>
           <p className="mt-1 text-xs text-gray-400">
@@ -119,23 +106,6 @@ export default function AgentPlanCard({
               ))}
             </ol>
           </section>
-          <section className="mt-5">
-            <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">输入来源</h3>
-            <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-              <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
-                <dt className="text-gray-400">角色与顺序</dt>
-                <dd className="mt-1 font-medium text-gray-700 dark:text-gray-200">
-                  {openShopBinding ? `参考图 · 第 ${openShopBinding.ordinal + 1} 张` : '输入映射缺失'}
-                </dd>
-              </div>
-              <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
-                <dt className="text-gray-400">来源</dt>
-                <dd className="mt-1 font-medium text-gray-700 dark:text-gray-200">
-                  {openShopBinding?.sourceTaskId ? '历史任务输出' : openShopBinding ? '当前浏览器输入' : 'binding 缺失'}
-                </dd>
-              </div>
-            </dl>
-          </section>
         </>
       )}
 
@@ -180,38 +150,21 @@ export default function AgentPlanCard({
 
       {openShopOperation && (
         <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
-          确认后将在当前浏览器创建一次性 OpenShop iframe。刷新或中断不会自动重放命令。
+          当前浏览器会创建一次性 OpenShop iframe。刷新或中断不会自动重放命令。
         </p>
       )}
 
-      <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4 dark:border-white/[0.08]">
+      {(stale || expired) && (
+        <div className="mt-5 flex justify-end border-t border-gray-100 pt-4 dark:border-white/[0.08]">
         <button
           type="button"
-          className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.1] dark:text-gray-300 dark:hover:bg-white/[0.05]"
+          className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 dark:border-white/[0.1] dark:text-gray-300 dark:hover:bg-white/[0.05]"
           onClick={onReturnToEditing}
-          disabled={confirming}
         >
           返回修改
         </button>
-        <button
-          type="button"
-          className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-white/[0.08]"
-          onClick={onConfirm}
-          disabled={confirmationDisabled}
-        >
-          {confirming
-            ? '正在确认…'
-            : stale
-              ? '计划已过时'
-              : expired
-                ? '计划已过期'
-                : openShopOperation && !openShopBindingReady
-                  ? '输入映射无效'
-                  : openShopOperation
-                    ? '确认并在浏览器执行'
-                    : '确认并执行'}
-        </button>
-      </div>
+        </div>
+      )}
     </article>
   )
 }
