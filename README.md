@@ -16,6 +16,16 @@
 
 ## 核心能力
 
+### 配套 Skill：OpenPhoto
+
+[OpenPhoto Skill](https://github.com/MadebyNight/openphoto-skill) 是从生图工作台部分能力中独立封装出的本地图像编辑 Skill。它与 Agent 宿主无关，适合 Agent 在不启动完整工作台的情况下执行可检查、可复现的确定性图片编辑。
+
+- 通过 Node CLI 和 `openphoto/v1` JSON 协议导入、检查和编辑结构化图像文档，并渲染 PNG 或 JPEG 产物。
+- 支持裁剪、缩放、旋转、翻转、扁平化、对象变换、图像属性调整和常用滤镜。
+- 可选本地 AI 能力包括抠图、深度估计、对象检测、点选分割和 2×/4× 放大。
+- 它不是 Web 服务、远程 API、MCP server 或 npm/npx 包；当前仅声明支持 Windows、Node.js 22 及系统 Chrome 或 Edge。
+- 缺失的 AI 模型不会自动下载；安装模型前必须展示模型来源、大小、许可证和缓存位置，并获得用户明确同意。
+
 ### 图片生成与编辑
 
 - 支持 Images API 与 Responses API。
