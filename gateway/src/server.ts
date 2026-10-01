@@ -40,7 +40,7 @@ import { ExecutionWorker } from './worker.js';
 import { OpenWebSearchService, type WebSearchService } from './webSearch.js';
 
 const fieldSchema = z.object({
-  request: z.string().trim().min(1).max(16_000),
+  request: z.string().trim().min(1).max(16_000).transform((value) => value.replace(/\r\n?/g, '\n')),
   size: z.enum(ALLOWED_SIZES).optional(),
   quality: z.enum(['auto', 'low', 'medium', 'high']).optional(),
   outputFormat: z.enum(['png', 'jpeg', 'webp']).optional(),
@@ -101,7 +101,7 @@ function assertComposerFields(
   fields: z.infer<typeof fieldSchema>,
 ): ComposerSnapshotManifest {
   const normalized = normalizeComposerSnapshot(manifest);
-  if (normalized.prompt !== fields.request) {
+  if (normalized.prompt.replace(/\r\n?/g, '\n') !== fields.request) {
     throw new AppError(400, 'composer_snapshot_mismatch', 'Composer Prompt 与计划请求不一致');
   }
   const expected = normalized.params;
