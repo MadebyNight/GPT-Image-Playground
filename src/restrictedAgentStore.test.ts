@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     runOpenShop: vi.fn(),
     saveOpenShopEdit: vi.fn(),
     getPlan: vi.fn(),
+    getExecution: vi.fn(),
   }
 })
 
@@ -88,7 +89,7 @@ vi.mock('./lib/restrictedAgentApi', async (importOriginal) => {
     executeRestrictedAgentPlan: mocks.executePlan,
     computeRestrictedAgentConfirmationHash: mocks.computeHash,
     getRestrictedAgentAsset: vi.fn(),
-    getRestrictedAgentExecution: vi.fn(),
+    getRestrictedAgentExecution: mocks.getExecution,
     getRestrictedAgentPlan: mocks.getPlan,
     cancelRestrictedAgentExecution: vi.fn(),
     subscribeRestrictedAgentExecution: vi.fn(() => vi.fn()),
@@ -102,6 +103,7 @@ vi.mock('./lib/openShopToolRunner', () => ({
   OpenShopToolRunnerError: class OpenShopToolRunnerError extends Error {},
 }))
 
+import { RestrictedAgentApiError } from './lib/restrictedAgentApi'
 import { decodePersistedAgentFlow, useRestrictedAgentStore } from './restrictedAgentStore'
 
 async function runAutomaticPlan(
@@ -249,6 +251,7 @@ describe('restricted Agent flow store', () => {
     mocks.computeHash.mockReset().mockResolvedValue(plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
     mocks.putTask.mockReset().mockResolvedValue('agent-execution-1')
     mocks.updateTask.mockClear()
+    mocks.getExecution.mockReset()
     mocks.clearComposerDraft.mockClear()
     mocks.durableRun = null
     mocks.outputDraft = null
@@ -324,6 +327,28 @@ describe('restricted Agent flow store', () => {
       localRunId: null,
       localRun: null,
     })
+  })
+
+  it('执行记录失联时结束本地任务，避免一直显示运行中', async () => {
+    const runningExecution: RestrictedAgentExecution = { ...execution, status: 'executing', completedAt: null }
+    const task = {
+      id: 'agent-execution-1', prompt: plan.originalRequest, params: mocks.appState.params,
+      inputImageIds: [], outputImages: [], status: 'running', error: null,
+      createdAt: Date.now() - 10_000, finishedAt: null, elapsed: null,
+      origin: 'restricted-agent', agentExecutionId: runningExecution.id,
+    } as TaskRecord
+    mocks.appState.tasks = [task]
+    mocks.getExecution.mockRejectedValue(new RestrictedAgentApiError('执行记录不存在', 'execution_not_found', 404))
+    useRestrictedAgentStore.setState({
+      phase: 'executing', plan, execution: runningExecution, taskId: task.id,
+      localRunId: null, localRun: null,
+    })
+
+    await useRestrictedAgentStore.getState().recover([task])
+    await vi.waitFor(() => expect(mocks.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      status: 'error', error: expect.stringContaining('执行记录已不可访问'),
+    })))
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'failed', execution: null })
   })
 
   it('流式规划完成后自动执行并创建标准任务', async () => {

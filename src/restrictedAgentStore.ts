@@ -22,6 +22,7 @@ import {
   getRestrictedAgentPlan,
   subscribeRestrictedAgentExecution,
   getRestrictedAgentPlanOperation,
+  RestrictedAgentApiError,
   streamRestrictedAgentPlan,
   type RestrictedAgentPlanRequest,
 } from './lib/restrictedAgentApi'
@@ -81,6 +82,7 @@ const STORAGE_KEY = 'restricted-agent-flow-v1'
 const POLL_INTERVAL_MS = 2_000
 const executionPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const executionEventStops = new Map<string, () => void>()
+const unavailableExecutions = new Set<string>()
 const finalizingExecutions = new Set<string>()
 const taskCreationPromises = new Map<string, Promise<string>>()
 const openShopRunPromises = new Map<string, Promise<string | null>>()
@@ -607,6 +609,24 @@ async function refreshExecution(executionId: string, taskId: string | null) {
     await applyExecution(execution, taskId)
     return execution
   } catch (error) {
+    if (error instanceof RestrictedAgentApiError && error.code === 'execution_not_found') {
+      unavailableExecutions.add(executionId)
+      stopExecutionWatch(executionId)
+      const message = 'Gateway 执行记录已不可访问，无法确认原任务结果。会话可能已过期，请重新规划。'
+      const active = useRestrictedAgentStore.getState().execution?.id === executionId
+      if (active && !isTerminalExecution(useRestrictedAgentStore.getState().execution!)) {
+        useRestrictedAgentStore.setState({ phase: 'failed', execution: null, error: message })
+      }
+      const task = useStore.getState().tasks.find((item) => item.agentExecutionId === executionId || item.id === taskId)
+      if (task?.status === 'running') {
+        const finishedAt = Date.now()
+        updateTaskInStore(task.id, {
+          status: 'error', error: message, finishedAt,
+          elapsed: Math.max(0, finishedAt - task.createdAt),
+        })
+      }
+      return null
+    }
     const active = useRestrictedAgentStore.getState().execution?.id === executionId
     if (active) useRestrictedAgentStore.setState({ error: error instanceof Error ? error.message : String(error) })
     return null
@@ -615,12 +635,14 @@ async function refreshExecution(executionId: string, taskId: string | null) {
 
 function watchExecution(executionId: string, taskId: string | null) {
   stopExecutionWatch(executionId)
+  unavailableExecutions.delete(executionId)
   const schedulePoll = () => {
+    if (unavailableExecutions.has(executionId)) return
     if (executionPollTimers.has(executionId)) return
     const timer = setTimeout(async () => {
       executionPollTimers.delete(executionId)
       const execution = await refreshExecution(executionId, taskId)
-      if (!execution || !isTerminalExecution(execution)) schedulePoll()
+      if (!unavailableExecutions.has(executionId) && (!execution || !isTerminalExecution(execution))) schedulePoll()
     }, POLL_INTERVAL_MS)
     executionPollTimers.set(executionId, timer)
   }

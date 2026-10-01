@@ -54,13 +54,13 @@ export function getOrCreateSession(
 
   const isNew = !sessionId;
   sessionId ??= base64url(randomBytes(24));
-  if (isNew) {
-    const secure = new URL(config.publicOrigin).protocol === 'https:';
-    reply.header(
-      'set-cookie',
-      `${COOKIE_NAME}=${sessionId}.${sign(sessionId, config.sessionSecret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400${secure ? '; Secure' : ''}`,
-    );
-  }
+  // Keep an active session alive so an in-flight execution does not become
+  // inaccessible when the original cookie reaches its absolute expiry.
+  const secure = new URL(config.publicOrigin).protocol === 'https:';
+  reply.header(
+    'set-cookie',
+    `${COOKIE_NAME}=${sessionId}.${sign(sessionId, config.sessionSecret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400${secure ? '; Secure' : ''}`,
+  );
 
   return {
     id: sessionId,
