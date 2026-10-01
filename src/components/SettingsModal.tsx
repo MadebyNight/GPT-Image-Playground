@@ -34,6 +34,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import Select from './Select'
+import ModelCombobox from './ModelCombobox'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
 import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon } from './icons'
@@ -1265,20 +1266,11 @@ export default function SettingsModal() {
                       <dt className="text-xs text-gray-500 dark:text-gray-400">模型</dt>
                       <dd className="mt-1">
                         {serverProfile && serverApiOptions?.allowCustomModel ? (
-                          <>
-                            <input
-                              list="server-managed-model-options"
-                              value={serverProfile.model}
-                              onChange={(event) => commitSettings(applyServerManagedSelectionToDraft(draft, { model: event.target.value }))}
-                              className="w-full rounded-lg border border-blue-100 bg-white/80 px-2 py-1.5 text-xs text-gray-700 outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-500/20 dark:border-blue-500/20 dark:bg-white/[0.04] dark:text-gray-100"
-                              placeholder={serverApiOptions.modelOptions[0] ?? '输入模型 ID'}
-                            />
-                            <datalist id="server-managed-model-options">
-                              {serverApiOptions.modelOptions.map((model) => (
-                                <option key={model} value={model} />
-                              ))}
-                            </datalist>
-                          </>
+                          <ModelCombobox
+                            value={serverProfile.model}
+                            options={serverApiOptions.modelOptions}
+                            onChange={(model) => commitSettings(applyServerManagedSelectionToDraft(draft, { model }))}
+                          />
                         ) : serverProfile && serverApiOptions ? (
                           <Select
                             value={serverProfile.model}

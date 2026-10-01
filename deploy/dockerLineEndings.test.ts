@@ -168,9 +168,11 @@ describe('Restricted Agent deployment boundary', () => {
     const gateway = compose.match(/  agent-gateway:[\s\S]*?\nvolumes:/)?.[0] ?? ''
 
     expect(frontend).toContain('networks:\n      - agent-network')
+    expect(frontend).toContain('      - dokploy-network')
     expect(gateway).toContain('networks:\n      - agent-network')
+    expect(gateway).not.toContain('dokploy-network')
     expect(compose).toContain('\nnetworks:\n  agent-network:\n')
-    expect(compose).not.toContain('dokploy-network')
+    expect(compose).toContain('  dokploy-network:\n    external: true')
   })
 
   it('publishes both frontend and Gateway multi-architecture images', () => {

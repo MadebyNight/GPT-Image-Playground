@@ -14,13 +14,13 @@
     "build:all": "npm run build && npm run build:gateway",
     "deploy:cf": "npm run build && wrangler deploy",
     "preview": "vite preview",
-    "test": "vitest run --exclude e2e/**",
+    "test": "vitest run --exclude=e2e/**",
     "test:docker-config": "docker compose config --quiet",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:gateway": "npm --prefix gateway test",
     "test:all": "npm run test && npm run test:gateway",
-    "test:watch": "vitest --exclude e2e/**"
+    "test:watch": "vitest --exclude=e2e/**"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.0",
