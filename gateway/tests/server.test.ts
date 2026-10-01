@@ -437,6 +437,18 @@ describe('two phase gateway', () => {
     expect(normalizeRestrictedPlanResponse(response.json().data)).toEqual(RESTRICTED_PLAN_RESPONSE_FIXTURE);
   });
 
+  it('多行 Prompt 经 multipart 换行转换后仍与 Composer 快照一致', async () => {
+    const context = await setup();
+    const prompt = '第一行需求\n第二行需求';
+    const response = await createPlan(context, {
+      request: prompt.replace(/\n/g, '\r\n'),
+      composerSnapshot: composerSnapshot({ request: prompt }),
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.originalRequest).toBe(prompt);
+  });
+
   it('开启联网搜索后将受限来源写入冻结计划并传递给 Planner', async () => {
     const planner = createDeterministicPlannerFixture();
     const webSearch: WebSearchService = {
