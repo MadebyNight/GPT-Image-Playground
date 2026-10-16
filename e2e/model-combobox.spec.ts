@@ -35,11 +35,11 @@ test('preset models are available before typing and custom model IDs remain edit
   await page.getByRole('option', { name: 'gpt-5.5' }).click()
   await expect(modelInput).toHaveValue('gpt-5.5')
 
-  await page.getByRole('button', { name: '显示预设模型' }).click()
+  await page.getByRole('button', { name: '显示可用模型' }).click()
   await expect(page.getByRole('option', { name: 'gpt-image-2' })).toBeVisible()
   await modelInput.fill('custom-image-model')
   await expect(modelInput).toHaveValue('custom-image-model')
   await modelInput.press('Escape')
-  await expect(page.getByRole('listbox', { name: '预设模型' })).toHaveCount(0)
+  await expect(page.getByRole('listbox', { name: '可用模型' })).toHaveCount(0)
   await expect(modelInput).toBeVisible()
 })
