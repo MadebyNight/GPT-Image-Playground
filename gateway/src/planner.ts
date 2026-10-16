@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { GatewayConfig } from './config.js';
 import { AppError } from './errors.js';
-import { plannerJsonSchema } from './policy.js';
+import { plannerDraftSchema, plannerJsonSchema } from './policy.js';
 import type { PlanPreferences, PlannerDraft, StoredAsset, WebSearchSource } from './types.js';
 
 export interface PlannerInput {
@@ -64,6 +64,58 @@ async function readUpstreamError(response: Response): Promise<{
   if (type) details.upstreamType = type;
   if (param) details.upstreamParam = param;
   return { message, details };
+}
+
+function isSchemaRejection(status: number, details: Record<string, string | number>, message?: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  const code = details.upstreamCode;
+  return code === 'invalid_json_schema' || code === 'invalid_response_format'
+    || code === 'unsupported_response_format'
+    || /(?:json.schema|response.format|response_format|structured.output)/i.test(
+      `${details.upstreamParam ?? ''} ${message ?? ''}`,
+    );
+}
+
+function parsePlannerOutput(text: string, plannerSchemaFallback: boolean): PlannerDraft {
+  const details = plannerSchemaFallback ? { plannerSchemaFallback: true } : undefined;
+  try {
+    return JSON.parse(text) as PlannerDraft;
+  } catch {
+    // Upstream implementations sometimes wrap the JSON object in prose.
+  }
+
+  const start = text.indexOf('{');
+  if (start === -1) {
+    throw new AppError(502, 'planner_output_not_json', 'Planner 输出非 JSON', details);
+  }
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{' || char === '[') stack.push(char);
+    else if (char === '}' || char === ']') {
+      const expected = char === '}' ? '{' : '[';
+      if (stack.pop() !== expected) {
+        throw new AppError(502, 'planner_output_not_json', 'Planner 输出非 JSON', details);
+      }
+      if (stack.length === 0) {
+        try {
+          return JSON.parse(text.slice(start, index + 1)) as PlannerDraft;
+        } catch {
+          throw new AppError(502, 'planner_output_not_json', 'Planner 输出非 JSON', details);
+        }
+      }
+    }
+  }
+  throw new AppError(502, 'planner_output_incomplete', 'Planner 输出不完整', details);
 }
 
 function extractOutputText(payload: unknown): string | null {
@@ -184,13 +236,15 @@ class AssistantMessageDeltaParser {
   }
 }
 
-function streamFailure(payload: unknown): AppError {
+function streamFailure(payload: unknown, incomplete = false, plannerSchemaFallback = false): AppError {
   const root = isRecord(payload) ? payload : undefined;
   const response = root && isRecord(root.response) ? root.response : undefined;
   const error = (root && isRecord(root.error) ? root.error : undefined)
     ?? (response && isRecord(response.error) ? response.error : undefined);
   const message = error && sanitizeUpstreamText(error.message);
-  return new AppError(502, 'planner_stream_failed', `Planner 流式响应失败${message ? `：${message}` : ''}`);
+  return new AppError(502, incomplete ? 'planner_output_incomplete' : 'planner_stream_failed',
+    `${incomplete ? 'Planner 输出不完整' : 'Planner 流式响应失败'}${message ? `：${message}` : ''}`,
+    plannerSchemaFallback ? { plannerSchemaFallback: true } : undefined);
 }
 
 export class ResponsesPlanner implements Planner {
@@ -226,41 +280,62 @@ export class ResponsesPlanner implements Planner {
     }
 
     const signal = AbortSignal.timeout(this.config.plannerTimeoutMs);
+    const request = async (fallback: boolean): Promise<Response> => fetch(`${this.config.upstreamBaseUrl}/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.config.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.config.plannerModel,
+        input: [{ role: 'user', content: fallback
+          ? [{ ...content[0], text: `${content[0]!.text}\n只返回符合以下 JSON 结构的对象，不要包含 Markdown 或额外文字：${JSON.stringify(plannerJsonSchema)}` }, ...content.slice(1)]
+          : content }],
+        ...(!fallback ? { text: { format: {
+          type: 'json_schema', name: 'single_tool_operation_plan', strict: true, schema: plannerJsonSchema,
+        } } } : {}),
+        ...(options.onAssistantMessageDelta ? { stream: true } : {}),
+      }),
+      redirect: 'error',
+      signal,
+    });
     let response: Response;
     try {
-      response = await fetch(`${this.config.upstreamBaseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.config.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.config.plannerModel,
-          input: [{ role: 'user', content }],
-          text: {
-            format: {
-              type: 'json_schema',
-              name: 'single_tool_operation_plan',
-              strict: true,
-              schema: plannerJsonSchema,
-            },
-          },
-          ...(options.onAssistantMessageDelta ? { stream: true } : {}),
-        }),
-        redirect: 'error',
-        signal,
-      });
+      response = await request(false);
     } catch (error) {
       if (signal.aborted) throw new AppError(504, 'planner_timeout', 'Planner 请求超时');
       throw new AppError(502, 'planner_unavailable', 'Planner 无法连接');
     }
+    let plannerSchemaFallback = false;
+    let schemaRejection: { status: number; message?: string; details: Record<string, string | number> } | undefined;
     if (!response.ok) {
       const upstreamError = await readUpstreamError(response);
-      throw new AppError(
-        502,
-        'planner_upstream_error',
-        `Planner 上游返回 HTTP ${response.status}${upstreamError.message ? `：${upstreamError.message}` : ''}`,
-        upstreamError.details,
+      if (isSchemaRejection(response.status, upstreamError.details, upstreamError.message)) {
+        schemaRejection = { status: response.status, ...upstreamError };
+        plannerSchemaFallback = true;
+        console.warn('Planner schema fallback', {
+          plannerSchemaFallback: true, ...upstreamError.details, upstreamMessage: upstreamError.message,
+        });
+        try {
+          response = await request(true);
+        } catch {
+          if (signal.aborted) throw new AppError(504, 'planner_timeout', 'Planner 请求超时');
+          throw new AppError(502, 'planner_unavailable', 'Planner 无法连接');
+        }
+      } else {
+        throw new AppError(
+          502,
+          'planner_upstream_error',
+          `Planner 上游返回 HTTP ${response.status}${upstreamError.message ? `：${upstreamError.message}` : ''}`,
+          upstreamError.details,
+        );
+      }
+    }
+    if (!response.ok && schemaRejection) {
+      const fallbackError = await readUpstreamError(response);
+      throw new AppError(502, 'planner_schema_rejected',
+        `Planner 上游拒绝 JSON schema（HTTP ${schemaRejection.status}${schemaRejection.message ? `：${schemaRejection.message}` : ''}）；回退请求返回 HTTP ${response.status}${fallbackError.message ? `：${fallbackError.message}` : ''}`,
+        { ...schemaRejection.details, plannerSchemaFallback: true, fallbackStatus: response.status },
       );
     }
 
@@ -278,7 +353,7 @@ export class ResponsesPlanner implements Planner {
           }
           const type = isRecord(payload) && typeof payload.type === 'string' ? payload.type : event.event;
           if (type === 'error' || type === 'response.failed' || type === 'response.incomplete') {
-            throw streamFailure(payload);
+            throw streamFailure(payload, type === 'response.incomplete', plannerSchemaFallback);
           }
           if (type !== 'response.output_text.delta' || !isRecord(payload) || typeof payload.delta !== 'string') continue;
           const delta = output.append(payload.delta);
@@ -290,11 +365,11 @@ export class ResponsesPlanner implements Planner {
         throw new AppError(502, 'planner_stream_failed', 'Planner 流式响应失败');
       }
       if (!output.outputText) throw new AppError(502, 'missing_planner_output', 'Planner 未返回结构化计划');
-      try {
-        return JSON.parse(output.outputText) as PlannerDraft;
-      } catch {
-        throw new AppError(502, 'invalid_planner_output', 'Planner 计划不是有效 JSON');
+      const draft = parsePlannerOutput(output.outputText, plannerSchemaFallback);
+      if (plannerSchemaFallback && !plannerDraftSchema.safeParse(draft).success) {
+        throw new AppError(502, 'invalid_planner_output', 'Planner 回退输出不符合计划结构', { plannerSchemaFallback: true });
       }
+      return draft;
     }
 
     let payload: unknown;
@@ -305,10 +380,10 @@ export class ResponsesPlanner implements Planner {
     }
     const outputText = extractOutputText(payload);
     if (!outputText) throw new AppError(502, 'missing_planner_output', 'Planner 未返回结构化计划');
-    try {
-      return JSON.parse(outputText) as PlannerDraft;
-    } catch {
-      throw new AppError(502, 'invalid_planner_output', 'Planner 计划不是有效 JSON');
+    const draft = parsePlannerOutput(outputText, plannerSchemaFallback);
+    if (plannerSchemaFallback && !plannerDraftSchema.safeParse(draft).success) {
+      throw new AppError(502, 'invalid_planner_output', 'Planner 回退输出不符合计划结构', { plannerSchemaFallback: true });
     }
+    return draft;
   }
 }
