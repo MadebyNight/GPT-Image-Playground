@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenShopToolLocalRun, RestrictedAgentAssetBinding, RestrictedAgentExecution, RestrictedAgentPlan, TaskRecord } from './types'
 
 const mocks = vi.hoisted(() => {
@@ -42,6 +42,9 @@ const mocks = vi.hoisted(() => {
     runOpenShop: vi.fn(),
     saveOpenShopEdit: vi.fn(),
     getPlan: vi.fn(),
+    getExecution: vi.fn(),
+    getAsset: vi.fn(),
+    storeImage: vi.fn(),
   }
 })
 
@@ -70,7 +73,7 @@ vi.mock('./store', () => ({
 }))
 vi.mock('./lib/db', () => ({
   putTask: mocks.putTask,
-  storeImage: vi.fn(),
+  storeImage: mocks.storeImage,
   createOpenShopToolLocalRunRecord: mocks.createLocalRunRecord,
   claimOpenShopToolLocalRun: mocks.claimLocalRun,
   transitionOpenShopToolLocalRun: mocks.transitionLocalRun,
@@ -87,15 +90,15 @@ vi.mock('./lib/restrictedAgentApi', async (importOriginal) => {
     streamRestrictedAgentPlan: mocks.streamPlan,
     executeRestrictedAgentPlan: mocks.executePlan,
     computeRestrictedAgentConfirmationHash: mocks.computeHash,
-    getRestrictedAgentAsset: vi.fn(),
-    getRestrictedAgentExecution: vi.fn(),
+    getRestrictedAgentAsset: mocks.getAsset,
+    getRestrictedAgentExecution: mocks.getExecution,
     getRestrictedAgentPlan: mocks.getPlan,
     cancelRestrictedAgentExecution: vi.fn(),
-    subscribeRestrictedAgentExecution: vi.fn(() => vi.fn()),
   }
 })
 vi.mock('./lib/serverApiConfig', () => ({
   isRestrictedAgentEnabled: () => true,
+  getRestrictedAgentBasePath: () => '/agent-api',
 }))
 vi.mock('./lib/openShopToolRunner', () => ({
   openShopToolRunner: mocks.runOpenShop,
@@ -150,6 +153,64 @@ const execution: RestrictedAgentExecution = {
   startedAt: '2026-07-16T00:00:01.000Z',
   completedAt: '2026-07-16T00:00:02.000Z',
   updatedAt: '2026-07-16T00:00:02.000Z',
+}
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  readonly listeners = new Map<string, EventListener>()
+  readonly close = vi.fn()
+  onerror: (() => void) | null = null
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: EventListener) { this.listeners.set(type, listener) }
+  removeEventListener(type: string) { this.listeners.delete(type) }
+  emit(type: string) { this.listeners.get(type)?.({ data: '{}' } as MessageEvent<string>) }
+}
+
+const runningExecution: RestrictedAgentExecution = {
+  ...execution,
+  status: 'executing',
+  completedAt: null,
+  outputAssets: [],
+}
+
+const completedWithAsset: RestrictedAgentExecution = {
+  ...execution,
+  outputAssets: [{
+    id: 'output-asset', url: '/agent-api/assets/output-asset', mimeType: 'image/png',
+    sha256: 'a'.repeat(64), width: 1254, height: 1254, byteSize: 100,
+  }],
+}
+
+async function startWatchedExecution() {
+  vi.useFakeTimers()
+  FakeEventSource.instances = []
+  vi.stubGlobal('EventSource', FakeEventSource)
+  vi.stubGlobal('FileReader', class {
+    result: string | null = null
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    readAsDataURL() { this.result = 'data:image/png;base64,cG5n'; this.onload?.() }
+  })
+  mocks.getExecution.mockResolvedValue(runningExecution)
+  mocks.getAsset.mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+  mocks.storeImage.mockResolvedValue('saved-image')
+  const task: TaskRecord = {
+    id: 'agent-execution-1', prompt: '海报', params: mocks.appState.params,
+    inputImageIds: [], outputImages: [], status: 'running', error: null,
+    createdAt: Date.parse(execution.createdAt), finishedAt: null, elapsed: null,
+    origin: 'restricted-agent', agentExecutionId: execution.id,
+  }
+  mocks.appState.tasks = [task]
+  useRestrictedAgentStore.setState({
+    phase: 'executing', plan, execution: runningExecution, taskId: task.id, error: null,
+  })
+  await useRestrictedAgentStore.getState().recover([task])
+  await Promise.resolve()
+  return FakeEventSource.instances[FakeEventSource.instances.length - 1]!
 }
 
 const bindingPlan = {
@@ -249,6 +310,12 @@ describe('restricted Agent flow store', () => {
     mocks.computeHash.mockReset().mockResolvedValue(plan.schemaVersion === 2 ? plan.composerSnapshotHash : null)
     mocks.putTask.mockReset().mockResolvedValue('agent-execution-1')
     mocks.updateTask.mockClear()
+    mocks.updateTask.mockImplementation((taskId: string, patch: Partial<TaskRecord>) => {
+      mocks.appState.tasks = mocks.appState.tasks.map((task) => task.id === taskId ? { ...task, ...patch } : task)
+    })
+    mocks.getExecution.mockReset()
+    mocks.getAsset.mockReset()
+    mocks.storeImage.mockReset()
     mocks.clearComposerDraft.mockClear()
     mocks.durableRun = null
     mocks.outputDraft = null
@@ -324,6 +391,105 @@ describe('restricted Agent flow store', () => {
       localRunId: null,
       localRun: null,
     })
+  })
+
+  afterEach(() => {
+    useRestrictedAgentStore.getState().reset()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('SSE 静默时并行轮询，终态产物落地并清理订阅与所有计时器', async () => {
+    const source = await startWatchedExecution()
+    expect(source.close).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(2)
+    const initialReads = mocks.getExecution.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(mocks.getExecution.mock.calls.length).toBe(initialReads + 1)
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'executing', execution: { status: 'executing' } })
+
+    mocks.getExecution.mockResolvedValue(completedWithAsset)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'completed', execution: { status: 'completed' }, error: null })
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'done', outputImages: ['saved-image'], error: null })
+    expect(mocks.getAsset).toHaveBeenCalledWith('output-asset')
+    expect(source.close).toHaveBeenCalledOnce()
+    expect(source.listeners.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    const completedReads = mocks.getExecution.mock.calls.length
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(mocks.getExecution).toHaveBeenCalledTimes(completedReads)
+  })
+
+  it('SSE 正常投递时立即读取终态，不等轮询周期', async () => {
+    const source = await startWatchedExecution()
+    mocks.getExecution.mockResolvedValue(completedWithAsset)
+    source.emit('execution.completed')
+    for (let index = 0; index < 8 && useRestrictedAgentStore.getState().phase !== 'completed'; index += 1) await Promise.resolve()
+    for (let index = 0; index < 8 && mocks.appState.tasks[0]?.status !== 'done'; index += 1) await Promise.resolve()
+
+    expect(useRestrictedAgentStore.getState().phase).toBe('completed')
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'done', outputImages: ['saved-image'] })
+    expect(source.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['failed', 'failed_unknown', 'cancelled'] as const)('%s 终态保留失败语义并清理观察', async (status) => {
+    const source = await startWatchedExecution()
+    mocks.getExecution.mockResolvedValue({
+      ...runningExecution, status, completedAt: execution.completedAt,
+      error: { code: 'gateway_error', message: `${status} detail` },
+    })
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'failed', execution: { status }, error: `${status} detail` })
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'error', error: `${status} detail` })
+    expect(source.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('超过最长观察时间给出明确错误并停止观察', async () => {
+    const source = await startWatchedExecution()
+    await vi.advanceTimersByTimeAsync(16 * 60 * 1_000)
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'failed', execution: { status: 'executing' } })
+    expect(useRestrictedAgentStore.getState().error).toContain('超过 16 分钟')
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'running', outputImages: [] })
+    expect(source.close).toHaveBeenCalledOnce()
+    expect(source.listeners.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    const reads = mocks.getExecution.mock.calls.length
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(mocks.getExecution).toHaveBeenCalledTimes(reads)
+  })
+
+  it('观察超时后迟到的查询结果不会覆盖超时错误', async () => {
+    let resolveRead!: (value: RestrictedAgentExecution) => void
+    mocks.getExecution.mockImplementationOnce(() => new Promise<RestrictedAgentExecution>((resolve) => { resolveRead = resolve }))
+    const source = await startWatchedExecution()
+    await vi.advanceTimersByTimeAsync(16 * 60 * 1_000)
+    resolveRead(completedWithAsset)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'failed', execution: { status: 'executing' } })
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'running', outputImages: [] })
+    expect(source.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('观察超时后重新恢复仍能取得最终产物', async () => {
+    await startWatchedExecution()
+    await vi.advanceTimersByTimeAsync(16 * 60 * 1_000)
+    mocks.getExecution.mockResolvedValue(completedWithAsset)
+    await useRestrictedAgentStore.getState().recover(mocks.appState.tasks)
+    for (let index = 0; index < 8 && mocks.appState.tasks[0]?.status !== 'done'; index += 1) await Promise.resolve()
+
+    expect(useRestrictedAgentStore.getState()).toMatchObject({ phase: 'completed', execution: { status: 'completed' }, error: null })
+    expect(mocks.appState.tasks[0]).toMatchObject({ status: 'done', outputImages: ['saved-image'] })
+    expect(FakeEventSource.instances[FakeEventSource.instances.length - 1]?.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('流式规划完成后自动执行并创建标准任务', async () => {

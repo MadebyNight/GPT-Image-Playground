@@ -79,7 +79,11 @@ interface RestrictedAgentState extends PersistedAgentFlow {
 
 const STORAGE_KEY = 'restricted-agent-flow-v1'
 const POLL_INTERVAL_MS = 2_000
+// Gateway 执行器允许最长 15 分钟，额外留 1 分钟给状态送达。
+const EXECUTION_WATCH_TIMEOUT_MS = 16 * 60 * 1_000
 const executionPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const executionWatchTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+const executionWatchTokens = new Map<string, symbol>()
 const executionEventStops = new Map<string, () => void>()
 const finalizingExecutions = new Set<string>()
 const taskCreationPromises = new Map<string, Promise<string>>()
@@ -224,9 +228,13 @@ function isTerminalExecution(execution: RestrictedAgentExecution) {
 }
 
 function stopExecutionWatch(executionId: string) {
+  executionWatchTokens.delete(executionId)
   const timer = executionPollTimers.get(executionId)
   if (timer) clearTimeout(timer)
   executionPollTimers.delete(executionId)
+  const timeout = executionWatchTimeouts.get(executionId)
+  if (timeout) clearTimeout(timeout)
+  executionWatchTimeouts.delete(executionId)
   executionEventStops.get(executionId)?.()
   executionEventStops.delete(executionId)
 }
@@ -601,12 +609,14 @@ async function applyExecution(execution: RestrictedAgentExecution, taskId: strin
   }
 }
 
-async function refreshExecution(executionId: string, taskId: string | null) {
+async function refreshExecution(executionId: string, taskId: string | null, watchToken: symbol) {
   try {
     const execution = await getRestrictedAgentExecution(executionId)
+    if (executionWatchTokens.get(executionId) !== watchToken) return null
     await applyExecution(execution, taskId)
     return execution
   } catch (error) {
+    if (executionWatchTokens.get(executionId) !== watchToken) return null
     const active = useRestrictedAgentStore.getState().execution?.id === executionId
     if (active) useRestrictedAgentStore.setState({ error: error instanceof Error ? error.message : String(error) })
     return null
@@ -615,27 +625,39 @@ async function refreshExecution(executionId: string, taskId: string | null) {
 
 function watchExecution(executionId: string, taskId: string | null) {
   stopExecutionWatch(executionId)
+  const watchToken = Symbol(executionId)
+  executionWatchTokens.set(executionId, watchToken)
   const schedulePoll = () => {
-    if (executionPollTimers.has(executionId)) return
+    if (executionWatchTokens.get(executionId) !== watchToken || executionPollTimers.has(executionId)) return
     const timer = setTimeout(async () => {
       executionPollTimers.delete(executionId)
-      const execution = await refreshExecution(executionId, taskId)
-      if (!execution || !isTerminalExecution(execution)) schedulePoll()
+      await refreshExecution(executionId, taskId, watchToken)
+      schedulePoll()
     }, POLL_INTERVAL_MS)
     executionPollTimers.set(executionId, timer)
   }
 
+  const timeout = setTimeout(() => {
+    if (executionWatchTokens.get(executionId) !== watchToken) return
+    stopExecutionWatch(executionId)
+    const message = '超过 16 分钟仍未收到最终执行状态，请检查 Gateway 状态，避免重复提交执行。'
+    const state = useRestrictedAgentStore.getState()
+    if (state.execution?.id === executionId && !isTerminalExecution(state.execution)) {
+      useRestrictedAgentStore.setState({ phase: 'failed', error: message })
+    }
+  }, EXECUTION_WATCH_TIMEOUT_MS)
+  executionWatchTimeouts.set(executionId, timeout)
+
   if (typeof EventSource !== 'undefined') {
     const stop = subscribeRestrictedAgentExecution(
       executionId,
-      () => { void refreshExecution(executionId, taskId) },
+      () => { void refreshExecution(executionId, taskId, watchToken) },
       () => { schedulePoll() },
     )
     executionEventStops.set(executionId, stop)
-  } else {
-    schedulePoll()
   }
-  void refreshExecution(executionId, taskId)
+  schedulePoll()
+  void refreshExecution(executionId, taskId, watchToken)
 }
 
 async function saveExportedOpenShopRun(
