@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -9,7 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type GatewayConfig } from '../src/config.js';
 import { GatewayDatabase } from '../src/db.js';
 import { ExecutionEvents } from '../src/events.js';
-import type { ImageExecutor } from '../src/executor.js';
+import { DeterministicImagesExecutor, type ImageExecutor } from '../src/executor.js';
 import { decodeRestrictedAgentPlanSnapshot } from '../src/plan.js';
 import { hashComposerSnapshot, plannerJsonSchema } from '../src/policy.js';
 import { ResponsesPlanner, type Planner } from '../src/planner.js';
@@ -310,6 +311,59 @@ describe('流式计划', () => {
     expect(draft).toEqual(streamingDraft);
   });
 
+  it('参考图仅在规划请求中使用低细节，执行编辑仍发送完整图片', async () => {
+    const config = await makeConfig();
+    const original = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: '#00ff00' } }).png().toBuffer();
+    const storagePath = path.join(config.dataDir, 'reference.png');
+    await writeFile(storagePath, original);
+    const asset = {
+      id: 'reference', planId: null, executionId: null, sessionId: 'session', direction: 'input' as const,
+      role: 'reference' as const, mimeType: 'image/png', sha256: createHash('sha256').update(original).digest('hex'),
+      storagePath, byteSize: original.byteLength, width: 1024, height: 1024, expiresAt: Date.now() + 60_000, createdAt: Date.now(),
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ output_text: JSON.stringify(streamingDraft) }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), { status: 200 }));
+    await new ResponsesPlanner(config).createDraft({ request: '编辑参考图', preferences: {}, assets: [asset], allowOpenShop: true });
+    const plannerBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const image = plannerBody.input[0].content.find((part: { type: string }) => part.type === 'input_image');
+    expect(image.detail).toBe('low');
+    expect(Buffer.from(image.image_url.split(',')[1], 'base64')).toEqual(original);
+
+    const plan = {
+      ...RESTRICTED_PLAN_RESPONSE_FIXTURE,
+      operation: {
+        type: 'image.edit', generation: { ...RESTRICTED_PLAN_RESPONSE_FIXTURE.operation.generation, action: 'edit' },
+      },
+    } as unknown as RestrictedAgentPlanSnapshot;
+    await new DeterministicImagesExecutor(config).execute({ plan, assets: [asset], signal: new AbortController().signal });
+    const executionForm = fetchMock.mock.calls[1]?.[1]?.body as FormData;
+    const sentImage = executionForm.get('image[]') as File;
+    expect(Buffer.from(await sentImage.arrayBuffer())).toEqual(original);
+    await expect(sharp(Buffer.from(await sentImage.arrayBuffer())).metadata()).resolves.toMatchObject({ width: 1024, height: 1024 });
+  });
+
+  it('响应头已返回但流仍在读取时，中止会映射为 planner_timeout', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"{"}\n\n');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('无法获取本地端口');
+      const config = await makeConfig({ upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`, plannerTimeoutMs: 100 });
+      const startedAt = performance.now();
+      await expect(new ResponsesPlanner(config).createDraft(
+        { request: '生成图片', preferences: {}, assets: [], allowOpenShop: true },
+        { onAssistantMessageDelta: () => {} },
+      )).rejects.toMatchObject({ statusCode: 504, code: 'planner_timeout', message: 'Planner 请求超时' });
+      expect(performance.now() - startedAt).toBeLessThan(1000);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   it('转发可见增量，在完成校验和持久化后才输出完整计划', async () => {
     const planner: Planner = {
       createDraft: vi.fn(async (_input, options) => {
@@ -394,6 +448,20 @@ describe('response fixture normalization', () => {
 describe('fail-closed config', () => {
   it('缺少秘密或固定上游配置时拒绝启动', () => {
     expect(() => loadConfig({})).toThrow(/配置无效或缺失/);
+  });
+
+  it('Planner 默认超时为 180 秒，并保留 1000–300000 毫秒范围', () => {
+    const base = {
+      AGENT_PUBLIC_ORIGIN: 'https://app.internal',
+      AGENT_SESSION_SECRET: 'test-session-secret-with-at-least-32-characters',
+      AGENT_UPSTREAM_BASE_URL: 'https://api.example.com/v1',
+      AGENT_API_KEY: 'test-key',
+      AGENT_PLANNER_MODEL: 'planner-fixed',
+      AGENT_IMAGE_MODEL: 'image-fixed',
+    };
+    expect(loadConfig(base).plannerTimeoutMs).toBe(180_000);
+    expect(() => loadConfig({ ...base, AGENT_PLANNER_TIMEOUT_MS: '999' })).toThrow(/AGENT_PLANNER_TIMEOUT_MS/);
+    expect(() => loadConfig({ ...base, AGENT_PLANNER_TIMEOUT_MS: '300001' })).toThrow(/AGENT_PLANNER_TIMEOUT_MS/);
   });
 
   it('拒绝可能泄露 Authorization 的上游 URL 结构', () => {

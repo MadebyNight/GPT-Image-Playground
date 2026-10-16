@@ -220,7 +220,7 @@ export class ResponsesPlanner implements Planner {
       content.push({
         type: 'input_image',
         image_url: `data:${asset.mimeType};base64,${bytes.toString('base64')}`,
-        detail: 'high',
+        detail: 'low',
       });
       content.push({ type: 'input_text', text: `输入索引：${index}；受控角色：${asset.role}；SHA-256：${asset.sha256}` });
     }

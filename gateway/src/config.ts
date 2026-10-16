@@ -27,7 +27,7 @@ const envSchema = z.object({
   AGENT_PLAN_RATE_PER_MINUTE: numberFromEnv(5, 1, 1000),
   AGENT_EXECUTE_RATE_PER_MINUTE: numberFromEnv(2, 1, 1000),
   AGENT_IMAGES_RATE_PER_HOUR: numberFromEnv(20, 1, 10000),
-  AGENT_PLANNER_TIMEOUT_MS: numberFromEnv(60_000, 1000, 300_000),
+  AGENT_PLANNER_TIMEOUT_MS: numberFromEnv(180_000, 1000, 300_000),
   AGENT_EXECUTOR_TIMEOUT_MS: numberFromEnv(180_000, 1000, 900_000),
   AGENT_WEB_SEARCH_ENABLED: z.enum(['true', 'false']).default('false'),
   AGENT_WEB_SEARCH_BASE_URL: z.string().url().optional(),
