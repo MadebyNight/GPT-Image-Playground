@@ -246,14 +246,16 @@ function getLiveReplyState({
 
   if (execution) {
     const terminal = ['failed', 'failed_unknown', 'cancelled'].includes(execution.status)
+    const watchTimedOut = phase === 'failed' && !terminal && execution.status !== 'completed'
+      && Boolean(error?.startsWith('超过 16 分钟仍未收到最终执行状态'))
     return {
       assistantText: streamedText,
       status: {
-        label: STATUS_LABELS[execution.status],
+        label: watchTimedOut ? '执行状态观察超时' : STATUS_LABELS[execution.status],
         detail: `执行 ID：${execution.id}`,
-        tone: getExecutionTone(execution.status),
+        tone: watchTimedOut ? 'error' : getExecutionTone(execution.status),
       },
-      errorMessage: execution.error?.message || (terminal ? error : undefined),
+      errorMessage: execution.error?.message || (terminal || watchTimedOut ? error : undefined),
       recoveryActions: execution.status === 'queued' || execution.status === 'executing' ? (
         <button type="button" className={recoveryButtonClassName} onClick={() => { void cancelExecution() }}>
           尝试取消
