@@ -66,7 +66,7 @@ for (const serverManaged of [true, false]) {
             timeoutSeconds: 60,
             proxyPath: '/api-proxy',
           } : { enabled: false },
-          modelProtocols: { 'gemini-3.1-flash-image': 'images' },
+          modelProtocols: { 'gemini-3.1-flash-image': 'images', 'flux-pro': 'images' },
         }),
       })
     })
@@ -79,6 +79,8 @@ for (const serverManaged of [true, false]) {
           { id: 'gemini-3.1-flash-image' }, { id: 'imagen-4.0' },
           { id: 'claude-sonnet-5-5' }, { id: 'glm-5.3' }, { id: 'kimi-k3' },
           { id: 'deepseek-v4.1-flash' }, { id: 'gemini-3.1-flash' },
+          { id: 'vendor-unknown' }, { id: 'gpt-5.6-image-experimental' },
+          { id: 'flux-pro' },
         ] }),
       })
     })
@@ -93,7 +95,10 @@ for (const serverManaged of [true, false]) {
       await expect(page.getByRole('option', { name: `${model} 无图像生成能力` })).toBeDisabled()
     }
     await expect(page.getByRole('option', { name: 'imagen-4.0 协议未知，无法选择' })).toBeDisabled()
+    await expect(page.getByRole('option', { name: 'vendor-unknown 协议未知，无法选择' })).toBeDisabled()
+    await expect(page.getByRole('option', { name: 'gpt-5.6-image-experimental 协议未知，无法选择' })).toBeDisabled()
     await expect(page.getByRole('option', { name: 'gemini-3.1-flash-image images' })).toBeEnabled()
+    await expect(page.getByRole('option', { name: 'flux-pro images' })).toBeEnabled()
     await expect(page.getByRole('option', { name: 'gpt-image-2.5-sunburst images' })).toBeEnabled()
     await page.getByRole('option', { name: 'gpt-5.6-luna responses' }).click()
     await expect(modelInput).toHaveValue('gpt-5.6-luna')
@@ -103,6 +108,10 @@ for (const serverManaged of [true, false]) {
     await page.getByRole('option', { name: 'gemini-3.1-flash-image images' }).click()
     await expect(modelInput).toHaveValue('gemini-3.1-flash-image')
     await expect(page.getByText('Images API (/v1/images)', { exact: true }).first()).toBeVisible()
+
+    await modelInput.click()
+    await page.getByRole('option', { name: 'flux-pro images' }).click()
+    await expect(modelInput).toHaveValue('flux-pro')
   })
 }
 

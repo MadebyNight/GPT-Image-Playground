@@ -25,7 +25,10 @@ export function resolveModelAvailability(model: string, mappings: Record<string,
   if (/^gemini(?:[.-].*)?[.-]image(?:[.-]|$)/i.test(model) || /^imagen/i.test(model)) {
     return { kind: 'protocol-unknown' }
   }
-  return { kind: 'no-image-generation' }
+  if (/^(?:claude|glm|kimi|deepseek|gemini)/i.test(model)) {
+    return { kind: 'no-image-generation' }
+  }
+  return { kind: 'protocol-unknown' }
 }
 
 export async function fetchAvailableModels(profile: ApiProfile, signal?: AbortSignal): Promise<string[]> {

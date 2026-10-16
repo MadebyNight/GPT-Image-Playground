@@ -57,7 +57,7 @@
 - 历史任务保存请求参数与实际响应参数，便于复现和比较。
 - 支持将本地历史打包导出，便于备份或迁移。
 
-部署时可用 `MODEL_PROTOCOLS` 配置模型协议，格式为逗号分隔的 `模型ID:images` 或 `模型ID:responses`，例如 `gpt-image-2:images,gpt-5.5:responses`。它会作为顶层 `modelProtocols` 对象写入 `runtime-config.json`，供服务端统一模式和个人 Profile 模式共用。显式映射优先于名称规则；`gpt-image*`、`dall-e*` 按 `images`，`gpt-4/5/6*`、`o1-9*` 按 `responses` 识别为可选。Gemini/Imagen 图像模型需要显式映射兼容协议；未映射时显示“协议未知，无法选择”。Claude、GLM、Kimi、DeepSeek 和 Gemini 非图像模型，以及无法识别的模型，会保留在列表中但禁用，并显示“无图像生成能力”；显式映射可覆盖名称规则。映射缺失或无效时会提示并回退预设模型列表。`SERVER_API_ALLOW_CUSTOM_MODEL=false` 时，不能自由输入；本次上游列表与部署端预设项中，只有上述判定为可选且接口模式已启用的模型可从下拉选择。
+部署时可用 `MODEL_PROTOCOLS` 配置模型协议，格式为逗号分隔的 `模型ID:images` 或 `模型ID:responses`，例如 `gpt-image-2:images,gpt-5.5:responses`。它会作为顶层 `modelProtocols` 对象写入 `runtime-config.json`，供服务端统一模式和个人 Profile 模式共用。显式映射优先于名称规则；`gpt-image*`、`dall-e*` 按 `images`，`gpt-4/5/6*`、`o1-9*` 按 `responses` 识别为可选。Gemini/Imagen 图像模型需要显式映射兼容协议；未映射时显示“协议未知，无法选择”。Claude、GLM、Kimi、DeepSeek 和 Gemini 非图像模型会保留在列表中但禁用，并显示“无图像生成能力”；其他无法识别的模型也会保留并禁用，但显示“协议未知，无法选择”。显式映射可覆盖名称规则。映射缺失或无效时会提示并回退预设模型列表。`SERVER_API_ALLOW_CUSTOM_MODEL=false` 时，不能自由输入；本次上游列表与部署端预设项中，只有上述判定为可选且接口模式已启用的模型可从下拉选择。
 
 ## 工作模式
 

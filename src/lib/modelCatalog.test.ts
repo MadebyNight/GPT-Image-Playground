@@ -32,12 +32,15 @@ describe('model protocol resolution', () => {
 
   it.each([
     'claude-sonnet-5-5', 'glm-5.3', 'kimi-k3', 'deepseek-v4.1-flash',
-    'gemini-3.1-flash', 'vendor-unknown', 'gpt-5.6-image-experimental',
+    'gemini-3.1-flash',
   ])('%s has no supported image generation capability', (model) => {
     expect(resolveModelAvailability(model)).toEqual({ kind: 'no-image-generation' })
   })
 
-  it.each(['gemini-3.1-flash-image', 'imagen-4.0'])('%s needs an explicit compatibility protocol', (model) => {
+  it.each([
+    'gemini-3.1-flash-image', 'imagen-4.0', 'vendor-unknown',
+    'gpt-5.6-image-experimental', 'flux-pro', 'cogview-4',
+  ])('%s needs an explicit compatibility protocol', (model) => {
     expect(resolveModelAvailability(model)).toEqual({ kind: 'protocol-unknown' })
     expect(resolveModelAvailability(model, { [model]: 'images' })).toEqual({ kind: 'available', protocol: 'images' })
   })
