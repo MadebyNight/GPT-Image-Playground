@@ -134,7 +134,8 @@ RUNTIME_SERVER_API_TIMEOUT_SECONDS=600
 RUNTIME_RESTRICTED_AGENT_ENABLED=false
 RUNTIME_RESTRICTED_AGENT_ONLY=false
 API_PROXY_AUTHORIZATION='$http_authorization'
-SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits|responses))$'
+SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits|responses)|v1/models)$'
+API_PROXY_MODELS_PATH=/v1/models
 API_PROXY_CONNECT_TIMEOUT_SECONDS=60
 API_PROXY_TIMEOUT_SECONDS=600
 API_PROXY_SSL_SERVER_NAME=off
@@ -252,6 +253,17 @@ if [ "$SERVER_API_CONFIG_ENABLED" = "true" ]; then
         SERVER_API_UPSTREAM_URL=${SERVER_API_UPSTREAM_URL%/}
     done
 
+    # 模型列表始终请求上游 v1/models，同时保留自定义上游路径前缀。
+    upstream_path=${SERVER_API_UPSTREAM_URL#*://}
+    case "$upstream_path" in
+        */*) upstream_path=/${upstream_path#*/} ;;
+        *) upstream_path= ;;
+    esac
+    case "$upstream_path" in
+        */v1) API_PROXY_MODELS_PATH=$upstream_path/models ;;
+        *) API_PROXY_MODELS_PATH=$upstream_path/v1/models ;;
+    esac
+
     upstream_authority=${SERVER_API_UPSTREAM_URL#*://}
     upstream_authority=${upstream_authority%%/*}
     case "$upstream_authority" in
@@ -281,9 +293,9 @@ if [ "$SERVER_API_CONFIG_ENABLED" = "true" ]; then
     API_PROXY_ERROR_LOG_LEVEL=error
 
     case "$RUNTIME_SERVER_API_MODE_OPTIONS" in
-        *'"images"'*'"responses"'*|*'"responses"'*'"images"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits|responses))$' ;;
-        *'"images"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits))$' ;;
-        *'"responses"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?responses)$' ;;
+        *'"images"'*'"responses"'*|*'"responses"'*'"images"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits|responses)|v1/models)$' ;;
+        *'"images"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?(images/generations|images/edits)|v1/models)$' ;;
+        *'"responses"'*) SERVER_API_ALLOWED_PATHS='^/api-proxy/((v1/)?responses|v1/models)$' ;;
     esac
 
     RUNTIME_SERVER_API_ENABLED=true
@@ -308,6 +320,7 @@ export DOCKER_LEGACY_API_URL_USED
 export SERVER_API_CONFIG_ENABLED
 export API_PROXY_AUTHORIZATION
 export SERVER_API_ALLOWED_PATHS
+export API_PROXY_MODELS_PATH
 export API_PROXY_CONNECT_TIMEOUT_SECONDS
 export API_PROXY_TIMEOUT_SECONDS
 export API_PROXY_SSL_SERVER_NAME
