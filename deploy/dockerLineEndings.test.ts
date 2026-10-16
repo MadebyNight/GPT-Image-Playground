@@ -93,6 +93,48 @@ describe('Nginx static cache policy', () => {
 })
 
 describe('Restricted Agent deployment boundary', () => {
+  it('allows only the read-only models request alongside the existing write routes', () => {
+    const nginx = readNormalizedText('deploy/nginx.conf')
+    const proxyBlock = nginx.match(/# BEGIN API PROXY([\s\S]*?)# END API PROXY/)?.[1] ?? ''
+    expect(proxyBlock).toContain('location /api-proxy/ {')
+    expect(proxyBlock).toContain('limit_except GET POST OPTIONS {\n            deny all;')
+    expect(proxyBlock).toContain('if ($uri ~* ${SERVER_API_ALLOWED_PATHS}) {')
+    expect(proxyBlock).toContain('if ($request_method ~ ^(GET|HEAD)$) {\n            set $allow_proxy 0;')
+    expect(proxyBlock).toContain('if ($uri = /api-proxy/v1/models) {\n            set $allow_proxy 0;')
+    expect(proxyBlock).toContain('set $proxy_method_path "$request_method:$uri";')
+    expect(proxyBlock).toContain('if ($proxy_method_path = GET:/api-proxy/v1/models) {\n            set $allow_proxy 1;')
+    expect(proxyBlock).toContain('if ($allow_proxy = 0) {\n            return 403')
+    expect(proxyBlock).toContain('rewrite ^/api-proxy/v1/models$ ${API_PROXY_MODELS_PATH} break;')
+    expect(proxyBlock.indexOf('if ($request_method ~ ^(GET|HEAD)$)')).toBeLessThan(proxyBlock.indexOf('if ($proxy_method_path = GET:/api-proxy/v1/models)'))
+    expect(proxyBlock.indexOf('if ($uri = /api-proxy/v1/models)')).toBeLessThan(proxyBlock.indexOf('if ($proxy_method_path = GET:/api-proxy/v1/models)'))
+    expect(proxyBlock.indexOf('return 403')).toBeLessThan(proxyBlock.indexOf('rewrite ^/api-proxy/v1/models$'))
+
+    const migrate = readNormalizedText('deploy/migrate-api-env.envsh')
+    expect(migrate).toContain('API_PROXY_MODELS_PATH=/v1/models')
+    expect(migrate).toContain('*/v1) API_PROXY_MODELS_PATH=$upstream_path/models')
+    expect(migrate).toContain('*) API_PROXY_MODELS_PATH=$upstream_path/v1/models')
+    expect(migrate).toContain('export API_PROXY_MODELS_PATH')
+    const allowedPaths = [...migrate.matchAll(/SERVER_API_ALLOWED_PATHS='([^']+)'/g)].map((match) => match[1])
+    expect(allowedPaths).toHaveLength(4)
+    for (const [mode, pattern, writePaths] of [
+      ['default or both', allowedPaths[0], ['/api-proxy/v1/images/generations', '/api-proxy/v1/images/edits', '/api-proxy/v1/responses']],
+      ['both', allowedPaths[1], ['/api-proxy/v1/images/generations', '/api-proxy/v1/images/edits', '/api-proxy/v1/responses']],
+      ['images', allowedPaths[2], ['/api-proxy/v1/images/generations', '/api-proxy/v1/images/edits']],
+      ['responses', allowedPaths[3], ['/api-proxy/v1/responses']],
+    ] as const) {
+      const allowed = new RegExp(pattern)
+      expect(allowed.test('/api-proxy/v1/models'), mode).toBe(true)
+      expect(allowed.test('/api-proxy/v1/files'), mode).toBe(false)
+      expect(allowed.test('/api-proxy/v1/models/extra'), mode).toBe(false)
+      for (const path of ['/api-proxy/v1/images/generations', '/api-proxy/v1/images/edits', '/api-proxy/v1/responses']) {
+        expect(allowed.test(path), `${mode}: ${path}`).toBe(writePaths.some((writePath) => writePath === path))
+      }
+    }
+
+    const injector = readNormalizedText('deploy/inject-api-url.sh')
+    expect(injector).toContain("sed -i '/# BEGIN API PROXY/,/# END API PROXY/d' /etc/nginx/conf.d/default.conf")
+  })
+
   it('keeps both server-side routes behind independently removable blocks', () => {
     const nginx = readFileSync('deploy/nginx.conf', 'utf8')
     const agentBlock = nginx.match(/# BEGIN RESTRICTED AGENT[\s\S]*?# END RESTRICTED AGENT/)?.[0] ?? ''
