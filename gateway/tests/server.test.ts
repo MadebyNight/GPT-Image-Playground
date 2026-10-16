@@ -41,6 +41,9 @@ const contractFixture = JSON.parse(readFileSync(
   new URL('../../test-fixtures/restricted-agent-contract.json', import.meta.url),
   'utf8',
 )) as ContractFixture;
+const plannerUpstreamFixture = JSON.parse(readFileSync(
+  new URL('./fixtures/planner-upstream.json', import.meta.url), 'utf8',
+)) as { source: string; draft: Record<string, unknown>; schemaRejection: Record<string, unknown> };
 
 function applyInvalidPlanMutation(mutation: ContractFixture['invalidPlanMutations'][number]) {
   const plan = structuredClone(contractFixture.validPlans[mutation.base]);
@@ -309,6 +312,88 @@ describe('流式计划', () => {
     expect(body.stream).toBe(true);
     expect(deltas).toEqual(['我会', '生成一张红色测试图片。']);
     expect(draft).toEqual(streamingDraft);
+  });
+
+  it.each([
+    ['整段 JSON', JSON.stringify(plannerUpstreamFixture.draft)],
+    ['前后说明文字', `以下是计划：\n${JSON.stringify(plannerUpstreamFixture.draft)}\n请执行。`],
+    ['对象之外还有内容', `${JSON.stringify(plannerUpstreamFixture.draft)}\n{"extra":true}`],
+  ])('Planner 提取 %s', async (_name, outputText) => {
+    const config = await makeConfig();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ output_text: outputText }), { status: 200 }));
+    await expect(new ResponsesPlanner(config).createDraft({
+      request: '生成图片', preferences: {}, assets: [], allowOpenShop: true,
+    })).resolves.toEqual(plannerUpstreamFixture.draft);
+  });
+
+  it('Planner 把流式截断 JSON 归类为输出不完整', async () => {
+    const config = await makeConfig();
+    const truncated = JSON.stringify(plannerUpstreamFixture.draft).slice(0, -3);
+    const event = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta: truncated })}\n\n`;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(event, { status: 200 }));
+    await expect(new ResponsesPlanner(config).createDraft({
+      request: '生成图片', preferences: {}, assets: [], allowOpenShop: true,
+    }, { onAssistantMessageDelta: () => {} })).rejects.toMatchObject({
+      code: 'planner_output_incomplete', message: 'Planner 输出不完整',
+    });
+  });
+
+  it('Planner 把不可解析的闭合对象归类为非 JSON', async () => {
+    const config = await makeConfig();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ output_text: '说明 {invalid}' }), { status: 200 }));
+    await expect(new ResponsesPlanner(config).createDraft({
+      request: '生成图片', preferences: {}, assets: [], allowOpenShop: true,
+    })).rejects.toMatchObject({ code: 'planner_output_not_json', message: 'Planner 输出非 JSON' });
+  });
+
+  it('本地 HTTP stub 验证 schema 400 后只回退一次并成功解析流', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += chunk.toString();
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      requests.push(parsed);
+      if (requests.length === 1) {
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(plannerUpstreamFixture.schemaRejection));
+      } else {
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(`event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: 'response.output_text.delta', delta: `计划如下：${JSON.stringify(plannerUpstreamFixture.draft)}\n完成。`,
+        })}\n\n`);
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('无法获取本地端口');
+      const config = await makeConfig({ upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1` });
+      await expect(new ResponsesPlanner(config).createDraft({
+        request: '生成图片', preferences: {}, assets: [], allowOpenShop: true,
+      }, { onAssistantMessageDelta: () => {} })).resolves.toEqual(plannerUpstreamFixture.draft);
+      expect(requests).toHaveLength(2);
+      expect(requests[0]?.text).toMatchObject({ format: { type: 'json_schema', strict: true } });
+      expect(requests[1]).not.toHaveProperty('text');
+      expect(JSON.stringify(requests[1]?.input)).toContain('只返回符合以下 JSON 结构的对象');
+      expect(requests[1]?.stream).toBe(true);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it('回退输出不符合草案结构时本地拒绝且不重试', async () => {
+    const config = await makeConfig();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(plannerUpstreamFixture.schemaRejection), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output_text: '{"assistantMessage":"仅有说明"}' }), { status: 200 }));
+    await expect(new ResponsesPlanner(config).createDraft({
+      request: '生成图片', preferences: {}, assets: [], allowOpenShop: true,
+    })).rejects.toMatchObject({
+      code: 'invalid_planner_output', message: 'Planner 回退输出不符合计划结构',
+      details: { plannerSchemaFallback: true },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('参考图仅在规划请求中使用低细节，执行编辑仍发送完整图片', async () => {
@@ -820,15 +905,18 @@ describe('two phase gateway', () => {
       request: '裁剪图片', preferences: {}, assets: [], allowOpenShop: true,
     })).rejects.toMatchObject({
       statusCode: 502,
-      code: 'planner_upstream_error',
-      message: 'Planner 上游返回 HTTP 400：不支持 oneOf；authorization=Bearer [REDACTED]；key=[REDACTED]',
+      code: 'planner_schema_rejected',
+      message: expect.stringMatching(/^Planner 上游拒绝 JSON schema（HTTP 400：.*Bearer \[REDACTED\].*key=\[REDACTED\].*回退请求返回 HTTP 400/),
       details: {
         upstreamStatus: 400,
         upstreamType: 'invalid_request_error',
         upstreamCode: 'invalid_json_schema',
         upstreamParam: 'text.format.schema',
+        plannerSchemaFallback: true,
+        fallbackStatus: 400,
       },
     });
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
   });
 
   it('拒绝规范化后膨胀超过单文件限制的压缩图片并清理产物', async () => {
