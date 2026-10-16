@@ -17,6 +17,7 @@ SERVER_API_KEY=${SERVER_API_KEY-}
 SERVER_API_MODEL=${SERVER_API_MODEL-gpt-image-2}
 SERVER_API_MODE=${SERVER_API_MODE-images}
 SERVER_API_MODEL_OPTIONS=${SERVER_API_MODEL_OPTIONS-}
+MODEL_PROTOCOLS=${MODEL_PROTOCOLS-gpt-image-2:images,gpt-5.5:responses}
 SERVER_API_MODE_OPTIONS=${SERVER_API_MODE_OPTIONS-}
 SERVER_API_ALLOW_CUSTOM_MODEL=${SERVER_API_ALLOW_CUSTOM_MODEL-true}
 SERVER_API_CODEX_CLI=${SERVER_API_CODEX_CLI-false}
@@ -312,6 +313,41 @@ if [ "$RESTRICTED_AGENT_ENABLED" = "true" ]; then
     RUNTIME_RESTRICTED_AGENT_ONLY=$RESTRICTED_AGENT_ONLY
 fi
 
+# 两种 API 配置模式共用公开的模型协议映射，值仅含已校验的模型 ID 与协议枚举。
+require_single_line "$MODEL_PROTOCOLS" 'MODEL_PROTOCOLS'
+build_model_protocols_json() {
+    input=$1
+    [ -n "$input" ] || server_api_config_error 'MODEL_PROTOCOLS must contain model:protocol pairs'
+    case "$input" in
+        ,*|*,|*,,*) server_api_config_error 'MODEL_PROTOCOLS must contain nonempty model:protocol pairs' ;;
+    esac
+    result='{'
+    seen='|'
+    old_ifs=$IFS
+    IFS=,
+    for item in $input; do
+        model=${item%:*}
+        mode=${item##*:}
+        if [ "$model" = "$item" ] || [ -z "$model" ] || [ "${#model}" -gt 256 ] || ! printf '%s\n' "$model" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._~:/+@=-]*$'; then
+            IFS=$old_ifs
+            server_api_config_error 'MODEL_PROTOCOLS contains an invalid model ID'
+        fi
+        case "$mode" in
+            images|responses) ;;
+            *) IFS=$old_ifs; server_api_config_error 'MODEL_PROTOCOLS must use images or responses' ;;
+        esac
+        case "$seen" in
+            *"|$model|"*) IFS=$old_ifs; server_api_config_error 'MODEL_PROTOCOLS contains a duplicate model' ;;
+        esac
+        [ "$result" = '{' ] || result="$result,"
+        result="$result\"$model\":\"$mode\""
+        seen="$seen$model|"
+    done
+    IFS=$old_ifs
+    printf '%s}\n' "$result"
+}
+RUNTIME_MODEL_PROTOCOLS=$(build_model_protocols_json "$MODEL_PROTOCOLS")
+
 export DEFAULT_API_URL
 export API_PROXY_URL
 export ENABLE_API_PROXY
@@ -331,6 +367,7 @@ export RUNTIME_SERVER_API_ENABLED
 export RUNTIME_SERVER_API_MODEL
 export RUNTIME_SERVER_API_MODE
 export RUNTIME_SERVER_API_MODEL_OPTIONS
+export RUNTIME_MODEL_PROTOCOLS
 export RUNTIME_SERVER_API_MODE_OPTIONS
 export RUNTIME_SERVER_API_ALLOW_CUSTOM_MODEL
 export RUNTIME_SERVER_API_CODEX_CLI

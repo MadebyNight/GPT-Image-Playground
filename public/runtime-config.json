@@ -1,4 +1,5 @@
 {
   "version": 1,
+  "modelProtocols": { "gpt-image-2": "images", "gpt-5.5": "responses" },
   "serverApi": { "enabled": false }
 }

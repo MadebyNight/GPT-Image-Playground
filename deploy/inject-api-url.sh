@@ -30,7 +30,8 @@ fi
 RUNTIME_CONFIG_PATH=/usr/share/nginx/html/runtime-config.json
 RUNTIME_CONFIG_TMP=${RUNTIME_CONFIG_PATH}.tmp
 if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ] && [ "$RUNTIME_RESTRICTED_AGENT_ENABLED" = "true" ]; then
-    if ! printf '{\n  "version": 1,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  },\n  "restrictedAgent": {\n    "enabled": true,\n    "basePath": "/agent-api/v1",\n    "agentOnly": %s\n  }\n}\n' \
+    if ! printf '{\n  "version": 1,\n  "modelProtocols": %s,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  },\n  "restrictedAgent": {\n    "enabled": true,\n    "basePath": "/agent-api/v1",\n    "agentOnly": %s\n  }\n}\n' \
+        "$RUNTIME_MODEL_PROTOCOLS" \
         "$RUNTIME_SERVER_API_MODEL" \
         "$RUNTIME_SERVER_API_MODE" \
         "$RUNTIME_SERVER_API_MODEL_OPTIONS" \
@@ -45,7 +46,8 @@ if [ "$RUNTIME_SERVER_API_ENABLED" = "true" ] && [ "$RUNTIME_RESTRICTED_AGENT_EN
         container_config_error 'failed to write runtime configuration'
     fi
 elif [ "$RUNTIME_SERVER_API_ENABLED" = "true" ]; then
-    if ! printf '{\n  "version": 1,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  }\n}\n' \
+    if ! printf '{\n  "version": 1,\n  "modelProtocols": %s,\n  "serverApi": {\n    "enabled": true,\n    "provider": "openai",\n    "model": "%s",\n    "apiMode": "%s",\n    "modelOptions": %s,\n    "apiModeOptions": %s,\n    "allowCustomModel": %s,\n    "codexCli": %s,\n    "responseFormatB64Json": %s,\n    "timeoutSeconds": %s,\n    "proxyPath": "/api-proxy"\n  }\n}\n' \
+        "$RUNTIME_MODEL_PROTOCOLS" \
         "$RUNTIME_SERVER_API_MODEL" \
         "$RUNTIME_SERVER_API_MODE" \
         "$RUNTIME_SERVER_API_MODEL_OPTIONS" \
@@ -59,13 +61,15 @@ elif [ "$RUNTIME_SERVER_API_ENABLED" = "true" ]; then
         container_config_error 'failed to write runtime configuration'
     fi
 elif [ "$RUNTIME_RESTRICTED_AGENT_ENABLED" = "true" ]; then
-    if ! printf '{\n  "version": 1,\n  "serverApi": { "enabled": false },\n  "restrictedAgent": {\n    "enabled": true,\n    "basePath": "/agent-api/v1",\n    "agentOnly": %s\n  }\n}\n' \
+    if ! printf '{\n  "version": 1,\n  "modelProtocols": %s,\n  "serverApi": { "enabled": false },\n  "restrictedAgent": {\n    "enabled": true,\n    "basePath": "/agent-api/v1",\n    "agentOnly": %s\n  }\n}\n' \
+        "$RUNTIME_MODEL_PROTOCOLS" \
         "$RUNTIME_RESTRICTED_AGENT_ONLY" \
         2>/dev/null > "$RUNTIME_CONFIG_TMP"
     then
         container_config_error 'failed to write runtime configuration'
     fi
-elif ! printf '{\n  "version": 1,\n  "serverApi": { "enabled": false }\n}\n' \
+elif ! printf '{\n  "version": 1,\n  "modelProtocols": %s,\n  "serverApi": { "enabled": false }\n}\n' \
+    "$RUNTIME_MODEL_PROTOCOLS" \
     2>/dev/null > "$RUNTIME_CONFIG_TMP"
 then
     container_config_error 'failed to write runtime configuration'

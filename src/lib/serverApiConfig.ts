@@ -1,5 +1,5 @@
 import type { AgentCapabilities, AgentMode, ApiMode, ApiProfile, AppSettings } from '../types'
-import { getActiveApiProfile } from './apiProfiles'
+import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, getActiveApiProfile } from './apiProfiles'
 
 declare const __RUNTIME_CONFIG_REQUIRED__: boolean
 
@@ -35,6 +35,7 @@ interface RestrictedAgentRuntimeConfig {
 export interface PublicRuntimeConfig {
   version: 1
   serverApi: DisabledServerApiConfig | EnabledServerApiConfig
+  modelProtocols?: Record<string, ApiMode> | null
   restrictedAgent?: RestrictedAgentRuntimeConfig
 }
 
@@ -64,7 +65,8 @@ export interface ChatCapabilities {
   status: ChatCapabilityStatus
 }
 
-const TOP_LEVEL_KEYS = new Set(['version', 'serverApi', 'restrictedAgent'])
+export const RUNTIME_MODEL_PROTOCOLS_FIELD = 'modelProtocols'
+const TOP_LEVEL_KEYS = new Set(['version', 'serverApi', 'restrictedAgent', RUNTIME_MODEL_PROTOCOLS_FIELD])
 const RESTRICTED_AGENT_KEYS = new Set(['enabled', 'basePath', 'agentOnly'])
 const SERVER_API_KEYS = new Set([
   'enabled',
@@ -82,7 +84,12 @@ const SERVER_API_KEYS = new Set([
 const SAFE_PROXY_PATH_SEGMENT = /^[A-Za-z0-9._~-]+$/
 
 let runtimeState: RuntimeConfigState = { status: 'loading' }
-const STATIC_RUNTIME_CONFIG: PublicRuntimeConfig = { version: 1, serverApi: { enabled: false } }
+const fetchedManagedModelIds = new Set<string>()
+const STATIC_RUNTIME_CONFIG: PublicRuntimeConfig = {
+  version: 1,
+  serverApi: { enabled: false },
+  modelProtocols: { [DEFAULT_IMAGES_MODEL]: 'images', [DEFAULT_RESPONSES_MODEL]: 'responses' },
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -177,18 +184,34 @@ function normalizeModelOptions(value: unknown, fallback: string): string[] {
   return options
 }
 
+function normalizeModelProtocols(value: unknown): Record<string, ApiMode> | null {
+  if (value === undefined) return null
+  if (!isRecord(value)) return null
+  const entries = Object.entries(value)
+  if (!entries.length) return null
+  const protocols: Record<string, ApiMode> = Object.create(null)
+  for (const [model, mode] of entries) {
+    if (!isValidModelId(model) || (mode !== 'images' && mode !== 'responses')) return null
+    protocols[model] = mode
+  }
+  return protocols
+}
+
 function parsePublicRuntimeConfig(raw: unknown): PublicRuntimeConfig {
   if (!isRecord(raw)) throw new Error('运行时配置必须是对象')
   assertAllowedKeys(raw, TOP_LEVEL_KEYS, '运行时配置')
   if (raw.version !== 1) throw new Error('不支持的运行时配置版本')
   if (!isRecord(raw.serverApi)) throw new Error('serverApi 配置缺失')
   const restrictedAgent = normalizeRestrictedAgentConfig(raw.restrictedAgent)
+  const modelProtocols = RUNTIME_MODEL_PROTOCOLS_FIELD in raw
+    ? normalizeModelProtocols(raw[RUNTIME_MODEL_PROTOCOLS_FIELD])
+    : undefined
 
   const serverApi = raw.serverApi
   assertAllowedKeys(serverApi, SERVER_API_KEYS, 'serverApi')
   if (typeof serverApi.enabled !== 'boolean') throw new Error('serverApi.enabled 必须是布尔值')
   if (!serverApi.enabled) {
-    return { version: 1, serverApi: { enabled: false }, ...(restrictedAgent ? { restrictedAgent } : {}) }
+    return { version: 1, serverApi: { enabled: false }, ...(modelProtocols !== undefined ? { modelProtocols } : {}), ...(restrictedAgent ? { restrictedAgent } : {}) }
   }
 
   if (serverApi.provider !== 'openai') throw new Error('serverApi.provider 必须是 openai')
@@ -229,6 +252,7 @@ function parsePublicRuntimeConfig(raw: unknown): PublicRuntimeConfig {
       timeoutSeconds: serverApi.timeoutSeconds,
       proxyPath: normalizeProxyPath(serverApi.proxyPath),
     },
+    ...(modelProtocols !== undefined ? { modelProtocols } : {}),
     ...(restrictedAgent ? { restrictedAgent } : {}),
   }
 }
@@ -238,6 +262,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function initializeRuntimeConfig(raw: unknown): RuntimeConfigState {
+  fetchedManagedModelIds.clear()
   try {
     runtimeState = { status: 'ready', config: parsePublicRuntimeConfig(raw) }
   } catch (error) {
@@ -373,6 +398,10 @@ export function getServerApiProxyPath(): string {
     : DEFAULT_SERVER_API_PROXY_PATH
 }
 
+export function getRuntimeModelProtocols(): Record<string, ApiMode> | null {
+  return runtimeState.status === 'ready' ? runtimeState.config.modelProtocols ?? null : null
+}
+
 export function getServerManagedApiOptions(): { apiModeOptions: ApiMode[]; modelOptions: string[]; allowCustomModel: boolean } | null {
   if (runtimeState.status !== 'ready' || !runtimeState.config.serverApi.enabled) return null
 
@@ -384,6 +413,15 @@ export function getServerManagedApiOptions(): { apiModeOptions: ApiMode[]; model
   }
 }
 
+export function registerFetchedManagedModels(models: string[]): void {
+  if (runtimeState.status !== 'ready' || !runtimeState.config.serverApi.enabled) return
+  for (const model of models) if (isValidModelId(model)) fetchedManagedModelIds.add(model)
+}
+
+function isAllowedManagedModel(model: string, config: EnabledServerApiConfig): boolean {
+  return isValidModelId(model) && (config.allowCustomModel || config.modelOptions.includes(model) || fetchedManagedModelIds.has(model))
+}
+
 function getSelectedManagedApiMode(settings: Partial<AppSettings> | undefined, config: EnabledServerApiConfig): ApiMode {
   const selected = settings?.apiMode
   return selected && config.apiModeOptions.includes(selected) ? selected : config.apiMode
@@ -391,8 +429,7 @@ function getSelectedManagedApiMode(settings: Partial<AppSettings> | undefined, c
 
 function getSelectedManagedModel(settings: Partial<AppSettings> | undefined, config: EnabledServerApiConfig): string {
   const selected = typeof settings?.model === 'string' ? settings.model.trim() : ''
-  if (selected && config.allowCustomModel && isValidModelId(selected)) return selected
-  return selected && config.modelOptions.includes(selected) ? selected : config.model
+  return selected && isAllowedManagedModel(selected, config) ? selected : config.model
 }
 
 export function getServerManagedApiProfile(settings?: Partial<AppSettings>): ApiProfile | null {
@@ -454,7 +491,7 @@ export function sanitizeSettingsPatchForServerMode(patch: Partial<AppSettings>):
     if (patch.apiMode && config.apiModeOptions.includes(patch.apiMode)) sanitized.apiMode = patch.apiMode
     if (typeof patch.model === 'string') {
       const model = patch.model.trim()
-      if (config.modelOptions.includes(model) || (config.allowCustomModel && isValidModelId(model))) sanitized.model = model
+      if (isAllowedManagedModel(model, config)) sanitized.model = model
     }
   }
   if (typeof patch.clearInputAfterSubmit === 'boolean') sanitized.clearInputAfterSubmit = patch.clearInputAfterSubmit

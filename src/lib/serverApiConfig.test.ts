@@ -8,9 +8,11 @@ import {
   getEffectiveSettings,
   getRestrictedAgentBasePath,
   getRuntimeConfigState,
+  getRuntimeModelProtocols,
   getServerApiProxyPath,
   getServerManagedApiOptions,
   getServerManagedApiProfile,
+  registerFetchedManagedModels,
   initializeRuntimeConfig,
   isRestrictedAgentEnabled,
   isRestrictedAgentOnly,
@@ -454,9 +456,30 @@ describe('initializeRuntimeConfig', () => {
     expect(getServerManagedApiProfile({ ...DEFAULT_SETTINGS, model: 'custom-model' })).toMatchObject({
       model: 'gpt-image-2',
     })
+    registerFetchedManagedModels(['gpt-5.5-live', 'bad model'])
+    expect(getServerManagedApiProfile({ ...DEFAULT_SETTINGS, model: 'gpt-5.5-live' })?.model).toBe('gpt-5.5-live')
+    expect(sanitizeSettingsPatchForServerMode({ model: 'gpt-5.5-live' }).model).toBe('gpt-5.5-live')
+    expect(sanitizeSettingsPatchForServerMode({ model: 'not-listed' }).model).toBeUndefined()
+    expect(sanitizeSettingsPatchForServerMode({ model: 'bad model' }).model).toBeUndefined()
     expect(getServerManagedApiProfile({ ...DEFAULT_SETTINGS, model: 'gpt-5.5' })).toMatchObject({
       model: 'gpt-5.5',
     })
+  })
+
+  it('strictly validates modelProtocols and falls back when absent or malformed', () => {
+    initializeRuntimeConfig({ ...enabledRuntimeConfig,
+      modelProtocols: { 'gpt-image-2': 'responses', 'gpt-5.5': 'images' },
+    })
+    expect(getRuntimeModelProtocols()).toEqual({ 'gpt-image-2': 'responses', 'gpt-5.5': 'images' })
+
+    initializeRuntimeConfig({ version: 1, serverApi: { enabled: false }, modelProtocols: { 'gpt-image-2': 'responses' } })
+    expect(getRuntimeModelProtocols()).toEqual({ 'gpt-image-2': 'responses' })
+
+    for (const modelProtocols of [undefined, [], { 'bad model': 'images' }, { 'gpt-image-2': 'chat' }]) {
+      initializeRuntimeConfig({ ...enabledRuntimeConfig, modelProtocols })
+      expect(getRuntimeConfigState().status).toBe('ready')
+      expect(getRuntimeModelProtocols()).toBeNull()
+    }
   })
 
   it('uses the default same-origin proxy path when it is omitted', () => {
@@ -687,7 +710,7 @@ describe('loadRuntimeConfig', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(getRuntimeConfigState()).toEqual({
       status: 'ready',
-      config: { version: 1, serverApi: { enabled: false } },
+      config: { version: 1, serverApi: { enabled: false }, modelProtocols: { 'gpt-image-2': 'images', 'gpt-5.5': 'responses' } },
     })
     expect(getEffectiveApiProfile(clientSettings)).toEqual(clientSettings.profiles[0])
     expect(getEffectiveSettings(clientSettings)).toEqual(clientSettings)
