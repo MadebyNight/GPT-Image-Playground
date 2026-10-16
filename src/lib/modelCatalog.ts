@@ -1,6 +1,6 @@
 import type { ApiMode, ApiProfile } from '../types'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL } from './apiProfiles'
-import { buildApiUrl } from './devProxy'
+import { buildApiUrl, normalizeBaseUrl } from './devProxy'
 import { getServerApiProxyPath } from './serverApiConfig'
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~:/+@=-]{0,255}$/
@@ -9,6 +9,7 @@ const MODELS_TIMEOUT_MS = 8000
 export function resolveModelProtocol(model: string, mappings: Record<string, ApiMode> | null = null): ApiMode | null {
   if (mappings && Object.prototype.hasOwnProperty.call(mappings, model)) return mappings[model]
   if (model === DEFAULT_IMAGES_MODEL || /^(?:gpt-image|dall-e)(?:[-.]|$)/i.test(model)) return 'images'
+  if (/image/i.test(model)) return null
   if (model === DEFAULT_RESPONSES_MODEL || /^gpt-(?:4|5|6)(?:[.-]|$)/i.test(model) || /^o[1-9](?:[.-]|$)/i.test(model)) return 'responses'
   return null
 }
@@ -19,6 +20,7 @@ export async function fetchAvailableModels(profile: ApiProfile, signal?: AbortSi
   const abort = () => controller.abort()
   signal?.addEventListener('abort', abort, { once: true })
   try {
+    if (!profile.apiProxy && !normalizeBaseUrl(profile.baseUrl)) throw new Error('当前 Profile 缺少 API URL')
     const url = profile.apiProxy
       ? `${getServerApiProxyPath()}/v1/models`
       : buildApiUrl(profile.baseUrl, 'models', null, false)

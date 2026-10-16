@@ -14,6 +14,7 @@ describe('model protocol resolution', () => {
     expect(resolveModelProtocol('gpt-image-2', { 'gpt-image-2': 'responses' })).toBe('responses')
     expect(resolveModelProtocol('gpt-image-2')).toBe('images')
     expect(resolveModelProtocol('gpt-5.5')).toBe('responses')
+    expect(resolveModelProtocol('gpt-5.5-image-experimental')).toBeNull()
     expect(resolveModelProtocol('vendor-unknown')).toBeNull()
   })
 })
