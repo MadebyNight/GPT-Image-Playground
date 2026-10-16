@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from './apiProfiles'
-import { fetchAvailableModels, resolveModelProtocol } from './modelCatalog'
+import { fetchAvailableModels, resolveModelAvailability, resolveModelProtocol } from './modelCatalog'
 import { initializeRuntimeConfig } from './serverApiConfig'
 
 afterEach(() => {
@@ -16,6 +16,37 @@ describe('model protocol resolution', () => {
     expect(resolveModelProtocol('gpt-5.5')).toBe('responses')
     expect(resolveModelProtocol('gpt-5.5-image-experimental')).toBeNull()
     expect(resolveModelProtocol('vendor-unknown')).toBeNull()
+  })
+
+  it.each([
+    ['gpt-image-2.5-sunburst', 'images'],
+    ['dall-e-3', 'images'],
+    ['gpt-5.6-luna', 'responses'],
+    ['gpt-4.1', 'responses'],
+    ['gpt-6.0', 'responses'],
+    ['o1-preview', 'responses'],
+    ['o9-pro', 'responses'],
+  ] as const)('%s can generate images through %s', (model, protocol) => {
+    expect(resolveModelAvailability(model)).toEqual({ kind: 'available', protocol })
+  })
+
+  it.each([
+    'claude-sonnet-5-5', 'glm-5.3', 'kimi-k3', 'deepseek-v4.1-flash',
+    'gemini-3.1-flash', 'vendor-unknown', 'gpt-5.6-image-experimental',
+  ])('%s has no supported image generation capability', (model) => {
+    expect(resolveModelAvailability(model)).toEqual({ kind: 'no-image-generation' })
+  })
+
+  it.each(['gemini-3.1-flash-image', 'imagen-4.0'])('%s needs an explicit compatibility protocol', (model) => {
+    expect(resolveModelAvailability(model)).toEqual({ kind: 'protocol-unknown' })
+    expect(resolveModelAvailability(model, { [model]: 'images' })).toEqual({ kind: 'available', protocol: 'images' })
+  })
+
+  it('lets an explicit deployment mapping override name-based capability', () => {
+    expect(resolveModelAvailability('claude-sonnet-5-5', { 'claude-sonnet-5-5': 'responses' }))
+      .toEqual({ kind: 'available', protocol: 'responses' })
+    expect(resolveModelAvailability('gpt-image-2', { 'gpt-image-2': 'responses' }))
+      .toEqual({ kind: 'available', protocol: 'responses' })
   })
 })
 

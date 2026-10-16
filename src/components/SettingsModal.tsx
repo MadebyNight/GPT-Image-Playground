@@ -31,7 +31,7 @@ import {
   isServerApiConfigUsable,
   registerFetchedManagedModels,
 } from '../lib/serverApiConfig'
-import { fetchAvailableModels, resolveModelProtocol } from '../lib/modelCatalog'
+import { fetchAvailableModels, resolveModelAvailability } from '../lib/modelCatalog'
 import type { ApiProfile, AppSettings, CustomProviderDefinition } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -1279,8 +1279,8 @@ export default function SettingsModal() {
                               if (!modelProtocols) throw new Error('模型协议映射不可用')
                               const models = await fetchAvailableModels(serverProfile, signal)
                               registerFetchedManagedModels(models.filter((model) => {
-                                const mode = resolveModelProtocol(model, modelProtocols)
-                                return mode !== null && serverApiOptions.apiModeOptions.includes(mode)
+                                const availability = resolveModelAvailability(model, modelProtocols)
+                                return availability.kind === 'available' && serverApiOptions.apiModeOptions.includes(availability.protocol)
                               }))
                               return models
                             }}
@@ -1291,8 +1291,8 @@ export default function SettingsModal() {
                         ) : (
                           <span className="font-medium text-gray-800 dark:text-gray-100">不可用</span>
                         )}
-                        {serverProfile && !resolveModelProtocol(serverProfile.model, modelProtocols) && (
-                          <p className="mt-1 text-xs text-amber-700">无法判断当前模型协议，请先选择已标注协议的模型，或明确检查 API 接口。</p>
+                        {serverProfile && resolveModelAvailability(serverProfile.model, modelProtocols).kind !== 'available' && (
+                          <p className="mt-1 text-xs text-amber-700">当前模型无法通过下拉选择；请检查其图像生成能力和 API 接口。</p>
                         )}
                       </dd>
                     </div>
@@ -1672,8 +1672,8 @@ export default function SettingsModal() {
                     className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                 )}
-                {activeProfile.provider === 'openai' && !resolveModelProtocol(activeProfile.model, modelProtocols) && (
-                  <p className="mt-1 text-xs text-amber-700">无法判断当前模型协议，请先选择已标注协议的模型，或明确检查 API 接口。</p>
+                {activeProfile.provider === 'openai' && resolveModelAvailability(activeProfile.model, modelProtocols).kind !== 'available' && (
+                  <p className="mt-1 text-xs text-amber-700">当前模型无法通过下拉选择；请检查其图像生成能力和 API 接口。</p>
                 )}
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (

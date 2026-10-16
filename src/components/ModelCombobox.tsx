@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDownIcon } from './icons'
 import type { ApiMode } from '../types'
-import { resolveModelProtocol } from '../lib/modelCatalog'
+import { resolveModelAvailability } from '../lib/modelCatalog'
 
 interface ModelComboboxProps {
   value: string
@@ -111,7 +111,8 @@ export default function ModelCombobox({ value, options, onChange, onBlur, onSele
           {status === 'loading' && <p role="status" className="px-3 py-2 text-xs text-gray-500">加载中…</p>}
           {status === 'failed' && <p role="status" className="px-3 py-2 text-xs text-amber-700">获取上游模型失败，已显示预设模型列表。</p>}
           {status !== 'loading' && models.map((model, index) => {
-            const mode = resolveModelProtocol(model, protocols)
+            const availability = resolveModelAvailability(model, protocols)
+            const mode = availability.kind === 'available' ? availability.protocol : null
             const selectable = mode !== null && allowedModes.includes(mode)
             return (
               <button
@@ -138,7 +139,7 @@ export default function ModelCombobox({ value, options, onChange, onBlur, onSele
                 }}
                 className={`flex w-full justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.06] ${model === value ? 'bg-blue-50 font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'}`}
               >
-                <span className="truncate">{model}</span><span className="shrink-0">{mode ?? '协议未知，无法选择'}{mode && !selectable ? '（未启用）' : ''}</span>
+                <span className="truncate">{model}</span><span className="shrink-0">{availability.kind === 'no-image-generation' ? '无图像生成能力' : mode ?? '协议未知，无法选择'}{mode && !selectable ? '（未启用）' : ''}</span>
               </button>
             )
           })}
