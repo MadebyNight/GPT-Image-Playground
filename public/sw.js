@@ -29,6 +29,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
+  // Gateway 的 capabilities 包含与 agent_sid 会话绑定的 CSRF token。
+  if (url.pathname === '/agent-api/v1/capabilities') return
   if (url.pathname.endsWith('/runtime-config.json')) return
   // OpenShop 在独立子目录注册自己的 Service Worker。主应用不得缓存其
   // 导航，也不得把离线失败的编辑器页面降级成主应用 index.html。
