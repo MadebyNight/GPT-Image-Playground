@@ -63,6 +63,16 @@ describe('Docker server-managed API defaults', () => {
     expect(migrateScript).toContain('SERVER_API_ALLOW_CUSTOM_MODEL=${SERVER_API_ALLOW_CUSTOM_MODEL-true}')
     expect(migrateScript).toContain('input=${1:-gpt-image-2,gpt-5.5}')
   })
+
+  it('emits one shared model protocol mapping in both deployment modes', () => {
+    expect(readFileSync('deploy/Dockerfile', 'utf8')).toContain('ENV MODEL_PROTOCOLS=gpt-image-2:images,gpt-5.5:responses')
+    expect(readFileSync('docker-compose.yml', 'utf8')).toContain('MODEL_PROTOCOLS: ${MODEL_PROTOCOLS:-gpt-image-2:images,gpt-5.5:responses}')
+    const injector = readFileSync('deploy/inject-api-url.sh', 'utf8')
+    expect(injector.match(/"modelProtocols": %s/g)).toHaveLength(4)
+    expect(injector).not.toContain('"modelProtocols": %s,\\n    "apiModeOptions"')
+    const migrate = readFileSync('deploy/migrate-api-env.envsh', 'utf8')
+    expect(migrate).toContain('RUNTIME_MODEL_PROTOCOLS=$(build_model_protocols_json "$MODEL_PROTOCOLS")')
+  })
 })
 
 describe('Nginx static cache policy', () => {
@@ -168,7 +178,11 @@ describe('Restricted Agent deployment boundary', () => {
   it('keeps the static runtime config backward-compatible and disabled', () => {
     const runtimeConfigText = readFileSync('public/runtime-config.json', 'utf8')
     const runtimeConfig = JSON.parse(runtimeConfigText)
-    expect(runtimeConfig).toEqual({ version: 1, serverApi: { enabled: false } })
+    expect(runtimeConfig).toEqual({
+      version: 1,
+      modelProtocols: { 'gpt-image-2': 'images', 'gpt-5.5': 'responses' },
+      serverApi: { enabled: false },
+    })
     expect(runtimeConfigText).not.toMatch(/apiKey|sessionSecret|upstream/i)
   })
 

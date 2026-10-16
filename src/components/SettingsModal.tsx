@@ -25,10 +25,13 @@ import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboar
 import {
   getEffectiveApiProfile,
   getRuntimeConfigState,
+  getRuntimeModelProtocols,
   getServerManagedApiOptions,
   isServerApiConfigEnabled,
   isServerApiConfigUsable,
+  registerFetchedManagedModels,
 } from '../lib/serverApiConfig'
+import { fetchAvailableModels, resolveModelProtocol } from '../lib/modelCatalog'
 import type { ApiProfile, AppSettings, CustomProviderDefinition } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -362,6 +365,7 @@ export default function SettingsModal() {
   const serverConfigUsable = isServerApiConfigUsable()
   const serverProfile = serverConfigUsable ? getEffectiveApiProfile(draft) : null
   const serverApiOptions = serverConfigUsable ? getServerManagedApiOptions() : null
+  const modelProtocols = getRuntimeModelProtocols()
   const apiProxyConfig = readClientDevProxyConfig()
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
@@ -1265,21 +1269,30 @@ export default function SettingsModal() {
                     <div className="rounded-xl bg-white/70 px-3 py-2.5 dark:bg-white/[0.05]">
                       <dt className="text-xs text-gray-500 dark:text-gray-400">模型</dt>
                       <dd className="mt-1">
-                        {serverProfile && serverApiOptions?.allowCustomModel ? (
+                        {serverProfile && serverApiOptions ? (
                           <ModelCombobox
                             value={serverProfile.model}
                             options={serverApiOptions.modelOptions}
                             onChange={(model) => commitSettings(applyServerManagedSelectionToDraft(draft, { model }))}
-                          />
-                        ) : serverProfile && serverApiOptions ? (
-                          <Select
-                            value={serverProfile.model}
-                            onChange={(model) => commitSettings(applyServerManagedSelectionToDraft(draft, { model }))}
-                            options={serverApiOptions.modelOptions.map((model) => ({ label: model, value: model }))}
-                            className="w-full rounded-lg border border-blue-100 bg-white/80 px-2 py-1.5 text-xs text-gray-700 outline-none dark:border-blue-500/20 dark:bg-white/[0.04] dark:text-gray-100"
+                            onSelect={(model, apiMode) => commitSettings(applyServerManagedSelectionToDraft(draft, { model, apiMode }))}
+                            loadModels={async (signal) => {
+                              if (!modelProtocols) throw new Error('模型协议映射不可用')
+                              const models = await fetchAvailableModels(serverProfile, signal)
+                              registerFetchedManagedModels(models.filter((model) => {
+                                const mode = resolveModelProtocol(model, modelProtocols)
+                                return mode !== null && serverApiOptions.apiModeOptions.includes(mode)
+                              }))
+                              return models
+                            }}
+                            protocols={modelProtocols}
+                            allowCustomModel={serverApiOptions.allowCustomModel}
+                            allowedModes={serverApiOptions.apiModeOptions}
                           />
                         ) : (
                           <span className="font-medium text-gray-800 dark:text-gray-100">不可用</span>
+                        )}
+                        {serverProfile && !resolveModelProtocol(serverProfile.model, modelProtocols) && (
+                          <p className="mt-1 text-xs text-amber-700">无法判断当前模型协议，请先选择已标注协议的模型，或明确检查 API 接口。</p>
                         )}
                       </dd>
                     </div>
@@ -1291,7 +1304,7 @@ export default function SettingsModal() {
                     </div>
                   </dl>
                   <p className="mt-3 text-xs leading-5 text-blue-800/80 dark:text-blue-200/80">
-                    API 地址和密钥由服务端固定；接口模式只能在部署端预设范围内选择，模型{serverApiOptions?.allowCustomModel ? '可选择预设项或输入自定义模型 ID' : '只能在部署端预设列表中选择'}。
+                    API 地址和密钥由服务端固定；接口模式只能在部署端预设范围内选择，模型{serverApiOptions?.allowCustomModel ? '可选择上游模型或输入自定义模型 ID' : '只能从上游或部署端预设列表中选择'}。
                   </p>
                 </div>
               ) : (
@@ -1632,18 +1645,36 @@ export default function SettingsModal() {
                 </div>
               )}
 
-              <label className="block">
+              <div className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
                   模型 ID
                 </span>
-                <input
-                  value={activeProfile.model}
-                  onChange={(e) => updateActiveProfile({ model: e.target.value })}
-                  onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
-                  type="text"
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
-                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                />
+                {activeProfile.provider === 'openai' ? (
+                  <ModelCombobox
+                    key={activeProfile.id}
+                    value={activeProfile.model}
+                    options={[DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL]}
+                    onChange={(model) => updateActiveProfile({ model })}
+                    onBlur={(model) => commitActiveProfilePatch({ model })}
+                    onSelect={(model, apiMode) => updateActiveProfile({ model, apiMode }, true)}
+                    loadModels={(signal) => modelProtocols
+                      ? fetchAvailableModels({ ...activeProfile, apiProxy: false }, signal)
+                      : Promise.reject(new Error('模型协议映射不可用'))}
+                    protocols={modelProtocols}
+                  />
+                ) : (
+                  <input
+                    value={activeProfile.model}
+                    onChange={(e) => updateActiveProfile({ model: e.target.value })}
+                    onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
+                    type="text"
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                  />
+                )}
+                {activeProfile.provider === 'openai' && !resolveModelProtocol(activeProfile.model, modelProtocols) && (
+                  <p className="mt-1 text-xs text-amber-700">无法判断当前模型协议，请先选择已标注协议的模型，或明确检查 API 接口。</p>
+                )}
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (
                     <>当前适配 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_FAL_MODEL}</code>。</>
@@ -1658,7 +1689,7 @@ export default function SettingsModal() {
                     <>支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
                   )}
                 </div>
-              </label>
+              </div>
 
               {activeProviderIsOpenAICompatible && (
                 <div className="block">

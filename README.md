@@ -51,10 +51,13 @@
 ### 配置与历史管理
 
 - 支持多个 API Profile，并可切换服务商、模型和接口模式。
+- OpenAI 兼容模型下拉在展开时查询当前上游的 `/v1/models`；每项显示将使用的 `images` 或 `responses` 协议，选择时同步切换接口。查询失败时显示预设模型和提示。
 - 支持 OpenAI-compatible、fal.ai 与自定义同步或异步 HTTP Provider。
 - 支持瀑布流历史、状态筛选、全屏预览、快捷下载和批量操作。
 - 历史任务保存请求参数与实际响应参数，便于复现和比较。
 - 支持将本地历史打包导出，便于备份或迁移。
+
+部署时可用 `MODEL_PROTOCOLS` 配置模型协议，格式为逗号分隔的 `模型ID:images` 或 `模型ID:responses`，例如 `gpt-image-2:images,gpt-5.5:responses`。它会作为顶层 `modelProtocols` 对象写入 `runtime-config.json`，供服务端统一模式和个人 Profile 模式共用。显式映射优先于名称规则；缺失或无效映射会提示并回退预设模型，两者都无法判断的上游模型会显示“协议未知”且不可从下拉选择。`SERVER_API_ALLOW_CUSTOM_MODEL=false` 时，仍可选择本次上游列表中的合法模型 ID，但不能自由输入；部署端预设项也始终可选。
 
 ## 工作模式
 
