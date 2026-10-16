@@ -14,6 +14,23 @@ export function resolveModelProtocol(model: string, mappings: Record<string, Api
   return null
 }
 
+export type ModelAvailability =
+  | { kind: 'available'; protocol: ApiMode }
+  | { kind: 'protocol-unknown' }
+  | { kind: 'no-image-generation' }
+
+export function resolveModelAvailability(model: string, mappings: Record<string, ApiMode> | null = null): ModelAvailability {
+  const protocol = resolveModelProtocol(model, mappings)
+  if (protocol) return { kind: 'available', protocol }
+  if (/^gemini(?:[.-].*)?[.-]image(?:[.-]|$)/i.test(model) || /^imagen/i.test(model)) {
+    return { kind: 'protocol-unknown' }
+  }
+  if (/^(?:claude|glm|kimi|deepseek|gemini)/i.test(model)) {
+    return { kind: 'no-image-generation' }
+  }
+  return { kind: 'protocol-unknown' }
+}
+
 export async function fetchAvailableModels(profile: ApiProfile, signal?: AbortSignal): Promise<string[]> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), MODELS_TIMEOUT_MS)
